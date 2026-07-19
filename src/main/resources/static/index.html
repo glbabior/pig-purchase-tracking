@@ -4,12 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Pig Purchases</title>
+    <link rel="icon" type="image/png" href="/icon.png" />
     <style>
       :root { color-scheme: light; }
       body { font-family: Arial, sans-serif; margin: 0; background: #f5efe8; color: #2f220f; }
       .page { max-width: 1100px; margin: 0 auto; padding: 2rem 1rem 3rem; }
       .card { background: white; border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.08); padding: 1.5rem; }
       header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+      .brand { display: flex; align-items: center; gap: 0.9rem; }
+      .brand .logo { width: 56px; height: 56px; object-fit: contain; flex-shrink: 0; }
       h1 { color: #8a4b00; margin: 0; }
       .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
       .tab { border: none; padding: 0.7rem 1rem; border-radius: 999px; background: #f4e7d5; color: #6b3b00; cursor: pointer; }
@@ -45,9 +48,12 @@
     <div class="page">
       <div class="card">
         <header>
-          <div>
-            <h1>Pig Purchases</h1>
-            <p>Track monthly budgets against statement activity.</p>
+          <div class="brand">
+            <img src="/icon.png" alt="Pig Purchases logo" class="logo" />
+            <div>
+              <h1>Pig Purchases</h1>
+              <p>Track monthly budgets against statement activity.</p>
+            </div>
           </div>
           <button class="secondary" id="restartBtn" title="Restart the server to pick up code changes">Restart server</button>
         </header>
