@@ -1,6 +1,8 @@
 package com.pigpurchases.server;
 
+import com.pigpurchases.model.AppSettings;
 import com.pigpurchases.model.BudgetEntry;
+import com.pigpurchases.repository.AppSettingsRepository;
 import com.pigpurchases.repository.BudgetEntryRepository;
 import com.pigpurchases.repository.TransactionRepository;
 import com.pigpurchases.service.BudgetService;
@@ -9,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -25,7 +28,13 @@ public class BudgetController {
     private TransactionRepository transactionRepository;
 
     @Autowired
+    private AppSettingsRepository appSettingsRepository;
+
+    @Autowired
     private BudgetService budgetService;
+
+    private static final Long SETTINGS_ID = 1L;
+    private static final BigDecimal MONTHS_PER_YEAR = BigDecimal.valueOf(12);
 
     @GetMapping("/health")
     public Map<String, String> health() {
@@ -52,6 +61,36 @@ public class BudgetController {
         thread.setName("app-restart");
         thread.start();
         return Map.of("status", "restarting");
+    }
+
+    @GetMapping("/settings")
+    public Map<String, Object> getSettings() {
+        return settingsResponse(loadOrCreateSettings());
+    }
+
+    @PutMapping("/settings")
+    public Map<String, Object> updateSettings(@RequestBody Map<String, Object> payload) {
+        AppSettings settings = loadOrCreateSettings();
+        settings.setAnnualBudget(new BigDecimal(String.valueOf(payload.get("annualBudget"))));
+        return settingsResponse(appSettingsRepository.save(settings));
+    }
+
+    private AppSettings loadOrCreateSettings() {
+        return appSettingsRepository.findById(SETTINGS_ID).orElseGet(() -> {
+            AppSettings created = new AppSettings();
+            created.setId(SETTINGS_ID);
+            created.setAnnualBudget(BigDecimal.ZERO);
+            return appSettingsRepository.save(created);
+        });
+    }
+
+    private Map<String, Object> settingsResponse(AppSettings settings) {
+        BigDecimal annual = settings.getAnnualBudget() != null ? settings.getAnnualBudget() : BigDecimal.ZERO;
+        BigDecimal monthly = annual.divide(MONTHS_PER_YEAR, 2, RoundingMode.HALF_UP);
+        Map<String, Object> response = new HashMap<>();
+        response.put("annualBudget", annual.toPlainString());
+        response.put("monthlyAllowance", monthly.toPlainString());
+        return response;
     }
 
     @GetMapping("/entries")
