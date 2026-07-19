@@ -18,8 +18,11 @@
       button.primary { background: #8a4b00; color: white; border: none; border-radius: 999px; padding: 0.7rem 1rem; cursor: pointer; }
       button.secondary { background: #f4e7d5; color: #6b3b00; border: none; border-radius: 999px; padding: 0.7rem 1rem; cursor: pointer; }
       table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
-      th, td { text-align: left; padding: 0.8rem; border-bottom: 1px solid #eee; }
+      th, td { text-align: left; padding: 0.3rem 0.8rem; border-bottom: 1px solid #eee; }
       th { font-size: 0.9rem; color: #8a4b00; }
+      th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+      th.sortable:hover { text-decoration: underline; }
+      th .arrow { color: #b57a2b; }
       .muted { color: #7a6753; font-size: 0.9rem; }
       .actions button { margin-right: 0.5rem; }
       .empty { color: #7a6753; padding: 1rem 0; }
@@ -61,9 +64,9 @@
           <table>
             <thead>
               <tr>
-                <th>Title</th>
-                <th>Quantity</th>
-                <th>Monthly Budget</th>
+                <th class="sortable" data-sort="title" data-label="Title">Title</th>
+                <th class="sortable" data-sort="quantity" data-label="Quantity">Quantity</th>
+                <th class="sortable" data-sort="monthlyBudget" data-label="Monthly Budget">Monthly Budget</th>
                 <th></th>
               </tr>
             </thead>
@@ -114,6 +117,7 @@ Auto Payment $60.00</textarea>
     <script>
       let entries = [];
       let editingId = null;
+      let sortState = { key: null, dir: 1 };
 
       const budgetTableBody = document.getElementById('budgetTableBody');
       const emptyState = document.getElementById('emptyState');
@@ -129,6 +133,20 @@ Auto Payment $60.00</textarea>
       document.getElementById('saveItemBtn').addEventListener('click', saveItem);
       document.getElementById('calculateBtn').addEventListener('click', calculateSpend);
       document.getElementById('restartBtn').addEventListener('click', restartServer);
+
+      document.querySelectorAll('th[data-sort]').forEach((th) => {
+        th.addEventListener('click', () => sortBy(th.dataset.sort));
+      });
+
+      function sortBy(key) {
+        if (sortState.key === key) {
+          sortState.dir *= -1;
+        } else {
+          sortState.key = key;
+          sortState.dir = 1;
+        }
+        renderEntries();
+      }
 
       document.querySelectorAll('.tab').forEach((button) => {
         button.addEventListener('click', () => showView(button.dataset.view));
@@ -181,14 +199,36 @@ Auto Payment $60.00</textarea>
         renderEntries();
       }
 
+      function sortedEntries() {
+        const rows = [...entries];
+        const { key, dir } = sortState;
+        if (!key) return rows;
+        rows.sort((a, b) => {
+          if (key === 'title') {
+            return String(a.title || '').localeCompare(String(b.title || ''), undefined, { sensitivity: 'base' }) * dir;
+          }
+          return (Number(a[key] || 0) - Number(b[key] || 0)) * dir;
+        });
+        return rows;
+      }
+
+      function updateSortIndicators() {
+        document.querySelectorAll('th[data-sort]').forEach((th) => {
+          const active = th.dataset.sort === sortState.key;
+          const arrow = active ? ` <span class="arrow">${sortState.dir === 1 ? '▲' : '▼'}</span>` : '';
+          th.innerHTML = th.dataset.label + arrow;
+        });
+      }
+
       function renderEntries() {
+        updateSortIndicators();
         budgetTableBody.innerHTML = '';
         if (!entries.length) {
           emptyState.style.display = 'block';
           return;
         }
         emptyState.style.display = 'none';
-        entries.forEach((entry) => {
+        sortedEntries().forEach((entry) => {
           const row = document.createElement('tr');
           row.innerHTML = `
             <td>${escapeHtml(entry.title || '')}</td>
