@@ -46,6 +46,7 @@
             <h1>Pig Purchases</h1>
             <p>Track monthly budgets against statement activity.</p>
           </div>
+          <button class="secondary" id="restartBtn" title="Restart the server to pick up code changes">Restart server</button>
         </header>
 
         <div class="tabs">
@@ -127,6 +128,7 @@ Auto Payment $60.00</textarea>
       document.getElementById('cancelModalBtn').addEventListener('click', closeModal);
       document.getElementById('saveItemBtn').addEventListener('click', saveItem);
       document.getElementById('calculateBtn').addEventListener('click', calculateSpend);
+      document.getElementById('restartBtn').addEventListener('click', restartServer);
 
       document.querySelectorAll('.tab').forEach((button) => {
         button.addEventListener('click', () => showView(button.dataset.view));
@@ -137,6 +139,34 @@ Auto Payment $60.00</textarea>
       });
 
       loadEntries();
+
+      // Restart the server (picks up recompiled code via DevTools), then wait
+      // for it to come back and reload the page.
+      async function restartServer() {
+        const btn = document.getElementById('restartBtn');
+        if (!confirm('Restart the server? This reloads the app with any code changes.')) return;
+        btn.disabled = true;
+        btn.textContent = 'Restarting…';
+        try {
+          await fetch('/api/restart', { method: 'POST' });
+        } catch (err) {
+          // The connection may drop as the server goes down — that's expected.
+        }
+        await waitForServer();
+        location.reload();
+      }
+
+      async function waitForServer() {
+        for (let i = 0; i < 60; i++) {
+          try {
+            const response = await fetch('/api/health', { cache: 'no-store' });
+            if (response.ok) return;
+          } catch (err) {
+            // still restarting
+          }
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
 
       // The H2 database (via /api/entries) is the single source of truth.
       async function loadEntries() {

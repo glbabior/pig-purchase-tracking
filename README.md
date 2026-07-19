@@ -205,7 +205,13 @@ mvn test
 ```bash
 .\launch.cmd
 ```
-Opens browser to `http://localhost:8080`
+Starts the Spring Boot server (bundled Maven). Wait for the log line
+`Started PigPurchasesApplication`, then open `http://localhost:8080` in your
+browser yourself — the launcher does not open it for you. Stop with `Ctrl+C`.
+
+To pick up code changes after edits, click the **Restart server** button in the
+app header (top right). Spring Boot DevTools reloads the recompiled classes; the
+page waits for the server to come back and refreshes automatically.
 
 ## File Structure
 ```

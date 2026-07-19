@@ -32,6 +32,28 @@ public class BudgetController {
         return Map.of("status", "ok");
     }
 
+    /**
+     * Restarts the application so freshly recompiled code is picked up. Uses
+     * Spring Boot DevTools' Restarter (active when launched via spring-boot:run),
+     * which reloads changed classes via the restart classloader. The restart runs
+     * on a separate non-daemon thread so this HTTP response can return first.
+     */
+    @PostMapping("/restart")
+    public Map<String, String> restart() {
+        Thread thread = new Thread(() -> {
+            try {
+                Thread.sleep(300);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+            org.springframework.boot.devtools.restart.Restarter.getInstance().restart();
+        });
+        thread.setDaemon(false);
+        thread.setName("app-restart");
+        thread.start();
+        return Map.of("status", "restarting");
+    }
+
     @GetMapping("/entries")
     public List<Map<String, Object>> getEntries() {
         List<BudgetEntry> entries = budgetEntryRepository.findAll();

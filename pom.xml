@@ -30,6 +30,13 @@
             <scope>runtime</scope>
         </dependency>
         <dependency>
+            <!-- Enables the in-app "Restart" button and auto-reload of
+                 recompiled classes when running via spring-boot:run. -->
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-devtools</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
