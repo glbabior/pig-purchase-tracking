@@ -135,22 +135,26 @@ parser_config (String, JSON for parser-specific settings)
 
 ## Current Implementation Status
 
-### ✅ Completed
+_Last verified: 2026-07-19 (end-to-end against a running server)._
+
+### ✅ Completed & verified working
 - Project scaffolding with Spring Boot + Maven
-- H2 database integration with JPA entities
-- Budget entry entity and CRUD operations
-- Transaction entity with full schema
-- StatementSource entity for managing import sources
+- H2 database integration with JPA entities (`BudgetEntry`, `Transaction`, `StatementSource`)
 - Spring Data repositories for all entities
-- BudgetController with database-backed endpoints
-- Data migration from legacy flat-file format to database
-- Budget entries table UI with add/edit/delete
-- Entry validation with currency and quantity fields
-- Client-side localStorage synchronization
+- Budget entry CRUD, database-backed: `GET/POST/PUT/DELETE /api/entries`
+- Budget entries table UI with add / edit / **delete**, persisting through the
+  REST API to H2 (the database is the single source of truth)
+- Entry validation with per-unit currency and quantity fields
+- One-time data migration from the legacy flat file (`pig-purchases-data.txt`)
+  into the database on first startup
+- Crude spend summary endpoint `POST /api/summary` (placeholder math — see below)
 - Spring Boot server with embedded Tomcat
 
-### 🔄 In Progress
-- Server restart and database initialization validation
+### 🧱 Scaffolded but not yet wired up
+- `Transaction` and `StatementSource` entities + repositories exist, but **no
+  endpoints use them yet** — no transaction storage, import, or listing.
+- The spend "calculation" only regex-sums numbers on lines containing `$`. It is
+  a placeholder, not real statement parsing.
 
 ### ⚠️ Planned
 - **Statement File Parser**: Support for CSV, PDF, and OFX formats
@@ -207,30 +211,38 @@ Opens browser to `http://localhost:8080`
 ```
 PigPurchases/
 ├── src/main/java/com/pigpurchases/
+│   ├── PigPurchasesApplication.java (Spring Boot entry — root package so
+│   │                                 component/entity/repository scan works)
 │   ├── model/
 │   │   ├── BudgetEntry.java (JPA entity)
-│   │   ├── Transaction.java (JPA entity)
-│   │   └── StatementSource.java (JPA entity)
+│   │   ├── Transaction.java (JPA entity — not yet used by any endpoint)
+│   │   └── StatementSource.java (JPA entity — not yet used by any endpoint)
 │   ├── repository/
 │   │   ├── BudgetEntryRepository.java
 │   │   ├── TransactionRepository.java
 │   │   └── StatementSourceRepository.java
 │   ├── service/
-│   │   └── BudgetService.java (business logic)
+│   │   ├── BudgetService.java (pure calculation logic, @Service bean)
+│   │   └── MonthlyHistoryEntry.java
 │   └── server/
-│       ├── PigPurchasesApplication.java (Spring Boot entry)
 │       ├── BudgetController.java (REST endpoints)
-│       └── DataInitializer.java (data migration)
+│       └── DataInitializer.java (one-time flat-file → DB migration)
 ├── src/main/resources/
-│   ├── static/index.html (frontend)
+│   ├── static/index.html (vanilla-JS frontend)
 │   └── application.properties (H2 config)
 ├── src/test/java/com/pigpurchases/
 │   └── BudgetServiceTest.java
 ├── pom.xml (Maven configuration)
 ├── launch.cmd (Windows launcher)
-├── pig-purchases-db (H2 database file, auto-created)
+├── pig-purchases-db.mv.db (H2 database file, auto-created, git-ignored)
+├── pig-purchases-data.txt (legacy seed data; migrated once, git-ignored)
 └── README.md (this file)
 ```
+
+> Note: a Python `.venv` plus `import_budget.py` / `create_icon.py` are one-off
+> helper scripts (spreadsheet import, icon generation), not part of the running
+> app. `budget-import.json` and the data/db files hold personal amounts and are
+> git-ignored.
 
 ## Next Steps
 
