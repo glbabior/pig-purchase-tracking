@@ -111,9 +111,8 @@ Auto Payment $60.00</textarea>
     </div>
 
     <script>
-      const STORAGE_KEY = 'pig-purchases-entries';
-      let entries = loadEntries();
-      let editingIndex = null;
+      let entries = [];
+      let editingId = null;
 
       const budgetTableBody = document.getElementById('budgetTableBody');
       const emptyState = document.getElementById('emptyState');
@@ -137,32 +136,19 @@ Auto Payment $60.00</textarea>
         if (event.target === itemModal) closeModal();
       });
 
-      initializeEntries();
+      loadEntries();
 
-      async function initializeEntries() {
-        if (!entries.length) {
-          try {
-            const response = await fetch('/api/entries');
-            entries = await response.json();
-            saveEntries();
-          } catch (err) {
-            console.log('No server entries available');
-          }
+      // The H2 database (via /api/entries) is the single source of truth.
+      async function loadEntries() {
+        try {
+          const response = await fetch('/api/entries');
+          if (!response.ok) throw new Error('HTTP ' + response.status);
+          entries = await response.json();
+        } catch (err) {
+          entries = [];
+          console.error('Could not load entries from server', err);
         }
         renderEntries();
-      }
-
-      function loadEntries() {
-        try {
-          const saved = localStorage.getItem(STORAGE_KEY);
-          return saved ? JSON.parse(saved) : [];
-        } catch (error) {
-          return [];
-        }
-      }
-
-      function saveEntries() {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
       }
 
       function renderEntries() {
@@ -172,23 +158,25 @@ Auto Payment $60.00</textarea>
           return;
         }
         emptyState.style.display = 'none';
-        entries.forEach((entry, index) => {
+        entries.forEach((entry) => {
           const row = document.createElement('tr');
           row.innerHTML = `
             <td>${escapeHtml(entry.title || '')}</td>
             <td>${escapeHtml(entry.quantity || 1)}</td>
             <td>${formatCurrency(entry.monthlyBudget || 0)}</td>
             <td class="actions">
-              <button class="secondary" data-edit-index="${index}">Edit</button>
+              <button class="secondary" data-edit>Edit</button>
+              <button class="secondary" data-delete>Delete</button>
             </td>
           `;
-          row.querySelector('[data-edit-index]').addEventListener('click', () => editEntry(index));
+          row.querySelector('[data-edit]').addEventListener('click', () => editEntry(entry.id));
+          row.querySelector('[data-delete]').addEventListener('click', () => deleteEntry(entry.id));
           budgetTableBody.appendChild(row);
         });
       }
 
       function openAddModal() {
-        editingIndex = null;
+        editingId = null;
         modalTitle.textContent = 'Add Item';
         itemTitleInput.value = '';
         itemQuantityInput.value = '1';
@@ -199,13 +187,17 @@ Auto Payment $60.00</textarea>
         itemTitleInput.focus();
       }
 
-      function editEntry(index) {
-        const entry = entries[index];
-        editingIndex = index;
+      function editEntry(id) {
+        const entry = entries.find((e) => e.id === id);
+        if (!entry) return;
+        editingId = id;
         modalTitle.textContent = 'Edit Item';
+        const quantity = Number(entry.quantity) || 1;
+        const total = Number(entry.monthlyBudget) || 0;
         itemTitleInput.value = entry.title || '';
-        itemQuantityInput.value = entry.quantity || '1';
-        itemBudgetInput.value = entry.monthlyBudget || '';
+        itemQuantityInput.value = String(quantity);
+        // The budget field holds the per-unit amount; the stored value is the total.
+        itemBudgetInput.value = (total / quantity).toFixed(2);
         itemHintsInput.value = entry.hints || '';
         itemModal.classList.add('open');
         itemModal.setAttribute('aria-hidden', 'false');
@@ -217,7 +209,7 @@ Auto Payment $60.00</textarea>
         itemModal.setAttribute('aria-hidden', 'true');
       }
 
-      function saveItem() {
+      async function saveItem() {
         const title = itemTitleInput.value.trim();
         const quantityValue = itemQuantityInput.value.trim();
         const budgetValue = itemBudgetInput.value.trim();
@@ -229,8 +221,8 @@ Auto Payment $60.00</textarea>
           alert('Please enter a valid whole number quantity.');
           return;
         }
-        const monthlyBudget = parseDollarAmount(budgetValue);
-        if (monthlyBudget === null) {
+        const perUnit = parseDollarAmount(budgetValue);
+        if (perUnit === null) {
           alert('Please enter a valid dollar amount such as 100 or 100.50.');
           return;
         }
@@ -238,19 +230,39 @@ Auto Payment $60.00</textarea>
         const payload = {
           title,
           quantity: Number(quantityValue),
-          monthlyBudget: (Number(monthlyBudget) * Number(quantityValue)).toFixed(2),
+          monthlyBudget: (Number(perUnit) * Number(quantityValue)).toFixed(2),
           hints: itemHintsInput.value.trim()
         };
 
-        if (editingIndex === null) {
-          entries.push(payload);
-        } else {
-          entries[editingIndex] = payload;
+        const url = editingId === null ? '/api/entries' : `/api/entries/${editingId}`;
+        const method = editingId === null ? 'POST' : 'PUT';
+        try {
+          const response = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          if (!response.ok) throw new Error('HTTP ' + response.status);
+          closeModal();
+          await loadEntries();
+        } catch (err) {
+          alert('Could not save the item. Is the server running?');
+          console.error(err);
         }
+      }
 
-        saveEntries();
-        renderEntries();
-        closeModal();
+      async function deleteEntry(id) {
+        const entry = entries.find((e) => e.id === id);
+        const label = entry ? entry.title : 'this item';
+        if (!confirm(`Delete "${label}"?`)) return;
+        try {
+          const response = await fetch(`/api/entries/${id}`, { method: 'DELETE' });
+          if (!response.ok) throw new Error('HTTP ' + response.status);
+          await loadEntries();
+        } catch (err) {
+          alert('Could not delete the item. Is the server running?');
+          console.error(err);
+        }
       }
 
       function parseDollarAmount(value) {
@@ -286,7 +298,6 @@ Auto Payment $60.00</textarea>
         const statements = document.getElementById('statements').value.split(/\n/).filter(Boolean);
         const payloadEntries = entries.map((entry) => ({
           name: entry.title,
-          category: entry.title,
           allowance: entry.monthlyBudget
         }));
 
