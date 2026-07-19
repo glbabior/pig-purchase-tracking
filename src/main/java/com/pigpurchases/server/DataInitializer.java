@@ -2,7 +2,6 @@ package com.pigpurchases.server;
 
 import com.pigpurchases.model.BudgetEntry;
 import com.pigpurchases.repository.BudgetEntryRepository;
-import com.pigpurchases.service.BudgetService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -39,7 +38,7 @@ public class DataInitializer implements ApplicationRunner {
                 }
                 String[] parts = line.split("\\|", 3);
                 if (parts.length == 3) {
-                    BudgetEntry entry = new BudgetEntry(parts[0], parts[0], new java.math.BigDecimal(parts[2]));
+                    BudgetEntry entry = new BudgetEntry(parts[0], new java.math.BigDecimal(parts[2]));
                     budgetEntryRepository.save(entry);
                 }
             }

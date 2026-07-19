@@ -18,7 +18,7 @@ public class BudgetEntry {
 
     public BudgetEntry() {}
 
-    public BudgetEntry(String name, String category, BigDecimal monthlyAllowance) {
+    public BudgetEntry(String name, BigDecimal monthlyAllowance) {
         this.name = name;
         this.monthlyAllowance = monthlyAllowance;
     }
@@ -37,14 +37,6 @@ public class BudgetEntry {
 
     public void setName(String name) {
         this.name = name;
-    }
-
-    public String getCategory() {
-        return name;
-    }
-
-    public void setCategory(String category) {
-        this.name = category;
     }
 
     public BigDecimal getMonthlyAllowance() {

@@ -1,7 +1,6 @@
 package com.pigpurchases.server;
 
 import com.pigpurchases.model.BudgetEntry;
-import com.pigpurchases.model.Transaction;
 import com.pigpurchases.repository.BudgetEntryRepository;
 import com.pigpurchases.repository.TransactionRepository;
 import com.pigpurchases.service.BudgetService;
@@ -25,7 +24,8 @@ public class BudgetController {
     @Autowired
     private TransactionRepository transactionRepository;
 
-    private final BudgetService budgetService = new BudgetService(null);
+    @Autowired
+    private BudgetService budgetService;
 
     @GetMapping("/health")
     public Map<String, String> health() {
@@ -80,7 +80,6 @@ public class BudgetController {
         for (Map<String, Object> entry : entries) {
             state.getBudgetEntries().add(new BudgetEntry(
                     (String) entry.get("name"),
-                    (String) entry.get("category"),
                     new BigDecimal(String.valueOf(entry.get("allowance")))
             ));
         }
