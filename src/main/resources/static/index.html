@@ -92,6 +92,7 @@
         </div>
         <nav>
           <button class="nav-item active" data-view="budget">Budget Entries</button>
+          <button class="nav-item" data-view="sources">Statement Sources</button>
           <button class="nav-item" data-view="analysis">Analyze Spend</button>
           <button class="nav-item" data-view="settings">Settings</button>
         </nav>
@@ -141,6 +142,25 @@
               <div id="emptyState" class="empty">No budget items yet. Add your first entry to get started.</div>
             </section>
 
+            <section id="sourcesView" style="display:none">
+              <h2 class="view-title">Statement Sources</h2>
+              <p class="hint">Each source is an account's statement folder. Point it at the absolute folder path where those statement files live; you can add, edit, or remove sources anytime.</p>
+              <div class="toolbar">
+                <button class="primary" id="addSourceBtn">Add Source</button>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Folder Path</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="sourcesTableBody"></tbody>
+              </table>
+              <div id="sourcesEmptyState" class="empty">No statement sources yet. Add one to get started.</div>
+            </section>
+
             <section id="analysisView" style="display:none">
               <h2 class="view-title">Analyze Spend</h2>
               <div class="analysis-grid">
@@ -176,6 +196,25 @@ Auto Payment $60.00</textarea>
       </main>
     </div>
 
+    <div id="sourceModal" class="modal" aria-hidden="true">
+      <div class="modal-body">
+        <h2 id="sourceModalTitle">Add Source</h2>
+        <div class="field">
+          <label for="sourceName">Source name</label>
+          <input id="sourceName" type="text" placeholder="e.g. Crestline Checking" />
+        </div>
+        <div class="field">
+          <label for="sourceFolder">Absolute folder path</label>
+          <input id="sourceFolder" type="text" placeholder="e.g. C:\Users\you\Statements\Crestline" />
+          <div class="hint">Full path to the folder that holds this account's statement files.</div>
+        </div>
+        <div class="modal-actions">
+          <button class="secondary" id="cancelSourceBtn">Cancel</button>
+          <button class="primary" id="saveSourceBtn">Save</button>
+        </div>
+      </div>
+    </div>
+
     <div id="itemModal" class="modal" aria-hidden="true">
       <div class="modal-body">
         <h2 id="modalTitle">Add Item</h2>
@@ -207,6 +246,8 @@ Auto Payment $60.00</textarea>
       let editingId = null;
       let sortState = { key: null, dir: 1 };
       let settings = { annualBudget: '0', monthlyAllowance: '0' };
+      let sources = [];
+      let editingSourceId = null;
 
       const budgetTableBody = document.getElementById('budgetTableBody');
       const emptyState = document.getElementById('emptyState');
@@ -217,6 +258,12 @@ Auto Payment $60.00</textarea>
       const itemBudgetInput = document.getElementById('itemBudget');
       const itemHintsInput = document.getElementById('itemHints');
       const annualBudgetInput = document.getElementById('annualBudgetInput');
+      const sourceModal = document.getElementById('sourceModal');
+      const sourceModalTitle = document.getElementById('sourceModalTitle');
+      const sourceNameInput = document.getElementById('sourceName');
+      const sourceFolderInput = document.getElementById('sourceFolder');
+      const sourcesTableBody = document.getElementById('sourcesTableBody');
+      const sourcesEmptyState = document.getElementById('sourcesEmptyState');
 
       document.getElementById('addItemBtn').addEventListener('click', openAddModal);
       document.getElementById('cancelModalBtn').addEventListener('click', closeModal);
@@ -224,6 +271,13 @@ Auto Payment $60.00</textarea>
       document.getElementById('calculateBtn').addEventListener('click', calculateSpend);
       document.getElementById('restartBtn').addEventListener('click', restartServer);
       document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
+      document.getElementById('addSourceBtn').addEventListener('click', openAddSource);
+      document.getElementById('cancelSourceBtn').addEventListener('click', closeSourceModal);
+      document.getElementById('saveSourceBtn').addEventListener('click', saveSource);
+
+      sourceModal.addEventListener('click', (event) => {
+        if (event.target === sourceModal) closeSourceModal();
+      });
 
       // Live-preview the monthly allowance as the annual budget is typed.
       annualBudgetInput.addEventListener('input', () => {
@@ -247,6 +301,7 @@ Auto Payment $60.00</textarea>
       // Initial load.
       loadSettings();
       loadEntries();
+      loadSources();
 
       // ---- Settings ----------------------------------------------------------
 
@@ -293,6 +348,114 @@ Auto Payment $60.00</textarea>
           setTimeout(() => { msg.textContent = ''; }, 2000);
         } catch (err) {
           alert('Could not save settings. Is the server running?');
+          console.error(err);
+        }
+      }
+
+      // ---- Statement sources -------------------------------------------------
+
+      async function loadSources() {
+        try {
+          const response = await fetch('/api/statement-sources');
+          if (!response.ok) throw new Error('HTTP ' + response.status);
+          sources = await response.json();
+        } catch (err) {
+          sources = [];
+          console.error('Could not load statement sources', err);
+        }
+        renderSources();
+      }
+
+      function renderSources() {
+        sourcesTableBody.innerHTML = '';
+        if (!sources.length) {
+          sourcesEmptyState.style.display = 'block';
+          return;
+        }
+        sourcesEmptyState.style.display = 'none';
+        sources.forEach((source) => {
+          const row = document.createElement('tr');
+          row.innerHTML = `
+            <td>${escapeHtml(source.name || '')}</td>
+            <td class="muted">${escapeHtml(source.folderPath || '')}</td>
+            <td class="actions">
+              <button class="secondary" data-edit>Edit</button>
+              <button class="secondary" data-delete>Delete</button>
+            </td>
+          `;
+          row.querySelector('[data-edit]').addEventListener('click', () => editSource(source.id));
+          row.querySelector('[data-delete]').addEventListener('click', () => deleteSource(source.id));
+          sourcesTableBody.appendChild(row);
+        });
+      }
+
+      function openAddSource() {
+        editingSourceId = null;
+        sourceModalTitle.textContent = 'Add Source';
+        sourceNameInput.value = '';
+        sourceFolderInput.value = '';
+        sourceModal.classList.add('open');
+        sourceModal.setAttribute('aria-hidden', 'false');
+        sourceNameInput.focus();
+      }
+
+      function editSource(id) {
+        const source = sources.find((s) => s.id === id);
+        if (!source) return;
+        editingSourceId = id;
+        sourceModalTitle.textContent = 'Edit Source';
+        sourceNameInput.value = source.name || '';
+        sourceFolderInput.value = source.folderPath || '';
+        sourceModal.classList.add('open');
+        sourceModal.setAttribute('aria-hidden', 'false');
+        sourceNameInput.focus();
+      }
+
+      function closeSourceModal() {
+        sourceModal.classList.remove('open');
+        sourceModal.setAttribute('aria-hidden', 'true');
+      }
+
+      async function saveSource() {
+        const name = sourceNameInput.value.trim();
+        const folderPath = sourceFolderInput.value.trim();
+        if (!name) {
+          alert('Please enter a source name.');
+          return;
+        }
+        if (!folderPath) {
+          alert('Please enter the absolute folder path.');
+          return;
+        }
+
+        const payload = { name, folderPath };
+        const url = editingSourceId === null ? '/api/statement-sources' : `/api/statement-sources/${editingSourceId}`;
+        const method = editingSourceId === null ? 'POST' : 'PUT';
+        try {
+          const response = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          if (!response.ok) throw new Error('HTTP ' + response.status);
+          closeSourceModal();
+          await loadSources();
+        } catch (err) {
+          alert('Could not save the source. Is the server running?');
+          console.error(err);
+        }
+      }
+
+      async function deleteSource(id) {
+        const source = sources.find((s) => s.id === id);
+        const label = source ? source.name : 'this source';
+        if (!confirm(`Delete "${label}"?`)) return;
+        try {
+          const response = await fetch(`/api/statement-sources/${id}`, { method: 'DELETE' });
+          if (!response.ok) throw new Error('HTTP ' + response.status);
+          await loadSources();
+        } catch (err) {
+          alert('Could not delete the source. Is the server running?');
           console.error(err);
         }
       }
@@ -526,6 +689,7 @@ Auto Payment $60.00</textarea>
 
       function showView(viewName) {
         document.getElementById('budgetView').style.display = viewName === 'budget' ? 'block' : 'none';
+        document.getElementById('sourcesView').style.display = viewName === 'sources' ? 'block' : 'none';
         document.getElementById('analysisView').style.display = viewName === 'analysis' ? 'block' : 'none';
         document.getElementById('settingsView').style.display = viewName === 'settings' ? 'block' : 'none';
         document.querySelectorAll('.nav-item').forEach((button) => {

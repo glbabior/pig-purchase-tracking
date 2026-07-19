@@ -2,6 +2,12 @@ package com.pigpurchases.model;
 
 import jakarta.persistence.*;
 
+/**
+ * A place statements are imported from: a friendly name plus the absolute
+ * folder path where that account's statement files live. parserRules holds the
+ * parsing configuration established during ingest setup; it is stored per source
+ * but not surfaced in the UI.
+ */
 @Entity
 @Table(name = "statement_sources")
 public class StatementSource {
@@ -9,15 +15,19 @@ public class StatementSource {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private String accountName;
-    private String fileType; // CSV, PDF, OFX, etc.
-    private String parserConfig; // JSON config for parsing specific file formats
+    private String name;
+
+    @Column(length = 1024)
+    private String folderPath;
+
+    @Lob
+    private String parserRules;
 
     public StatementSource() {}
 
-    public StatementSource(String accountName, String fileType) {
-        this.accountName = accountName;
-        this.fileType = fileType;
+    public StatementSource(String name, String folderPath) {
+        this.name = name;
+        this.folderPath = folderPath;
     }
 
     public Long getId() {
@@ -28,27 +38,27 @@ public class StatementSource {
         this.id = id;
     }
 
-    public String getAccountName() {
-        return accountName;
+    public String getName() {
+        return name;
     }
 
-    public void setAccountName(String accountName) {
-        this.accountName = accountName;
+    public void setName(String name) {
+        this.name = name;
     }
 
-    public String getFileType() {
-        return fileType;
+    public String getFolderPath() {
+        return folderPath;
     }
 
-    public void setFileType(String fileType) {
-        this.fileType = fileType;
+    public void setFolderPath(String folderPath) {
+        this.folderPath = folderPath;
     }
 
-    public String getParserConfig() {
-        return parserConfig;
+    public String getParserRules() {
+        return parserRules;
     }
 
-    public void setParserConfig(String parserConfig) {
-        this.parserConfig = parserConfig;
+    public void setParserRules(String parserRules) {
+        this.parserRules = parserRules;
     }
 }

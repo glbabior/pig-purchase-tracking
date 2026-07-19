@@ -2,8 +2,10 @@ package com.pigpurchases.server;
 
 import com.pigpurchases.model.AppSettings;
 import com.pigpurchases.model.BudgetEntry;
+import com.pigpurchases.model.StatementSource;
 import com.pigpurchases.repository.AppSettingsRepository;
 import com.pigpurchases.repository.BudgetEntryRepository;
+import com.pigpurchases.repository.StatementSourceRepository;
 import com.pigpurchases.repository.TransactionRepository;
 import com.pigpurchases.service.BudgetService;
 import com.pigpurchases.service.MonthlyHistoryEntry;
@@ -29,6 +31,9 @@ public class BudgetController {
 
     @Autowired
     private AppSettingsRepository appSettingsRepository;
+
+    @Autowired
+    private StatementSourceRepository statementSourceRepository;
 
     @Autowired
     private BudgetService budgetService;
@@ -91,6 +96,57 @@ public class BudgetController {
         response.put("annualBudget", annual.toPlainString());
         response.put("monthlyAllowance", monthly.toPlainString());
         return response;
+    }
+
+    // ---- Statement sources -------------------------------------------------
+    // parserRules is stored per source but intentionally never returned to the
+    // UI, and is preserved across updates (the UI only edits name + folderPath).
+
+    @GetMapping("/statement-sources")
+    public List<Map<String, Object>> getStatementSources() {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (StatementSource source : statementSourceRepository.findAll()) {
+            result.add(statementSourceResponse(source));
+        }
+        return result;
+    }
+
+    @PostMapping("/statement-sources")
+    public Map<String, Object> createStatementSource(@RequestBody Map<String, Object> payload) {
+        StatementSource source = new StatementSource();
+        source.setName(trimOrNull(payload.get("name")));
+        source.setFolderPath(trimOrNull(payload.get("folderPath")));
+        return statementSourceResponse(statementSourceRepository.save(source));
+    }
+
+    @PutMapping("/statement-sources/{id}")
+    public Map<String, Object> updateStatementSource(@PathVariable Long id, @RequestBody Map<String, Object> payload) {
+        StatementSource source = statementSourceRepository.findById(id).orElseThrow();
+        source.setName(trimOrNull(payload.get("name")));
+        source.setFolderPath(trimOrNull(payload.get("folderPath")));
+        // parserRules deliberately left untouched so ingest config survives edits.
+        return statementSourceResponse(statementSourceRepository.save(source));
+    }
+
+    @DeleteMapping("/statement-sources/{id}")
+    public void deleteStatementSource(@PathVariable Long id) {
+        statementSourceRepository.deleteById(id);
+    }
+
+    private Map<String, Object> statementSourceResponse(StatementSource source) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("id", source.getId());
+        map.put("name", source.getName() != null ? source.getName() : "");
+        map.put("folderPath", source.getFolderPath() != null ? source.getFolderPath() : "");
+        return map;
+    }
+
+    private String trimOrNull(Object value) {
+        if (value == null) {
+            return null;
+        }
+        String text = String.valueOf(value).trim();
+        return text.isEmpty() ? null : text;
     }
 
     @GetMapping("/entries")

@@ -6,5 +6,5 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface StatementSourceRepository extends JpaRepository<StatementSource, Long> {
-    StatementSource findByAccountName(String accountName);
+    StatementSource findByName(String name);
 }
