@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pig Purchases</title>
+    <style>
+      :root { color-scheme: light; }
+      body { font-family: Arial, sans-serif; margin: 0; background: #f5efe8; color: #2f220f; }
+      .page { max-width: 1100px; margin: 0 auto; padding: 2rem 1rem 3rem; }
+      .card { background: white; border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.08); padding: 1.5rem; }
+      header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+      h1 { color: #8a4b00; margin: 0; }
+      .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+      .tab { border: none; padding: 0.7rem 1rem; border-radius: 999px; background: #f4e7d5; color: #6b3b00; cursor: pointer; }
+      .tab.active { background: #8a4b00; color: white; }
+      .toolbar { display: flex; justify-content: flex-end; margin-bottom: 1rem; }
+      button.primary { background: #8a4b00; color: white; border: none; border-radius: 999px; padding: 0.7rem 1rem; cursor: pointer; }
+      button.secondary { background: #f4e7d5; color: #6b3b00; border: none; border-radius: 999px; padding: 0.7rem 1rem; cursor: pointer; }
+      table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
+      th, td { text-align: left; padding: 0.8rem; border-bottom: 1px solid #eee; }
+      th { font-size: 0.9rem; color: #8a4b00; }
+      .muted { color: #7a6753; font-size: 0.9rem; }
+      .actions button { margin-right: 0.5rem; }
+      .empty { color: #7a6753; padding: 1rem 0; }
+      .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: none; align-items: center; justify-content: center; padding: 1rem; }
+      .modal.open { display: flex; }
+      .modal-body { background: white; border-radius: 16px; width: min(480px, 100%); padding: 1.3rem; }
+      .field { margin-top: 0.9rem; display: flex; flex-direction: column; gap: 0.35rem; }
+      input, textarea { border: 1px solid #ddd; padding: 0.7rem; border-radius: 8px; font: inherit; }
+      textarea { min-height: 90px; resize: vertical; }
+      .modal-actions { display: flex; justify-content: flex-end; gap: 0.7rem; margin-top: 1rem; }
+      .hint { color: #7a6753; font-size: 0.9rem; }
+      .result { margin-top: 1rem; padding: 1rem; background: #fff8e8; border-radius: 12px; }
+      .analysis-grid { display: grid; gap: 1rem; }
+      .analysis-grid textarea { width: 100%; box-sizing: border-box; }
+      .summary { font-size: 0.95rem; }
+      @media (max-width: 700px) { .page { padding: 1rem; } }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <div class="card">
+        <header>
+          <div>
+            <h1>Pig Purchases</h1>
+            <p>Track monthly budgets against statement activity.</p>
+          </div>
+        </header>
+
+        <div class="tabs">
+          <button class="tab active" data-view="budget">Budget Entries</button>
+          <button class="tab" data-view="analysis">Analyze Spend</button>
+        </div>
+
+        <section id="budgetView">
+          <div class="toolbar">
+            <button class="primary" id="addItemBtn">Add Item</button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Title</th>
+                <th>Quantity</th>
+                <th>Monthly Budget</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="budgetTableBody"></tbody>
+          </table>
+          <div id="emptyState" class="empty">No budget items yet. Add your first entry to get started.</div>
+        </section>
+
+        <section id="analysisView" style="display:none">
+          <div class="analysis-grid">
+            <div class="hint">Use the budget items you entered above and paste statement lines for the month.</div>
+            <label for="statements">Statements</label>
+            <textarea id="statements" rows="8">Groceries $45.00
+Auto Payment $60.00</textarea>
+            <button class="primary" id="calculateBtn">Calculate spend</button>
+            <div id="result" class="result">No calculation run yet.</div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div id="itemModal" class="modal" aria-hidden="true">
+      <div class="modal-body">
+        <h2 id="modalTitle">Add Item</h2>
+        <div class="field">
+          <label for="itemTitle">Title</label>
+          <input id="itemTitle" type="text" />
+        </div>
+        <div class="field">
+          <label for="itemQuantity">Quantity</label>
+          <input id="itemQuantity" type="number" min="1" step="1" value="1" />
+        </div>
+        <div class="field">
+          <label for="itemBudget">Dollar amount per unit ($)</label>
+          <input id="itemBudget" type="text" inputmode="decimal" placeholder="100 or 100.50" />
+        </div>
+        <div class="field">
+          <label for="itemHints">Hints for later mapping (optional)</label>
+          <textarea id="itemHints"></textarea>
+        </div>
+        <div class="modal-actions">
+          <button class="secondary" id="cancelModalBtn">Cancel</button>
+          <button class="primary" id="saveItemBtn">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const STORAGE_KEY = 'pig-purchases-entries';
+      let entries = loadEntries();
+      let editingIndex = null;
+
+      const budgetTableBody = document.getElementById('budgetTableBody');
+      const emptyState = document.getElementById('emptyState');
+      const itemModal = document.getElementById('itemModal');
+      const modalTitle = document.getElementById('modalTitle');
+      const itemTitleInput = document.getElementById('itemTitle');
+      const itemQuantityInput = document.getElementById('itemQuantity');
+      const itemBudgetInput = document.getElementById('itemBudget');
+      const itemHintsInput = document.getElementById('itemHints');
+
+      document.getElementById('addItemBtn').addEventListener('click', openAddModal);
+      document.getElementById('cancelModalBtn').addEventListener('click', closeModal);
+      document.getElementById('saveItemBtn').addEventListener('click', saveItem);
+      document.getElementById('calculateBtn').addEventListener('click', calculateSpend);
+
+      document.querySelectorAll('.tab').forEach((button) => {
+        button.addEventListener('click', () => showView(button.dataset.view));
+      });
+
+      itemModal.addEventListener('click', (event) => {
+        if (event.target === itemModal) closeModal();
+      });
+
+      initializeEntries();
+
+      async function initializeEntries() {
+        if (!entries.length) {
+          try {
+            const response = await fetch('/api/entries');
+            entries = await response.json();
+            saveEntries();
+          } catch (err) {
+            console.log('No server entries available');
+          }
+        }
+        renderEntries();
+      }
+
+      function loadEntries() {
+        try {
+          const saved = localStorage.getItem(STORAGE_KEY);
+          return saved ? JSON.parse(saved) : [];
+        } catch (error) {
+          return [];
+        }
+      }
+
+      function saveEntries() {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+      }
+
+      function renderEntries() {
+        budgetTableBody.innerHTML = '';
+        if (!entries.length) {
+          emptyState.style.display = 'block';
+          return;
+        }
+        emptyState.style.display = 'none';
+        entries.forEach((entry, index) => {
+          const row = document.createElement('tr');
+          row.innerHTML = `
+            <td>${escapeHtml(entry.title || '')}</td>
+            <td>${escapeHtml(entry.quantity || 1)}</td>
+            <td>${formatCurrency(entry.monthlyBudget || 0)}</td>
+            <td class="actions">
+              <button class="secondary" data-edit-index="${index}">Edit</button>
+            </td>
+          `;
+          row.querySelector('[data-edit-index]').addEventListener('click', () => editEntry(index));
+          budgetTableBody.appendChild(row);
+        });
+      }
+
+      function openAddModal() {
+        editingIndex = null;
+        modalTitle.textContent = 'Add Item';
+        itemTitleInput.value = '';
+        itemQuantityInput.value = '1';
+        itemBudgetInput.value = '';
+        itemHintsInput.value = '';
+        itemModal.classList.add('open');
+        itemModal.setAttribute('aria-hidden', 'false');
+        itemTitleInput.focus();
+      }
+
+      function editEntry(index) {
+        const entry = entries[index];
+        editingIndex = index;
+        modalTitle.textContent = 'Edit Item';
+        itemTitleInput.value = entry.title || '';
+        itemQuantityInput.value = entry.quantity || '1';
+        itemBudgetInput.value = entry.monthlyBudget || '';
+        itemHintsInput.value = entry.hints || '';
+        itemModal.classList.add('open');
+        itemModal.setAttribute('aria-hidden', 'false');
+        itemTitleInput.focus();
+      }
+
+      function closeModal() {
+        itemModal.classList.remove('open');
+        itemModal.setAttribute('aria-hidden', 'true');
+      }
+
+      function saveItem() {
+        const title = itemTitleInput.value.trim();
+        const quantityValue = itemQuantityInput.value.trim();
+        const budgetValue = itemBudgetInput.value.trim();
+        if (!title) {
+          alert('Please enter a title.');
+          return;
+        }
+        if (!/^\d+$/.test(quantityValue)) {
+          alert('Please enter a valid whole number quantity.');
+          return;
+        }
+        const monthlyBudget = parseDollarAmount(budgetValue);
+        if (monthlyBudget === null) {
+          alert('Please enter a valid dollar amount such as 100 or 100.50.');
+          return;
+        }
+
+        const payload = {
+          title,
+          quantity: Number(quantityValue),
+          monthlyBudget: (Number(monthlyBudget) * Number(quantityValue)).toFixed(2),
+          hints: itemHintsInput.value.trim()
+        };
+
+        if (editingIndex === null) {
+          entries.push(payload);
+        } else {
+          entries[editingIndex] = payload;
+        }
+
+        saveEntries();
+        renderEntries();
+        closeModal();
+      }
+
+      function parseDollarAmount(value) {
+        const trimmed = value.replace(/\$/g, '').trim();
+        if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) {
+          return null;
+        }
+        return Number(trimmed).toFixed(2);
+      }
+
+      function formatCurrency(value) {
+        const numericValue = Number(value || 0);
+        return '$' + numericValue.toFixed(2);
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/\"/g, '&quot;');
+      }
+
+      function showView(viewName) {
+        document.getElementById('budgetView').style.display = viewName === 'budget' ? 'block' : 'none';
+        document.getElementById('analysisView').style.display = viewName === 'analysis' ? 'block' : 'none';
+        document.querySelectorAll('.tab').forEach((button) => {
+          button.classList.toggle('active', button.dataset.view === viewName);
+        });
+      }
+
+      async function calculateSpend() {
+        const statements = document.getElementById('statements').value.split(/\n/).filter(Boolean);
+        const payloadEntries = entries.map((entry) => ({
+          name: entry.title,
+          category: entry.title,
+          allowance: entry.monthlyBudget
+        }));
+
+        const response = await fetch('/api/summary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ entries: payloadEntries, statements })
+        });
+        const data = await response.json();
+        document.getElementById('result').innerHTML = `
+          <div class="summary">
+            <strong>Total budget:</strong> ${formatCurrency(data.totalBudget)}<br/>
+            <strong>Total spend:</strong> ${formatCurrency(data.totalSpend)}<br/>
+            <strong>Variance:</strong> ${formatCurrency(data.variance)}<br/>
+            <strong>Percent used:</strong> ${data.percentUsed}%<br/>
+            <strong>Rolling average budget:</strong> ${formatCurrency(data.rollingAverageBudget)}<br/>
+            <strong>Rolling average spend:</strong> ${formatCurrency(data.rollingAverageSpend)}
+          </div>
+        `;
+      }
+    </script>
+  </body>
+</html>

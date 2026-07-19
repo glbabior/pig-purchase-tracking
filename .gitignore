@@ -1,0 +1,21 @@
+# Build output
+target/
+
+# Bundled Maven distribution & downloaded archive (not source)
+maven/
+apache-maven.zip
+
+# Python virtual environment (helper scripts only)
+.venv/
+
+# H2 database — contains your local financial data, never commit
+*.mv.db
+*.trace.db
+*.lock.db
+
+# Local personal budget data — your amounts stay off git
+pig-purchases-data.txt
+budget-import.json
+
+# OS / shortcut noise
+*.lnk
