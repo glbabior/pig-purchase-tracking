@@ -16,6 +16,8 @@ import com.pigpurchases.service.MonthlyHistoryEntry;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -245,9 +247,13 @@ public class BudgetController {
         return result;
     }
 
-    /** Serve the original source PDF for an import, so a transaction is traceable to its file. */
+    /**
+     * Serve the original source PDF for an import, so a transaction is traceable
+     * to its file. Returned as a Resource so Spring supports HTTP range requests
+     * (the browser PDF viewer needs 206/Accept-Ranges, or it renders blank).
+     */
     @GetMapping("/imports/{id}/file")
-    public ResponseEntity<byte[]> getImportFile(@PathVariable Long id) throws IOException {
+    public ResponseEntity<Resource> getImportFile(@PathVariable Long id) {
         StatementImport imp = statementImportRepository.findById(id).orElseThrow();
         StatementSource source = statementSourceRepository.findById(imp.getStatementSourceId()).orElseThrow();
         Path base = Path.of(source.getFolderPath()).toAbsolutePath().normalize();
@@ -259,7 +265,7 @@ public class BudgetController {
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_PDF)
                 .header("Content-Disposition", "inline; filename=\"" + imp.getFileName() + "\"")
-                .body(Files.readAllBytes(file));
+                .body(new FileSystemResource(file));
     }
 
     /** Trace a transaction back to its source: import, statement date, file, and a link to view it. */
