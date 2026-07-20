@@ -17,13 +17,22 @@ public class ParsedTransaction {
     private final String vendor;
     private final BigDecimal amount;
     private final Type type;
+    private final boolean excludeFromSpend;
+    private final String excludeReason;
 
     public ParsedTransaction(LocalDate date, String description, String vendor, BigDecimal amount, Type type) {
+        this(date, description, vendor, amount, type, false, null);
+    }
+
+    public ParsedTransaction(LocalDate date, String description, String vendor, BigDecimal amount, Type type,
+                             boolean excludeFromSpend, String excludeReason) {
         this.date = date;
         this.description = description;
         this.vendor = vendor;
         this.amount = amount;
         this.type = type;
+        this.excludeFromSpend = excludeFromSpend;
+        this.excludeReason = excludeReason;
     }
 
     public LocalDate getDate() {
@@ -44,5 +53,14 @@ public class ParsedTransaction {
 
     public Type getType() {
         return type;
+    }
+
+    /** True when this transaction should not count toward budget spend (e.g. an inter-account transfer). */
+    public boolean isExcludeFromSpend() {
+        return excludeFromSpend;
+    }
+
+    public String getExcludeReason() {
+        return excludeReason;
     }
 }
