@@ -10,4 +10,7 @@ import java.util.List;
 public interface TransactionRepository extends JpaRepository<Transaction, Long> {
     List<Transaction> findByMonth(String month);
     List<Transaction> findByBudgetEntry_Id(Long budgetEntryId);
+    List<Transaction> findByStatementSourceId(Long statementSourceId);
+    List<Transaction> findByStatementImportId(Long statementImportId);
+    void deleteByStatementImportId(Long statementImportId);
 }

@@ -3,12 +3,15 @@ package com.pigpurchases.server;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -95,6 +98,40 @@ class StatementSourceControllerTest {
         // Delete.
         mvc.perform(delete("/api/statement-sources/" + id)).andExpect(status().isOk());
         assertNull(findByName("Test Bank"));
+    }
+
+    @Test
+    void fileBrowserListsFoldersAndPdfsWithinTheSource(@TempDir Path folder) throws Exception {
+        // temp source folder: a subdir with a PDF, plus a non-PDF that must be hidden
+        Files.createDirectories(folder.resolve("2026"));
+        Files.createFile(folder.resolve("2026").resolve("stmt.pdf"));
+        Files.createFile(folder.resolve("notes.txt"));
+
+        String created = mvc.perform(post("/api/statement-sources").contentType(APPLICATION_JSON)
+                        .content(json(Map.of("name", "Browse Test", "folderPath", folder.toString()))))
+                .andReturn().getResponse().getContentAsString();
+        long id = om.readTree(created).get("id").asLong();
+
+        // Root: shows the "2026" directory, hides notes.txt.
+        String root = mvc.perform(get("/api/statement-sources/" + id + "/files"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.atRoot").value(true))
+                .andReturn().getResponse().getContentAsString();
+        JsonNode entries = om.readTree(root).get("entries");
+        assertEquals(1, entries.size());
+        assertEquals("2026", entries.get(0).get("name").asText());
+        assertEquals("dir", entries.get(0).get("type").asText());
+
+        // Into 2026: shows the PDF.
+        mvc.perform(get("/api/statement-sources/" + id + "/files").param("relPath", "2026"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.atRoot").value(false))
+                .andExpect(jsonPath("$.entries[0].name").value("stmt.pdf"))
+                .andExpect(jsonPath("$.entries[0].type").value("file"));
+
+        // Path traversal is rejected.
+        mvc.perform(get("/api/statement-sources/" + id + "/files").param("relPath", "../.."))
+                .andExpect(status().is4xxClientError());
     }
 
     private JsonNode findByName(String name) throws Exception {

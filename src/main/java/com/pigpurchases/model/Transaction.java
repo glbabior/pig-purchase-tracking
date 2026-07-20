@@ -15,7 +15,14 @@ public class Transaction {
     private String description;
     private String vendor;
     private BigDecimal amount;
+
+    @Column(name = "txn_month") // "month" is a reserved word in H2
     private String month; // YYYY-MM format
+
+    private Long statementImportId;   // the ingest batch this came from
+    private Long statementSourceId;   // denormalized for convenient querying
+    private String type;              // ParsedTransaction.Type name (PURCHASE, WITHDRAWAL, ...)
+    private boolean excludeFromSpend; // transfers etc.: kept, but not counted as spend
 
     @ManyToOne
     @JoinColumn(name = "budget_entry_id")
@@ -97,4 +104,16 @@ public class Transaction {
     public void setNotes(String notes) {
         this.notes = notes;
     }
+
+    public Long getStatementImportId() { return statementImportId; }
+    public void setStatementImportId(Long statementImportId) { this.statementImportId = statementImportId; }
+
+    public Long getStatementSourceId() { return statementSourceId; }
+    public void setStatementSourceId(Long statementSourceId) { this.statementSourceId = statementSourceId; }
+
+    public String getType() { return type; }
+    public void setType(String type) { this.type = type; }
+
+    public boolean isExcludeFromSpend() { return excludeFromSpend; }
+    public void setExcludeFromSpend(boolean excludeFromSpend) { this.excludeFromSpend = excludeFromSpend; }
 }

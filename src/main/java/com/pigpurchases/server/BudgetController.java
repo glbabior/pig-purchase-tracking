@@ -2,25 +2,35 @@ package com.pigpurchases.server;
 
 import com.pigpurchases.model.AppSettings;
 import com.pigpurchases.model.BudgetEntry;
+import com.pigpurchases.model.StatementImport;
 import com.pigpurchases.model.StatementSource;
+import com.pigpurchases.model.Transaction;
 import com.pigpurchases.repository.AppSettingsRepository;
 import com.pigpurchases.repository.BudgetEntryRepository;
+import com.pigpurchases.repository.StatementImportRepository;
 import com.pigpurchases.repository.StatementSourceRepository;
 import com.pigpurchases.repository.TransactionRepository;
 import com.pigpurchases.service.BudgetService;
+import com.pigpurchases.service.IngestService;
 import com.pigpurchases.service.MonthlyHistoryEntry;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.YearMonth;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 @RestController
 @RequestMapping("/api")
@@ -36,6 +46,12 @@ public class BudgetController {
 
     @Autowired
     private StatementSourceRepository statementSourceRepository;
+
+    @Autowired
+    private StatementImportRepository statementImportRepository;
+
+    @Autowired
+    private IngestService ingestService;
 
     @Autowired
     private BudgetService budgetService;
@@ -156,6 +172,120 @@ public class BudgetController {
     }
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    // ---- Ingest: in-app file browser, ingest a file, and import history -----
+
+    @GetMapping("/statement-sources/{id}/files")
+    public Map<String, Object> browseFiles(@PathVariable Long id,
+                                           @RequestParam(required = false, defaultValue = "") String relPath) throws IOException {
+        StatementSource source = statementSourceRepository.findById(id).orElseThrow();
+        Path base = Path.of(source.getFolderPath()).toAbsolutePath().normalize();
+        Path dir = resolveWithin(base, relPath);
+
+        List<Map<String, Object>> entries = new ArrayList<>();
+        if (Files.isDirectory(dir)) {
+            try (Stream<Path> stream = Files.list(dir)) {
+                stream.filter(p -> Files.isDirectory(p)
+                                || p.getFileName().toString().toLowerCase().endsWith(".pdf"))
+                        .sorted(Comparator.comparing((Path p) -> Files.isDirectory(p) ? 0 : 1)
+                                .thenComparing(p -> p.getFileName().toString().toLowerCase()))
+                        .forEach(p -> {
+                            Map<String, Object> entry = new HashMap<>();
+                            entry.put("name", p.getFileName().toString());
+                            entry.put("type", Files.isDirectory(p) ? "dir" : "file");
+                            entry.put("relPath", base.relativize(p).toString());
+                            entries.add(entry);
+                        });
+            }
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("relPath", base.relativize(dir).toString());
+        response.put("atRoot", dir.equals(base));
+        response.put("parentRelPath", dir.equals(base) ? null : base.relativize(dir.getParent()).toString());
+        response.put("exists", Files.isDirectory(dir));
+        response.put("entries", entries);
+        return response;
+    }
+
+    @PostMapping("/statement-sources/{id}/ingest")
+    public Map<String, Object> ingestFile(@PathVariable Long id, @RequestBody Map<String, Object> payload) throws IOException {
+        StatementSource source = statementSourceRepository.findById(id).orElseThrow();
+        Path base = Path.of(source.getFolderPath()).toAbsolutePath().normalize();
+        Path file = resolveWithin(base, String.valueOf(payload.get("relPath")));
+        if (!Files.isRegularFile(file)) {
+            throw new IllegalArgumentException("Not a file: " + payload.get("relPath"));
+        }
+        IngestService.IngestResult result = ingestService.ingest(source, file);
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("importId", result.importId());
+        response.put("statementDate", result.statementDate() != null ? result.statementDate().toString() : null);
+        response.put("fileName", result.fileName());
+        response.put("transactionCount", result.transactionCount());
+        response.put("excludedCount", result.excludedCount());
+        return response;
+    }
+
+    @GetMapping("/statement-sources/{id}/imports")
+    public List<Map<String, Object>> getImports(@PathVariable Long id) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (StatementImport imp : statementImportRepository.findByStatementSourceIdOrderByStatementDateDesc(id)) {
+            Map<String, Object> map = new HashMap<>();
+            map.put("id", imp.getId());
+            map.put("statementDate", imp.getStatementDate() != null ? imp.getStatementDate().toString() : null);
+            map.put("fileName", imp.getFileName());
+            map.put("importedAt", imp.getImportedAt() != null ? imp.getImportedAt().toString() : null);
+            map.put("transactionCount", imp.getTransactionCount());
+            result.add(map);
+        }
+        return result;
+    }
+
+    @GetMapping("/transactions")
+    public List<Map<String, Object>> getTransactions(@RequestParam(required = false) Long sourceId,
+                                                     @RequestParam(required = false) String month) {
+        List<Transaction> txns;
+        if (sourceId != null) {
+            txns = transactionRepository.findByStatementSourceId(sourceId);
+        } else if (month != null) {
+            txns = transactionRepository.findByMonth(month);
+        } else {
+            txns = transactionRepository.findAll();
+        }
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Transaction t : txns) {
+            Map<String, Object> map = new HashMap<>();
+            map.put("id", t.getId());
+            map.put("date", t.getTransactionDate() != null ? t.getTransactionDate().toString() : null);
+            map.put("description", t.getDescription());
+            map.put("vendor", t.getVendor());
+            map.put("amount", t.getAmount() != null ? t.getAmount().toPlainString() : null);
+            map.put("type", t.getType());
+            map.put("month", t.getMonth());
+            map.put("sourceId", t.getStatementSourceId());
+            map.put("excludeFromSpend", t.isExcludeFromSpend());
+            result.add(map);
+        }
+        return result;
+    }
+
+    /** Invalid input (bad path, unknown parser, etc.) -> 400 rather than 500. */
+    @ExceptionHandler(IllegalArgumentException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public Map<String, String> handleBadRequest(IllegalArgumentException ex) {
+        return Map.of("error", ex.getMessage() != null ? ex.getMessage() : "Bad request");
+    }
+
+    /** Resolve relPath under base, rejecting anything that escapes the source folder. */
+    private Path resolveWithin(Path base, String relPath) {
+        String rel = (relPath == null || relPath.equals("null")) ? "" : relPath;
+        Path target = base.resolve(rel).toAbsolutePath().normalize();
+        if (!target.startsWith(base)) {
+            throw new IllegalArgumentException("Path escapes the source folder");
+        }
+        return target;
+    }
 
     private Map<String, Object> statementSourceResponse(StatementSource source) {
         Map<String, Object> map = new HashMap<>();
