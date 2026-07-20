@@ -56,6 +56,8 @@
       th .arrow { color: #b57a2b; }
       .muted { color: #7a6753; font-size: 0.9rem; }
       .chip { display: inline-block; background: #f4e7d5; color: #6b3b00; border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.8rem; margin: 0.1rem 0.15rem 0.1rem 0; cursor: help; }
+      a.chip { text-decoration: none; cursor: pointer; }
+      a.chip:hover { background: #e9d5b8; }
       .actions button { margin-right: 0.5rem; }
       .ingest-source { padding: 1rem 0; border-bottom: 1px solid #eee; }
       .ingest-source:last-child { border-bottom: none; }
@@ -537,7 +539,7 @@ Auto Payment $60.00</textarea>
         sources.forEach((source) => {
           const imports = ingestImports[source.id] || [];
           const chips = imports.length
-            ? imports.map((im) => `<span class="chip" title="${escapeHtml(im.fileName || '')} — ${im.transactionCount} transactions">${formatDdMmYy(im.statementDate)}</span>`).join(' ')
+            ? imports.map((im) => `<a class="chip" href="/api/imports/${im.id}/file" target="_blank" rel="noopener" title="${escapeHtml(im.fileName || '')} — ${im.transactionCount} transactions — click to open the source PDF">${formatDdMmYy(im.statementDate)}</a>`).join(' ')
             : '<span class="muted">No statements loaded yet.</span>';
           const card = document.createElement('div');
           card.className = 'ingest-source';

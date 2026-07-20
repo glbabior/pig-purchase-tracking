@@ -55,6 +55,12 @@ public class IngestService {
         LocalDate statementDate = statement.getStatementDate();
         String month = statementDate != null ? statementDate.toString().substring(0, 7) : null;
 
+        // Path relative to the source folder, so the exact file stays locatable.
+        Path base = Path.of(source.getFolderPath()).toAbsolutePath().normalize();
+        Path absFile = file.toAbsolutePath().normalize();
+        String relativePath = absFile.startsWith(base)
+                ? base.relativize(absFile).toString() : file.getFileName().toString();
+
         // Idempotent: drop any prior import for this source + statement date.
         statementImportRepository.findByStatementSourceIdAndStatementDate(source.getId(), statementDate)
                 .ifPresent(prev -> {
@@ -63,7 +69,7 @@ public class IngestService {
                 });
 
         StatementImport imp = statementImportRepository.save(new StatementImport(
-                source.getId(), statementDate, file.getFileName().toString(),
+                source.getId(), statementDate, file.getFileName().toString(), relativePath,
                 LocalDateTime.now(), statement.getTransactions().size()));
 
         int excludedCount = 0;

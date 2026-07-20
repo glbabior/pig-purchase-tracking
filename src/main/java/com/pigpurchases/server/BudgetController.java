@@ -17,6 +17,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
@@ -235,11 +237,52 @@ public class BudgetController {
             map.put("id", imp.getId());
             map.put("statementDate", imp.getStatementDate() != null ? imp.getStatementDate().toString() : null);
             map.put("fileName", imp.getFileName());
+            map.put("relativePath", imp.getRelativePath());
             map.put("importedAt", imp.getImportedAt() != null ? imp.getImportedAt().toString() : null);
             map.put("transactionCount", imp.getTransactionCount());
             result.add(map);
         }
         return result;
+    }
+
+    /** Serve the original source PDF for an import, so a transaction is traceable to its file. */
+    @GetMapping("/imports/{id}/file")
+    public ResponseEntity<byte[]> getImportFile(@PathVariable Long id) throws IOException {
+        StatementImport imp = statementImportRepository.findById(id).orElseThrow();
+        StatementSource source = statementSourceRepository.findById(imp.getStatementSourceId()).orElseThrow();
+        Path base = Path.of(source.getFolderPath()).toAbsolutePath().normalize();
+        String rel = imp.getRelativePath() != null ? imp.getRelativePath() : imp.getFileName();
+        Path file = resolveWithin(base, rel);
+        if (!Files.isRegularFile(file)) {
+            throw new IllegalArgumentException("Source file not found: " + rel);
+        }
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header("Content-Disposition", "inline; filename=\"" + imp.getFileName() + "\"")
+                .body(Files.readAllBytes(file));
+    }
+
+    /** Trace a transaction back to its source: import, statement date, file, and a link to view it. */
+    @GetMapping("/transactions/{id}/source")
+    public Map<String, Object> getTransactionSource(@PathVariable Long id) {
+        Transaction txn = transactionRepository.findById(id).orElseThrow();
+        Map<String, Object> map = new HashMap<>();
+        map.put("transactionId", txn.getId());
+        map.put("statementSourceId", txn.getStatementSourceId());
+        map.put("statementImportId", txn.getStatementImportId());
+        if (txn.getStatementSourceId() != null) {
+            statementSourceRepository.findById(txn.getStatementSourceId())
+                    .ifPresent(s -> map.put("sourceName", s.getName()));
+        }
+        if (txn.getStatementImportId() != null) {
+            statementImportRepository.findById(txn.getStatementImportId()).ifPresent(imp -> {
+                map.put("statementDate", imp.getStatementDate() != null ? imp.getStatementDate().toString() : null);
+                map.put("fileName", imp.getFileName());
+                map.put("relativePath", imp.getRelativePath());
+                map.put("fileUrl", "/api/imports/" + imp.getId() + "/file");
+            });
+        }
+        return map;
     }
 
     @GetMapping("/transactions")

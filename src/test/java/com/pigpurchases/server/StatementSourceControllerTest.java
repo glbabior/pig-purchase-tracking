@@ -2,6 +2,7 @@ package com.pigpurchases.server;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.pigpurchases.TestPdfs;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -132,6 +133,47 @@ class StatementSourceControllerTest {
         // Path traversal is rejected.
         mvc.perform(get("/api/statement-sources/" + id + "/files").param("relPath", "../.."))
                 .andExpect(status().is4xxClientError());
+    }
+
+    @Test
+    void ingestThenServeSourceFileAndTraceTransaction(@TempDir Path folder) throws Exception {
+        Files.createDirectories(folder.resolve("2026"));
+        Path pdf = folder.resolve("2026").resolve("stmt.pdf");
+        TestPdfs.write(pdf, TestPdfs.CHASE_LINES);
+
+        String created = mvc.perform(post("/api/statement-sources").contentType(APPLICATION_JSON)
+                        .content(json(Map.of("name", "Trace Test", "folderPath", folder.toString()))))
+                .andReturn().getResponse().getContentAsString();
+        long sourceId = om.readTree(created).get("id").asLong();
+
+        mvc.perform(put("/api/statement-sources/" + sourceId + "/parser-rules").contentType(APPLICATION_JSON)
+                        .content(json(Map.of("parserRules", "{\"parser\":\"card-pdf\"}"))))
+                .andExpect(status().isOk());
+
+        String ingestResp = mvc.perform(post("/api/statement-sources/" + sourceId + "/ingest").contentType(APPLICATION_JSON)
+                        .content(json(Map.of("relPath", "2026/stmt.pdf"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transactionCount").value(4))
+                .andReturn().getResponse().getContentAsString();
+        long importId = om.readTree(ingestResp).get("importId").asLong();
+
+        // The original PDF is served back.
+        var fileResponse = mvc.perform(get("/api/imports/" + importId + "/file"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse();
+        assertEquals("application/pdf", fileResponse.getContentType());
+        byte[] bytes = fileResponse.getContentAsByteArray();
+        assertTrue(bytes.length > 4 && bytes[0] == '%' && bytes[1] == 'P' && bytes[2] == 'D' && bytes[3] == 'F',
+                "served bytes should be a PDF");
+
+        // A transaction traces back to that file.
+        String txns = mvc.perform(get("/api/transactions").param("sourceId", String.valueOf(sourceId)))
+                .andReturn().getResponse().getContentAsString();
+        long txnId = om.readTree(txns).get(0).get("id").asLong();
+        mvc.perform(get("/api/transactions/" + txnId + "/source"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.fileUrl").value("/api/imports/" + importId + "/file"))
+                .andExpect(jsonPath("$.sourceName").value("Trace Test"));
     }
 
     private JsonNode findByName(String name) throws Exception {
