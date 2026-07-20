@@ -57,6 +57,20 @@
       .muted { color: #7a6753; font-size: 0.9rem; }
       .chip { display: inline-block; background: #f4e7d5; color: #6b3b00; border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.8rem; margin: 0.1rem 0.15rem 0.1rem 0; cursor: help; }
       .actions button { margin-right: 0.5rem; }
+      .ingest-source { padding: 1rem 0; border-bottom: 1px solid #eee; }
+      .ingest-source:last-child { border-bottom: none; }
+      .ingest-source h3 { margin: 0 0 0.2rem; color: #6b3b00; }
+      .ingest-source .path { color: #7a6753; font-size: 0.85rem; word-break: break-all; }
+      .history-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.6rem; align-items: center; }
+      .modal-body.wide { width: min(640px, 100%); }
+      .browse-path { color: #7a6753; font-size: 0.85rem; margin-top: 0.3rem; word-break: break-all; }
+      .browse-list { border: 1px solid #eee; border-radius: 10px; max-height: 340px; overflow: auto; margin-top: 0.6rem; }
+      .browse-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.5rem 0.8rem; border-bottom: 1px solid #f3f3f3; }
+      .browse-row:last-child { border-bottom: none; }
+      .browse-row.dir { cursor: pointer; }
+      .browse-row.dir:hover { background: #faf3e8; }
+      .browse-name { display: flex; align-items: center; gap: 0.5rem; word-break: break-all; }
+      .browse-icon { width: 1.2rem; text-align: center; flex-shrink: 0; }
       .empty { color: #7a6753; padding: 1rem 0; }
 
       /* Modal */
@@ -94,6 +108,7 @@
         <nav>
           <button class="nav-item active" data-view="budget">Budget Entries</button>
           <button class="nav-item" data-view="sources">Statement Sources</button>
+          <button class="nav-item" data-view="ingest">Ingest</button>
           <button class="nav-item" data-view="analysis">Analyze Spend</button>
           <button class="nav-item" data-view="settings">Settings</button>
         </nav>
@@ -163,6 +178,12 @@
               <div id="sourcesEmptyState" class="empty">No statement sources yet. Add one to get started.</div>
             </section>
 
+            <section id="ingestView" style="display:none">
+              <h2 class="view-title">Ingest Statements</h2>
+              <p class="hint">Load each source's statement. Click &ldquo;Load statement&hellip;&rdquo;, drill into the folder, and pick the PDF. Loaded statements are listed by date (dd/mm/yy).</p>
+              <div id="ingestSources"></div>
+            </section>
+
             <section id="analysisView" style="display:none">
               <h2 class="view-title">Analyze Spend</h2>
               <div class="analysis-grid">
@@ -196,6 +217,17 @@ Auto Payment $60.00</textarea>
           </div>
         </div>
       </main>
+    </div>
+
+    <div id="browseModal" class="modal" aria-hidden="true">
+      <div class="modal-body wide">
+        <h2 id="browseTitle">Load statement</h2>
+        <div class="browse-path">Folder: <span id="browsePath">\</span></div>
+        <div class="browse-list" id="browseBody"></div>
+        <div class="modal-actions">
+          <button class="secondary" id="browseCancelBtn">Cancel</button>
+        </div>
+      </div>
     </div>
 
     <div id="sourceModal" class="modal" aria-hidden="true">
@@ -250,6 +282,8 @@ Auto Payment $60.00</textarea>
       let settings = { annualBudget: '0', monthlyAllowance: '0' };
       let sources = [];
       let editingSourceId = null;
+      let ingestImports = {};
+      let browseSourceId = null;
 
       const budgetTableBody = document.getElementById('budgetTableBody');
       const emptyState = document.getElementById('emptyState');
@@ -266,6 +300,7 @@ Auto Payment $60.00</textarea>
       const sourceFolderInput = document.getElementById('sourceFolder');
       const sourcesTableBody = document.getElementById('sourcesTableBody');
       const sourcesEmptyState = document.getElementById('sourcesEmptyState');
+      const browseModal = document.getElementById('browseModal');
 
       document.getElementById('addItemBtn').addEventListener('click', openAddModal);
       document.getElementById('cancelModalBtn').addEventListener('click', closeModal);
@@ -279,6 +314,11 @@ Auto Payment $60.00</textarea>
 
       sourceModal.addEventListener('click', (event) => {
         if (event.target === sourceModal) closeSourceModal();
+      });
+
+      document.getElementById('browseCancelBtn').addEventListener('click', closeBrowseModal);
+      browseModal.addEventListener('click', (event) => {
+        if (event.target === browseModal) closeBrowseModal();
       });
 
       // Live-preview the monthly allowance as the annual budget is typed.
@@ -464,6 +504,125 @@ Auto Payment $60.00</textarea>
         } catch (err) {
           alert('Could not delete the source. Is the server running?');
           console.error(err);
+        }
+      }
+
+      // ---- Ingest (file browser + history) -----------------------------------
+
+      async function refreshIngest() {
+        try {
+          const response = await fetch('/api/statement-sources');
+          if (response.ok) sources = await response.json();
+        } catch (err) {
+          console.error('Could not load sources', err);
+        }
+        await Promise.all(sources.map(async (s) => {
+          try {
+            const r = await fetch(`/api/statement-sources/${s.id}/imports`);
+            ingestImports[s.id] = r.ok ? await r.json() : [];
+          } catch (err) {
+            ingestImports[s.id] = [];
+          }
+        }));
+        renderIngest();
+      }
+
+      function renderIngest() {
+        const container = document.getElementById('ingestSources');
+        container.innerHTML = '';
+        if (!sources.length) {
+          container.innerHTML = '<div class="empty">No statement sources yet. Add one on the Statement Sources screen.</div>';
+          return;
+        }
+        sources.forEach((source) => {
+          const imports = ingestImports[source.id] || [];
+          const chips = imports.length
+            ? imports.map((im) => `<span class="chip" title="${escapeHtml(im.fileName || '')} — ${im.transactionCount} transactions">${formatDdMmYy(im.statementDate)}</span>`).join(' ')
+            : '<span class="muted">No statements loaded yet.</span>';
+          const card = document.createElement('div');
+          card.className = 'ingest-source';
+          card.innerHTML = `
+            <h3>${escapeHtml(source.name || '')}</h3>
+            <div class="path">${escapeHtml(source.folderPath || '')}</div>
+            <div style="margin-top:0.6rem;"><button class="primary" data-load>Load statement…</button></div>
+            <div class="history-chips"><span class="muted" style="margin-right:0.3rem;">Loaded:</span>${chips}</div>
+          `;
+          card.querySelector('[data-load]').addEventListener('click', () => openBrowser(source.id, source.name || ''));
+          container.appendChild(card);
+        });
+      }
+
+      function formatDdMmYy(iso) {
+        if (!iso) return '??';
+        const parts = String(iso).split('-');
+        if (parts.length !== 3) return iso;
+        return `${parts[2]}/${parts[1]}/${parts[0].slice(2)}`;
+      }
+
+      function openBrowser(sourceId, name) {
+        browseSourceId = sourceId;
+        document.getElementById('browseTitle').textContent = 'Load statement — ' + name;
+        browseModal.classList.add('open');
+        browseModal.setAttribute('aria-hidden', 'false');
+        browseTo('');
+      }
+
+      function closeBrowseModal() {
+        browseModal.classList.remove('open');
+        browseModal.setAttribute('aria-hidden', 'true');
+      }
+
+      async function browseTo(relPath) {
+        const body = document.getElementById('browseBody');
+        body.innerHTML = '<div class="browse-row"><span class="muted">Loading…</span></div>';
+        let data;
+        try {
+          const r = await fetch(`/api/statement-sources/${browseSourceId}/files?relPath=${encodeURIComponent(relPath || '')}`);
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          data = await r.json();
+        } catch (err) {
+          body.innerHTML = '<div class="browse-row"><span class="empty">Could not read this folder. Check the source path.</span></div>';
+          return;
+        }
+        document.getElementById('browsePath').textContent = '\\' + (data.relPath || '');
+        let rows = '';
+        if (!data.atRoot) {
+          rows += `<div class="browse-row dir" data-up><div class="browse-name"><span class="browse-icon">↑</span> ..</div></div>`;
+        }
+        if (!data.entries.length) {
+          rows += '<div class="browse-row"><span class="muted">No folders or PDFs here.</span></div>';
+        }
+        data.entries.forEach((e) => {
+          if (e.type === 'dir') {
+            rows += `<div class="browse-row dir" data-dir="${escapeHtml(e.relPath)}"><div class="browse-name"><span class="browse-icon">📁</span> ${escapeHtml(e.name)}</div></div>`;
+          } else {
+            rows += `<div class="browse-row"><div class="browse-name"><span class="browse-icon">📄</span> ${escapeHtml(e.name)}</div><button class="secondary" data-file="${escapeHtml(e.relPath)}">Load</button></div>`;
+          }
+        });
+        body.innerHTML = rows;
+        const up = body.querySelector('[data-up]');
+        if (up) up.addEventListener('click', () => browseTo(data.parentRelPath || ''));
+        body.querySelectorAll('[data-dir]').forEach((el) => el.addEventListener('click', () => browseTo(el.getAttribute('data-dir'))));
+        body.querySelectorAll('[data-file]').forEach((el) => el.addEventListener('click', () => ingestFile(el.getAttribute('data-file'), el)));
+      }
+
+      async function ingestFile(relPath, btn) {
+        if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+        try {
+          const r = await fetch(`/api/statement-sources/${browseSourceId}/ingest`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ relPath })
+          });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          const res = await r.json();
+          closeBrowseModal();
+          const excl = res.excludedCount ? `\nExcluded from spend: ${res.excludedCount}` : '';
+          alert(`Loaded ${res.fileName}\nStatement date: ${formatDdMmYy(res.statementDate)}\nTransactions: ${res.transactionCount}${excl}`);
+          await refreshIngest();
+        } catch (err) {
+          alert('Could not load that file. Is it a valid statement for this source?');
+          if (btn) { btn.disabled = false; btn.textContent = 'Load'; }
         }
       }
 
@@ -697,11 +856,13 @@ Auto Payment $60.00</textarea>
       function showView(viewName) {
         document.getElementById('budgetView').style.display = viewName === 'budget' ? 'block' : 'none';
         document.getElementById('sourcesView').style.display = viewName === 'sources' ? 'block' : 'none';
+        document.getElementById('ingestView').style.display = viewName === 'ingest' ? 'block' : 'none';
         document.getElementById('analysisView').style.display = viewName === 'analysis' ? 'block' : 'none';
         document.getElementById('settingsView').style.display = viewName === 'settings' ? 'block' : 'none';
         document.querySelectorAll('.nav-item').forEach((button) => {
           button.classList.toggle('active', button.dataset.view === viewName);
         });
+        if (viewName === 'ingest') refreshIngest();
       }
 
       async function calculateSpend() {
