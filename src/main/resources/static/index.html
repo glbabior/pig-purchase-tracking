@@ -182,7 +182,7 @@
 
             <section id="ingestView" style="display:none">
               <h2 class="view-title">Ingest Statements</h2>
-              <p class="hint">Load each source's statement. Click &ldquo;Load statement&hellip;&rdquo;, drill into the folder, and pick the PDF. Loaded statements are listed by date (mm/dd/yy) &mdash; click one to open it in your PDF app.</p>
+              <p class="hint">Load each source's statement. Click &ldquo;Load statement&hellip;&rdquo;, drill into the folder, and pick the PDF. Loaded statements are listed by date (mm/dd/yy) &mdash; click one to view the statement in a new tab.</p>
               <div id="ingestSources"></div>
             </section>
 
@@ -539,7 +539,7 @@ Auto Payment $60.00</textarea>
         sources.forEach((source) => {
           const imports = ingestImports[source.id] || [];
           const chips = imports.length
-            ? imports.map((im) => `<button class="chip" data-open="${im.id}" title="${escapeHtml(im.fileName || '')} — ${im.transactionCount} transactions — click to open in your PDF app">${formatMmDdYy(im.statementDate)}</button>`).join(' ')
+            ? imports.map((im) => `<a class="chip" href="/api/imports/${im.id}/file" target="_blank" rel="noopener" title="${escapeHtml(im.fileName || '')} — ${im.transactionCount} transactions — click to view the statement">${formatMmDdYy(im.statementDate)}</a>`).join(' ')
             : '<span class="muted">No statements loaded yet.</span>';
           const card = document.createElement('div');
           card.className = 'ingest-source';
@@ -550,7 +550,6 @@ Auto Payment $60.00</textarea>
             <div class="history-chips"><span class="muted" style="margin-right:0.3rem;">Loaded:</span>${chips}</div>
           `;
           card.querySelector('[data-load]').addEventListener('click', () => openBrowser(source.id, source.name || ''));
-          card.querySelectorAll('[data-open]').forEach((el) => el.addEventListener('click', () => openStatementFile(el.getAttribute('data-open'))));
           container.appendChild(card);
         });
       }
