@@ -9,6 +9,8 @@ import com.pigpurchases.repository.StatementSourceRepository;
 import com.pigpurchases.repository.TransactionRepository;
 import com.pigpurchases.service.BudgetService;
 import com.pigpurchases.service.MonthlyHistoryEntry;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -153,12 +155,40 @@ public class BudgetController {
         return getParserRules(id);
     }
 
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
     private Map<String, Object> statementSourceResponse(StatementSource source) {
         Map<String, Object> map = new HashMap<>();
         map.put("id", source.getId());
         map.put("name", source.getName() != null ? source.getName() : "");
         map.put("folderPath", source.getFolderPath() != null ? source.getFolderPath() : "");
+        map.put("exclusions", extractExclusions(source.getParserRules()));
         return map;
+    }
+
+    /**
+     * The user-meaningful part of a source's (otherwise hidden) parser rules:
+     * the excludeFromSpend carve-outs, surfaced so they can be seen in the UI.
+     */
+    private List<Map<String, String>> extractExclusions(String parserRules) {
+        List<Map<String, String>> result = new ArrayList<>();
+        if (parserRules == null || parserRules.isBlank()) {
+            return result;
+        }
+        try {
+            JsonNode arr = objectMapper.readTree(parserRules).get("excludeFromSpend");
+            if (arr != null && arr.isArray()) {
+                for (JsonNode node : arr) {
+                    Map<String, String> exclusion = new HashMap<>();
+                    exclusion.put("contains", node.path("contains").asText(""));
+                    exclusion.put("reason", node.path("reason").asText(""));
+                    result.add(exclusion);
+                }
+            }
+        } catch (Exception ignored) {
+            // Malformed rules: just show no exclusions rather than failing the list.
+        }
+        return result;
     }
 
     private String trimOrNull(Object value) {

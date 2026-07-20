@@ -55,6 +55,7 @@
       th.sortable:hover { text-decoration: underline; }
       th .arrow { color: #b57a2b; }
       .muted { color: #7a6753; font-size: 0.9rem; }
+      .chip { display: inline-block; background: #f4e7d5; color: #6b3b00; border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.8rem; margin: 0.1rem 0.15rem 0.1rem 0; cursor: help; }
       .actions button { margin-right: 0.5rem; }
       .empty { color: #7a6753; padding: 1rem 0; }
 
@@ -153,6 +154,7 @@
                   <tr>
                     <th>Name</th>
                     <th>Folder Path</th>
+                    <th>Excluded from spend</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -375,9 +377,14 @@ Auto Payment $60.00</textarea>
         sourcesEmptyState.style.display = 'none';
         sources.forEach((source) => {
           const row = document.createElement('tr');
+          const exclusions = source.exclusions || [];
+          const exclusionsHtml = exclusions.length
+            ? exclusions.map((e) => `<span class="chip" title="${escapeHtml(e.reason || '')}">${escapeHtml(e.contains || '')}</span>`).join(' ')
+            : '<span class="muted">—</span>';
           row.innerHTML = `
             <td>${escapeHtml(source.name || '')}</td>
             <td class="muted">${escapeHtml(source.folderPath || '')}</td>
+            <td>${exclusionsHtml}</td>
             <td class="actions">
               <button class="secondary" data-edit>Edit</button>
               <button class="secondary" data-delete>Delete</button>
