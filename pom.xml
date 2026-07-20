@@ -30,6 +30,12 @@
             <scope>runtime</scope>
         </dependency>
         <dependency>
+            <!-- Text extraction from PDF statements for the ingest parsers. -->
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>3.0.3</version>
+        </dependency>
+        <dependency>
             <!-- Enables the in-app "Restart" button and auto-reload of
                  recompiled classes when running via spring-boot:run. -->
             <groupId>org.springframework.boot</groupId>

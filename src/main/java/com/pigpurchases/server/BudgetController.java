@@ -133,6 +133,26 @@ public class BudgetController {
         statementSourceRepository.deleteById(id);
     }
 
+    // Internal endpoints for managing a source's parser rules. Not surfaced in
+    // the main UI (rules are established during ingest setup, not user-edited).
+
+    @GetMapping("/statement-sources/{id}/parser-rules")
+    public Map<String, Object> getParserRules(@PathVariable Long id) {
+        StatementSource source = statementSourceRepository.findById(id).orElseThrow();
+        Map<String, Object> map = new HashMap<>();
+        map.put("id", source.getId());
+        map.put("parserRules", source.getParserRules() != null ? source.getParserRules() : "");
+        return map;
+    }
+
+    @PutMapping("/statement-sources/{id}/parser-rules")
+    public Map<String, Object> setParserRules(@PathVariable Long id, @RequestBody Map<String, Object> payload) {
+        StatementSource source = statementSourceRepository.findById(id).orElseThrow();
+        source.setParserRules(payload.get("parserRules") != null ? String.valueOf(payload.get("parserRules")) : null);
+        statementSourceRepository.save(source);
+        return getParserRules(id);
+    }
+
     private Map<String, Object> statementSourceResponse(StatementSource source) {
         Map<String, Object> map = new HashMap<>();
         map.put("id", source.getId());
