@@ -10,7 +10,7 @@ import java.time.LocalDate;
  * merchant name for later categorization.
  */
 public class ParsedTransaction {
-    public enum Type { PURCHASE, PAYMENT, CREDIT }
+    public enum Type { PURCHASE, PAYMENT, CREDIT, DEPOSIT, WITHDRAWAL, CHECK, FEE }
 
     private final LocalDate date;
     private final String description;
