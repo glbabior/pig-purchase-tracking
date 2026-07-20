@@ -268,6 +268,34 @@ public class BudgetController {
                 .body(new FileSystemResource(file));
     }
 
+    /** Open the source PDF in the machine's default PDF app (e.g. Adobe). Local app only. */
+    @PostMapping("/imports/{id}/open")
+    public Map<String, Object> openImportFile(@PathVariable Long id) throws IOException {
+        StatementImport imp = statementImportRepository.findById(id).orElseThrow();
+        StatementSource source = statementSourceRepository.findById(imp.getStatementSourceId()).orElseThrow();
+        Path base = Path.of(source.getFolderPath()).toAbsolutePath().normalize();
+        String rel = imp.getRelativePath() != null ? imp.getRelativePath() : imp.getFileName();
+        Path file = resolveWithin(base, rel);
+        if (!Files.isRegularFile(file)) {
+            throw new IllegalArgumentException("Source file not found: " + rel);
+        }
+        openWithDefaultApp(file);
+        return Map.of("opened", true, "file", file.toString());
+    }
+
+    private void openWithDefaultApp(Path file) throws IOException {
+        String os = System.getProperty("os.name", "").toLowerCase();
+        String path = file.toAbsolutePath().toString();
+        if (os.contains("win")) {
+            // cmd start needs an (empty) title argument before a quoted path
+            new ProcessBuilder("cmd", "/c", "start", "", path).start();
+        } else if (os.contains("mac")) {
+            new ProcessBuilder("open", path).start();
+        } else {
+            new ProcessBuilder("xdg-open", path).start();
+        }
+    }
+
     /** Trace a transaction back to its source: import, statement date, file, and a link to view it. */
     @GetMapping("/transactions/{id}/source")
     public Map<String, Object> getTransactionSource(@PathVariable Long id) {
