@@ -13,10 +13,10 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '25'
           cache: maven
       # Real statement files and the H2 database are never committed, so the
       # file-coupled reconciliation tests skip here; the portable parser tests,
       # the web-layer tests (in-memory H2), and the unit tests all run.
       - name: Run tests
-        run: mvn -B test
+        run: ./mvnw -B test

@@ -45,7 +45,7 @@ Pig Purchases is a desktop budget tracking application for managing monthly budg
 ## Technical Architecture
 
 ### Technology Stack
-- **Backend**: Spring Boot 3.3.2 (Java 17)
+- **Backend**: Spring Boot 3.5.16 (Java 25)
 - **Database**: H2 (embedded, file-based, no separate server needed)
 - **Frontend**: Vanilla JavaScript + HTML/CSS (not a heavy framework)
 - **ORM**: Spring Data JPA with Hibernate
