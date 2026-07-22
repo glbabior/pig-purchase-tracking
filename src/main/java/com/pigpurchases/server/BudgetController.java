@@ -268,10 +268,25 @@ public class BudgetController {
                 .body(new FileSystemResource(file));
     }
 
-    /** Open the source PDF in the machine's default PDF app (e.g. Adobe). Local app only. */
+    /** Open the source PDF in the machine's default PDF app (e.g. Acrobat). Local app only. */
     @PostMapping("/imports/{id}/open")
     public Map<String, Object> openImportFile(@PathVariable Long id) throws IOException {
-        StatementImport imp = statementImportRepository.findById(id).orElseThrow();
+        Path file = importFile(id);
+        launch(file, false);
+        return Map.of("opened", true, "file", file.toString());
+    }
+
+    /** Show the source PDF in the OS file manager with the file selected. */
+    @PostMapping("/imports/{id}/reveal")
+    public Map<String, Object> revealImportFile(@PathVariable Long id) throws IOException {
+        Path file = importFile(id);
+        launch(file, true);
+        return Map.of("revealed", true, "file", file.toString());
+    }
+
+    /** The on-disk PDF an import came from, resolved safely under its source folder. */
+    private Path importFile(Long importId) {
+        StatementImport imp = statementImportRepository.findById(importId).orElseThrow();
         StatementSource source = statementSourceRepository.findById(imp.getStatementSourceId()).orElseThrow();
         Path base = Path.of(source.getFolderPath()).toAbsolutePath().normalize();
         String rel = imp.getRelativePath() != null ? imp.getRelativePath() : imp.getFileName();
@@ -279,21 +294,37 @@ public class BudgetController {
         if (!Files.isRegularFile(file)) {
             throw new IllegalArgumentException("Source file not found: " + rel);
         }
-        openWithDefaultApp(file);
-        return Map.of("opened", true, "file", file.toString());
+        return file;
     }
 
-    private void openWithDefaultApp(Path file) throws IOException {
+    /**
+     * Hand the file to the desktop: {@code reveal} selects it in the file
+     * manager, otherwise it opens in the default handler for its type.
+     *
+     * The child is fire-and-forget — its streams are discarded so no pipe
+     * handles linger, and we never wait on it. On Windows the launch goes
+     * through {@code cmd start}, which performs a normal ShellExecute; Acrobat
+     * hands the file to an already-running instance from there. This only works
+     * when the server runs in the user's own interactive desktop session (as
+     * {@code launch.cmd} does) — a service or a different session cannot reach
+     * the running Acrobat and errors instead.
+     */
+    private void launch(Path file, boolean reveal) throws IOException {
         String os = System.getProperty("os.name", "").toLowerCase();
         String path = file.toAbsolutePath().toString();
+        ProcessBuilder pb;
         if (os.contains("win")) {
-            // cmd start needs an (empty) title argument before a quoted path
-            new ProcessBuilder("cmd", "/c", "start", "", path).start();
+            // "start" treats a leading quoted token as the window title, so pass an empty one.
+            pb = reveal ? new ProcessBuilder("explorer.exe", "/select," + path)
+                        : new ProcessBuilder("cmd", "/c", "start", "", path);
         } else if (os.contains("mac")) {
-            new ProcessBuilder("open", path).start();
+            pb = reveal ? new ProcessBuilder("open", "-R", path) : new ProcessBuilder("open", path);
         } else {
-            new ProcessBuilder("xdg-open", path).start();
+            pb = new ProcessBuilder("xdg-open", reveal ? file.getParent().toString() : path);
         }
+        pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+        pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+        pb.start();
     }
 
     /** Trace a transaction back to its source: import, statement date, file, and a link to view it. */

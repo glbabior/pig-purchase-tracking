@@ -58,7 +58,16 @@
       .chip { display: inline-block; background: #f4e7d5; color: #6b3b00; border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.8rem; margin: 0.1rem 0.15rem 0.1rem 0; cursor: help; }
       a.chip, button.chip { text-decoration: none; cursor: pointer; border: none; font: inherit; }
       a.chip:hover, button.chip:hover { background: #e9d5b8; }
+      /* A loaded statement: the date opens it in the PDF app, 📁 reveals it in
+         its folder. Paired so they read as one control. */
+      .chip-pair { display: inline-flex; align-items: stretch; margin: 0.1rem 0.15rem 0.1rem 0; }
+      .chip-pair .chip { margin: 0; }
+      .chip-pair .chip:first-child { border-radius: 999px 0 0 999px; padding-right: 0.45rem; }
+      .chip-pair .chip.reveal { border-radius: 0 999px 999px 0; padding-left: 0.35rem; border-left: 1px solid #e2cfae; }
       .actions button { margin-right: 0.5rem; }
+      /* Statement-source action buttons sit on their own line just above each
+         source row: left-aligned, no divider, so they hug the row below. */
+      tr.actions-row td { border-bottom: none; padding-top: 0.9rem; padding-bottom: 0.15rem; }
       .ingest-source { padding: 1rem 0; border-bottom: 1px solid #eee; }
       .ingest-source:last-child { border-bottom: none; }
       .ingest-source h3 { margin: 0 0 0.2rem; color: #6b3b00; }
@@ -172,7 +181,6 @@
                     <th>Name</th>
                     <th>Folder Path</th>
                     <th>Excluded from spend</th>
-                    <th></th>
                   </tr>
                 </thead>
                 <tbody id="sourcesTableBody"></tbody>
@@ -182,7 +190,7 @@
 
             <section id="ingestView" style="display:none">
               <h2 class="view-title">Ingest Statements</h2>
-              <p class="hint">Load each source's statement. Click &ldquo;Load statement&hellip;&rdquo;, drill into the folder, and pick the PDF. Loaded statements are listed by date (mm/dd/yy) &mdash; click one to view the statement in a new tab.</p>
+              <p class="hint">Load each source's statement. Click &ldquo;Load statement&hellip;&rdquo;, drill into the folder, and pick the PDF. Loaded statements are listed by date (mm/dd/yy) &mdash; click one to open it in Acrobat, or &#128193; to show it in its folder.</p>
               <div id="ingestSources"></div>
             </section>
 
@@ -418,22 +426,30 @@ Auto Payment $60.00</textarea>
         }
         sourcesEmptyState.style.display = 'none';
         sources.forEach((source) => {
-          const row = document.createElement('tr');
           const exclusions = source.exclusions || [];
           const exclusionsHtml = exclusions.length
             ? exclusions.map((e) => `<span class="chip" title="${escapeHtml(e.reason || '')}">${escapeHtml(e.contains || '')}</span>`).join(' ')
             : '<span class="muted">—</span>';
-          row.innerHTML = `
-            <td>${escapeHtml(source.name || '')}</td>
-            <td class="muted">${escapeHtml(source.folderPath || '')}</td>
-            <td>${exclusionsHtml}</td>
-            <td class="actions">
+
+          const actionsRow = document.createElement('tr');
+          actionsRow.className = 'actions-row';
+          actionsRow.innerHTML = `
+            <td class="actions" colspan="3">
               <button class="secondary" data-edit>Edit</button>
               <button class="secondary" data-delete>Delete</button>
             </td>
           `;
-          row.querySelector('[data-edit]').addEventListener('click', () => editSource(source.id));
-          row.querySelector('[data-delete]').addEventListener('click', () => deleteSource(source.id));
+          actionsRow.querySelector('[data-edit]').addEventListener('click', () => editSource(source.id));
+          actionsRow.querySelector('[data-delete]').addEventListener('click', () => deleteSource(source.id));
+
+          const row = document.createElement('tr');
+          row.innerHTML = `
+            <td>${escapeHtml(source.name || '')}</td>
+            <td class="muted">${escapeHtml(source.folderPath || '')}</td>
+            <td>${exclusionsHtml}</td>
+          `;
+
+          sourcesTableBody.appendChild(actionsRow);
           sourcesTableBody.appendChild(row);
         });
       }
@@ -539,7 +555,13 @@ Auto Payment $60.00</textarea>
         sources.forEach((source) => {
           const imports = ingestImports[source.id] || [];
           const chips = imports.length
-            ? imports.map((im) => `<a class="chip" href="/api/imports/${im.id}/file" target="_blank" rel="noopener" title="${escapeHtml(im.fileName || '')} — ${im.transactionCount} transactions — click to view the statement">${formatMmDdYy(im.statementDate)}</a>`).join(' ')
+            ? imports.map((im) => {
+                const label = `${escapeHtml(im.fileName || '')} — ${im.transactionCount} transactions`;
+                return `<span class="chip-pair"
+                  ><button class="chip" data-open="${im.id}" title="${label} — click to open in your PDF app">${formatMmDdYy(im.statementDate)}</button
+                  ><button class="chip reveal" data-reveal="${im.id}" title="Show this file in its folder">📁</button
+                ></span>`;
+              }).join(' ')
             : '<span class="muted">No statements loaded yet.</span>';
           const card = document.createElement('div');
           card.className = 'ingest-source';
@@ -550,6 +572,10 @@ Auto Payment $60.00</textarea>
             <div class="history-chips"><span class="muted" style="margin-right:0.3rem;">Loaded:</span>${chips}</div>
           `;
           card.querySelector('[data-load]').addEventListener('click', () => openBrowser(source.id, source.name || ''));
+          card.querySelectorAll('[data-open]').forEach((el) =>
+            el.addEventListener('click', () => openStatementFile(el.getAttribute('data-open'))));
+          card.querySelectorAll('[data-reveal]').forEach((el) =>
+            el.addEventListener('click', () => revealStatementFile(el.getAttribute('data-reveal'))));
           container.appendChild(card);
         });
       }
@@ -561,12 +587,27 @@ Auto Payment $60.00</textarea>
         return `${parts[1]}/${parts[2]}/${parts[0].slice(2)}`;
       }
 
+      /**
+       * Hand the statement to the desktop PDF app (Acrobat). This only works
+       * when the server runs in your own desktop session; if it can't, fall
+       * back to viewing the PDF in a browser tab rather than dead-ending.
+       */
       async function openStatementFile(importId) {
         try {
           const r = await fetch(`/api/imports/${importId}/open`, { method: 'POST' });
           if (!r.ok) throw new Error('HTTP ' + r.status);
         } catch (err) {
-          alert('Could not open the statement in your PDF app.');
+          console.error('Desktop open failed; falling back to in-browser view', err);
+          window.open(`/api/imports/${importId}/file`, '_blank', 'noopener');
+        }
+      }
+
+      async function revealStatementFile(importId) {
+        try {
+          const r = await fetch(`/api/imports/${importId}/reveal`, { method: 'POST' });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+        } catch (err) {
+          alert('Could not show the file in its folder.');
           console.error(err);
         }
       }
