@@ -218,6 +218,11 @@ _Last verified: 2026-07-22 (end-to-end against a running server, real statements
   PDF app (Acrobat), or revealed in its folder
 - **Reconciliation tests** that verify each parser's output against the control
   totals printed on the statement (see Development & Testing)
+- **Mapping runs**: the Mapping screen, run setup with consumed-statement
+  hiding, deterministic categorization, the parked "Other" bucket with manual
+  assignment, re-running, and deletion — everything in
+  [Transaction Mapping — Analysis Runs](#transaction-mapping--analysis-runs)
+  except the AI pass
 
 ### 🧱 Known gaps in what's built
 - **Parser rules are not editable in the UI.** Which parser runs is decided by the
@@ -225,9 +230,14 @@ _Last verified: 2026-07-22 (end-to-end against a running server, real statements
   A source created through the UI therefore has no parser, and ingest fails with
   `No parser configured for id: ''`. Rules must be set via
   `PUT /api/statement-sources/{id}/parser-rules` until this is surfaced.
-- **Nothing is categorized yet.** `Transaction.budgetEntry` is never populated —
-  transactions are stored and excluded-from-spend flagged, but not mapped to
-  budget entries.
+- **Categorization recall is low until hints are written.** The deterministic
+  matcher is precise but narrow: on the June 2026 run (181 transactions across
+  all four sources) it mapped 9, excluded 3 transfers, and parked 169. Every
+  match was correct — the gap is recall, not accuracy, because 29 of 32 budget
+  entries have no hints and merchant names like `FRESHMARKET WHSE` don't resemble
+  entry names like `Groceries`. Closing it means either adding `match:` lines to
+  the entries or landing the AI pass.
+- **The AI pass is not implemented.** Everything unresolved parks as "Other".
 - **Analyze Spend is still the original placeholder.** It posts pasted textarea
   lines to `POST /api/summary`, which regex-sums any line containing `$`, and
   ignores the parsed transactions sitting in H2. The rolling average is likewise
@@ -235,8 +245,7 @@ _Last verified: 2026-07-22 (end-to-end against a running server, real statements
 - Only PDF is supported. CSV and OFX are not implemented.
 
 ### ⚠️ Planned
-- **Mapping runs**: the Mapping screen, run setup, and hint-driven categorization
-  described in [Transaction Mapping — Analysis Runs](#transaction-mapping--analysis-runs)
+- **AI categorization pass** for what the deterministic matcher cannot resolve
 - **Real analysis**: total spend vs. total budget per month driven by mapping runs;
   per-entry breakdown, month-over-month comparison, rolling averages, charts
 - **Parked-transaction review**: work through the "Other" bucket and turn the
@@ -247,7 +256,7 @@ _Last verified: 2026-07-22 (end-to-end against a running server, real statements
 
 ## Transaction Mapping — Analysis Runs
 
-_Not implemented yet — this is the agreed methodology._
+_Implemented, apart from the AI pass — see "How mapping decides" below._
 
 Analysis is **monthly**, and a month is defined by an explicit **mapping run**: a
 named month bound to exactly one ingested statement per statement source.
@@ -327,18 +336,51 @@ resolved in this order:
    from Bayside, Ridgeline rent covered by insurance) are recorded against the run
    but never counted as spend and never categorized — that is what stops
    double-counting.
-2. **Deterministic hint matching runs first.** Each remaining transaction is
-   matched against the budget entries' `hints` field. This is cheap, repeatable,
-   and keeps the hints file the real knowledge base.
-3. **Only the leftovers go to the Claude API.** Descriptions and vendor names that
-   hint matching could not resolve are sent for categorization, along with the
-   budget entry list and the name of the source the transaction came from as
-   context. **Amounts, balances, and account identifiers are never included.**
+2. **Deterministic matching runs first** (`HintMatcher`, implemented). Each
+   remaining transaction is matched against the budget entries. This is cheap,
+   repeatable, and keeps the entries the real knowledge base.
+3. **Only the leftovers go to the Claude API** (not implemented yet). Descriptions
+   and vendor names that matching could not resolve will be sent for
+   categorization, along with the budget entry list and the name of the source the
+   transaction came from as context. **Amounts, balances, and account identifiers
+   are never included.**
 4. **Anything still unresolved is parked** — see below.
 
 Hints live on **budget entries**, not on statement sources. The source a
 transaction came from is supplied to the mapper as context, but the knowledge base
 being refined over time is the per-entry hints.
+
+#### Writing hints that the matcher can use
+
+Both sides are lowercased and stripped of everything that isn't a letter or digit
+before comparing, because statement text carries punctuation the budget entry name
+doesn't:
+
+```
+"City Power" -> citypower   matches  "CITYPOWER 800-555-0142 CA"
+"Novacell"    -> novacell    matches  "NOVA-CELL PCS SVC"
+"Daily Grind"   -> dailygrind    matches  "DAILYGRIND*COFFEE"
+```
+
+The entry's **name** is always used as a pattern. Hints are otherwise prose
+written for the AI pass to read, which cannot be substring-matched — so a hint
+line may declare an explicit literal with a `match:` prefix, and **only those
+lines take part in the deterministic pass**:
+
+```
+This is my auto loan payment
+match: MERIDIAN MOTORS
+match: CRESTLINE AUTO
+```
+
+Two rules keep this pass conservative, because a wrong automatic answer is worse
+than parking a transaction for review:
+
+- Patterns shorter than 4 normalized characters are ignored — the entry "Gas"
+  would otherwise match "CITYPOWER" and "POWELL ST GARAGE".
+- When several entries match, the longest pattern wins as the most specific
+  ("Harbor Park Pass" over "Harbor Park"). If the longest is a tie between different
+  entries, the transaction is parked rather than guessed at.
 
 ### Parked transactions ("Other")
 
@@ -377,35 +419,49 @@ can report on a month directly:
 - Per-budget-entry breakdown of actual vs. allowance
 - Month-over-month comparison and rolling averages across completed runs
 
-### Data model (planned)
+### Data model
 
 Mapping results are kept **out of** the `transactions` table so re-running is
 clean and prior runs stay intact:
 
 ```sql
-analysis_runs          id, month (YYYY-MM), created_at, status, mapped_count, parked_count
+analysis_runs          id, run_month (YYYY-MM, unique), created_at, mapped_at,
+                       status (DRAFT | MAPPED), mapped_count, parked_count, excluded_count
 analysis_run_sources   id, analysis_run_id, statement_source_id, statement_import_id
+                       unique (analysis_run_id, statement_source_id)
 transaction_mappings   id, analysis_run_id, transaction_id,
-                       budget_entry_id (null => parked / "Other"),
-                       decided_by (HINT | AI | MANUAL)
+                       budget_entry_id (null => PARKED or EXCLUDED),
+                       status (MAPPED_HINT | MAPPED_AI | MAPPED_MANUAL | PARKED | EXCLUDED),
+                       reason
+                       unique (analysis_run_id, transaction_id)
 ```
 
-The existing `transactions.budget_entry_id` column is superseded by
-`transaction_mappings` and will be dropped.
+`status` distinguishes PARKED (real spend, not yet attributed) from EXCLUDED
+(a transfer that must never count) — both have a null `budget_entry_id`, so the
+distinction cannot be inferred from that column alone.
 
-### Endpoints (planned)
+Statement reuse across runs is deliberately **not** a database constraint: it is
+hidden by default but permitted when explicitly requested, so it is enforced in
+the service, not the schema.
 
-- `GET /api/analysis-runs` — every run with its status and counts
+The unused `transactions.budget_entry_id` column is superseded by
+`transaction_mappings` and can be dropped.
+
+### Endpoints
+
+- `GET /api/mapping/setup?includeConsumed=` — everything the dialog needs: each
+  source with its selectable statements. Consumed ones are omitted unless asked
+  for, in which case each carries the month that consumed it.
+- `GET /api/analysis-runs` — every run with its statements, status and counts
 - `POST /api/analysis-runs` — create a run (month + one import per source; rejects
-  an incomplete source set)
+  an incomplete source set, a duplicate month, or a consumed statement unless
+  `allowConsumed` is set)
 - `POST /api/analysis-runs/{id}/map` — execute or re-execute mapping
-- `GET /api/analysis-runs/{id}/parked` — the "Other" bucket, for review sessions
-- `PUT /api/analysis-runs/{id}/mappings/{transactionId}` — manual categorization
+- `GET /api/analysis-runs/{id}/mappings?status=PARKED` — the "Other" bucket, for
+  review sessions
+- `PUT /api/analysis-runs/{id}/mappings/{transactionId}` — manual categorization;
+  a null `budgetEntryId` parks it again
 - `DELETE /api/analysis-runs/{id}` — delete a run, releasing its statements
-- `GET /api/statement-sources/{id}/imports?availableOnly=true` — the picker's
-  default view: statements not yet consumed by a run. Existing callers keep the
-  current unfiltered behaviour, and each import gains a `consumedByRun` field so
-  the "show already-used" toggle can label them.
 
 ## Data Privacy Summary
 
@@ -495,7 +551,10 @@ PigPurchases/
 │   ├── model/
 │   │   ├── BudgetEntry.java, Transaction.java, AppSettings.java
 │   │   ├── StatementSource.java  (account folder + parser rules)
-│   │   └── StatementImport.java  (one ingested statement file)
+│   │   ├── StatementImport.java  (one ingested statement file)
+│   │   ├── AnalysisRun.java      (a month + its chosen statements)
+│   │   ├── AnalysisRunSource.java(one source's statement in a run)
+│   │   └── TransactionMapping.java (how one txn resolved in one run)
 │   ├── parser/
 │   │   ├── StatementParser.java  (interface: Path -> ParsedStatement)
 │   │   ├── CardStatementParser.java, DepositStatementParser.java,
@@ -505,11 +564,14 @@ PigPurchases/
 │   ├── repository/               (one Spring Data repo per entity)
 │   ├── service/
 │   │   ├── IngestService.java    (parse -> exclude -> store, idempotent)
+│   │   ├── MappingService.java   (run setup, validation, mapping execution)
+│   │   ├── HintMatcher.java      (pure matching logic, heavily unit-tested)
 │   │   ├── BudgetService.java    (pure calculation logic, @Service bean)
 │   │   └── MonthlyHistoryEntry.java
 │   └── server/
-│       ├── BudgetController.java (all REST endpoints)
-│       └── DataInitializer.java  (one-time flat-file → DB migration)
+│       ├── BudgetController.java  (entries, settings, sources, ingest)
+│       ├── MappingController.java (mapping runs and review)
+│       └── DataInitializer.java   (one-time flat-file → DB migration)
 ├── src/main/resources/
 │   ├── static/index.html         (the entire vanilla-JS frontend)
 │   └── application.properties    (H2 config)
@@ -533,20 +595,15 @@ PigPurchases/
 
 ## Next Steps
 
-1. **Mapping runs.** Build the Mapping screen, run setup (month + one statement
-   per source, with consumed statements hidden), and persistence of run
-   membership — before any categorization logic. This alone makes "which
-   transactions are June's?" answerable.
-2. **Hint-driven mapping.** Deterministic matching of transactions to budget
-   entries via entry hints, with everything unresolved parked as "Other".
-3. **Monthly analysis.** Total actual spend vs. total budget with variance, plus
-   the per-entry breakdown, driven by a completed run.
-4. **AI categorization** for what hint matching cannot resolve (description +
-   vendor only; amounts stay local).
-5. **Parked review workflow** — work through "Other" together and feed the
-   results back into budget entry hints.
-6. Surface parser selection + exclusions in the statement-source UI, so a source
+1. **Raise categorization recall.** Two complementary routes: add `match:` lines
+   to budget entry hints for the recurring merchants (`FRESHMARKET`, `FRESHMARKET`,
+   `DAILYGRIND`, `HPK`/Harbor Park, `KP SCAL`), and/or implement the AI pass for
+   description + vendor (amounts stay local). Working through the parked bucket
+   on the Mapping screen is the natural way to discover which hints to write.
+2. **Monthly analysis.** Total actual spend vs. total budget with variance, plus
+   the per-entry breakdown, driven by a completed run — including "Other".
+3. Surface parser selection + exclusions in the statement-source UI, so a source
    created in the app can actually be ingested.
-7. Month-over-month comparison, rolling averages, charts.
-8. Export / reporting.
-9. Additional statement formats (CSV, OFX) as needed.
+4. Month-over-month comparison, rolling averages, charts.
+5. Export / reporting.
+6. Additional statement formats (CSV, OFX) as needed.

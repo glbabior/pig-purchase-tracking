@@ -68,6 +68,24 @@
       /* Statement-source action buttons sit on their own line just above each
          source row: left-aligned, no divider, so they hug the row below. */
       tr.actions-row td { border-bottom: none; padding-top: 0.9rem; padding-bottom: 0.15rem; }
+      /* Mapping runs */
+      .run-error { color: #b3261e; font-size: 0.9rem; margin-top: 0.8rem; min-height: 1.2rem; }
+      .run-source-pick { margin-top: 0.9rem; display: flex; flex-direction: column; gap: 0.3rem; }
+      .run-source-pick select { border: 1px solid #ddd; padding: 0.6rem; border-radius: 8px; font: inherit; }
+      .run-source-pick .none { color: #b3261e; font-size: 0.85rem; }
+      .run-card { padding: 1rem 0; border-bottom: 1px solid #eee; }
+      .run-card:last-child { border-bottom: none; }
+      .run-card h3 { margin: 0 0 0.3rem; color: #6b3b00; }
+      .run-card .counts { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.5rem 0; }
+      .badge { display: inline-block; border-radius: 999px; padding: 0.15rem 0.65rem; font-size: 0.8rem; }
+      .badge.mapped { background: #e4f0e4; color: #2f7d32; }
+      .badge.parked { background: #fbe9c9; color: #8a4b00; }
+      .badge.excluded { background: #ececec; color: #5c5c5c; }
+      .parked-row { display: flex; align-items: center; justify-content: space-between; gap: 0.7rem; padding: 0.55rem 0.8rem; border-bottom: 1px solid #f3f3f3; }
+      .parked-row:last-child { border-bottom: none; }
+      .parked-row .desc { flex: 1; min-width: 0; word-break: break-word; }
+      .parked-row .amt { white-space: nowrap; font-weight: bold; color: #8a4b00; }
+      .parked-row select { border: 1px solid #ddd; padding: 0.35rem; border-radius: 8px; font: inherit; max-width: 190px; }
       .ingest-source { padding: 1rem 0; border-bottom: 1px solid #eee; }
       .ingest-source:last-child { border-bottom: none; }
       .ingest-source h3 { margin: 0 0 0.2rem; color: #6b3b00; }
@@ -120,6 +138,7 @@
           <button class="nav-item active" data-view="budget">Budget Entries</button>
           <button class="nav-item" data-view="sources">Statement Sources</button>
           <button class="nav-item" data-view="ingest">Ingest</button>
+          <button class="nav-item" data-view="mapping">Mapping</button>
           <button class="nav-item" data-view="analysis">Analyze Spend</button>
           <button class="nav-item" data-view="settings">Settings</button>
         </nav>
@@ -194,6 +213,19 @@
               <div id="ingestSources"></div>
             </section>
 
+            <section id="mappingView" style="display:none">
+              <h2 class="view-title">Mapping</h2>
+              <p class="hint">A mapping run defines a month: pick the month, then choose one loaded
+                statement per source. A statement's own date doesn't matter &mdash; you decide which
+                statement belongs to which month. Statements already used by a run are hidden so the
+                same one can't be counted twice.</p>
+              <div class="toolbar">
+                <button class="primary" id="mapTransactionsBtn">Map Transactions</button>
+              </div>
+              <div id="runsList"></div>
+              <div id="runsEmptyState" class="empty">No mapping runs yet. Map transactions to define your first month.</div>
+            </section>
+
             <section id="analysisView" style="display:none">
               <h2 class="view-title">Analyze Spend</h2>
               <div class="analysis-grid">
@@ -236,6 +268,39 @@ Auto Payment $60.00</textarea>
         <div class="browse-list" id="browseBody"></div>
         <div class="modal-actions">
           <button class="secondary" id="browseCancelBtn">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="runModal" class="modal" aria-hidden="true">
+      <div class="modal-body wide">
+        <h2>Map Transactions</h2>
+        <div class="field">
+          <label for="runMonth">Month this run represents</label>
+          <input id="runMonth" type="month" />
+          <div class="hint">The month you're analyzing. Statement dates need not match it.</div>
+        </div>
+        <div id="runSources"></div>
+        <label class="hint" style="display:block;margin-top:0.9rem;">
+          <input type="checkbox" id="showConsumed" /> Show statements already used by another run
+        </label>
+        <div id="runError" class="run-error"></div>
+        <div class="modal-actions">
+          <button class="secondary" id="cancelRunBtn">Cancel</button>
+          <button class="primary" id="saveRunBtn">Map transactions</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="parkedModal" class="modal" aria-hidden="true">
+      <div class="modal-body wide">
+        <h2 id="parkedTitle">Parked transactions</h2>
+        <p class="hint">These couldn't be categorized automatically and are counted as
+          &ldquo;Other&rdquo;. Assign one to a budget entry here, then add a
+          <code>match:</code> line to that entry's hints so it maps itself next month.</p>
+        <div class="browse-list" id="parkedBody"></div>
+        <div class="modal-actions">
+          <button class="secondary" id="closeParkedBtn">Close</button>
         </div>
       </div>
     </div>
@@ -294,6 +359,7 @@ Auto Payment $60.00</textarea>
       let editingSourceId = null;
       let ingestImports = {};
       let browseSourceId = null;
+      let runs = [];
 
       const budgetTableBody = document.getElementById('budgetTableBody');
       const emptyState = document.getElementById('emptyState');
@@ -311,6 +377,8 @@ Auto Payment $60.00</textarea>
       const sourcesTableBody = document.getElementById('sourcesTableBody');
       const sourcesEmptyState = document.getElementById('sourcesEmptyState');
       const browseModal = document.getElementById('browseModal');
+      const runModal = document.getElementById('runModal');
+      const parkedModal = document.getElementById('parkedModal');
 
       document.getElementById('addItemBtn').addEventListener('click', openAddModal);
       document.getElementById('cancelModalBtn').addEventListener('click', closeModal);
@@ -329,6 +397,19 @@ Auto Payment $60.00</textarea>
       document.getElementById('browseCancelBtn').addEventListener('click', closeBrowseModal);
       browseModal.addEventListener('click', (event) => {
         if (event.target === browseModal) closeBrowseModal();
+      });
+
+      document.getElementById('mapTransactionsBtn').addEventListener('click', openRunModal);
+      document.getElementById('cancelRunBtn').addEventListener('click', closeRunModal);
+      document.getElementById('saveRunBtn').addEventListener('click', saveRun);
+      document.getElementById('showConsumed').addEventListener('change', loadRunSetup);
+      runModal.addEventListener('click', (event) => {
+        if (event.target === runModal) closeRunModal();
+      });
+
+      document.getElementById('closeParkedBtn').addEventListener('click', closeParkedModal);
+      parkedModal.addEventListener('click', (event) => {
+        if (event.target === parkedModal) closeParkedModal();
       });
 
       // Live-preview the monthly allowance as the annual budget is typed.
@@ -679,6 +760,244 @@ Auto Payment $60.00</textarea>
         }
       }
 
+      // ---- Mapping runs ------------------------------------------------------
+
+      // A run defines a month by binding it to one loaded statement per source.
+      // Statement dates are deliberately ignored: the user asserts the pairing.
+
+      async function refreshRuns() {
+        try {
+          const r = await fetch('/api/analysis-runs');
+          runs = r.ok ? await r.json() : [];
+        } catch (err) {
+          runs = [];
+          console.error('Could not load mapping runs', err);
+        }
+        renderRuns();
+      }
+
+      function renderRuns() {
+        const container = document.getElementById('runsList');
+        const empty = document.getElementById('runsEmptyState');
+        container.innerHTML = '';
+        empty.style.display = runs.length ? 'none' : 'block';
+
+        runs.forEach((run) => {
+          const statements = (run.sources || [])
+            .map((s) => `${escapeHtml(s.sourceName || '')}: ${formatMmDdYy(s.statementDate)}`)
+            .join(' &middot; ');
+          const parked = run.parkedCount
+            ? `<span class="badge parked">${run.parkedCount} parked</span>`
+            : '<span class="badge mapped">nothing parked</span>';
+          const card = document.createElement('div');
+          card.className = 'run-card';
+          card.innerHTML = `
+            <h3>${escapeHtml(run.month || '')}</h3>
+            <div class="muted">${statements || 'No statements recorded'}</div>
+            <div class="counts">
+              <span class="badge mapped">${run.mappedCount} mapped</span>
+              ${parked}
+              <span class="badge excluded">${run.excludedCount} excluded</span>
+            </div>
+            <div class="actions">
+              ${run.parkedCount ? '<button class="secondary" data-parked>Review parked</button>' : ''}
+              <button class="secondary" data-remap>Re-run mapping</button>
+              <button class="secondary" data-delete-run>Delete</button>
+            </div>
+          `;
+          const parkedBtn = card.querySelector('[data-parked]');
+          if (parkedBtn) parkedBtn.addEventListener('click', () => openParked(run));
+          card.querySelector('[data-remap]').addEventListener('click', () => remapRun(run.id));
+          card.querySelector('[data-delete-run]').addEventListener('click', () => deleteRun(run));
+          container.appendChild(card);
+        });
+      }
+
+      async function openRunModal() {
+        document.getElementById('runMonth').value = '';
+        document.getElementById('runError').textContent = '';
+        document.getElementById('showConsumed').checked = false;
+        runModal.classList.add('open');
+        runModal.setAttribute('aria-hidden', 'false');
+        await loadRunSetup();
+      }
+
+      function closeRunModal() {
+        runModal.classList.remove('open');
+        runModal.setAttribute('aria-hidden', 'true');
+      }
+
+      /** Build one statement picker per source. Every source must contribute. */
+      async function loadRunSetup() {
+        const container = document.getElementById('runSources');
+        const includeConsumed = document.getElementById('showConsumed').checked;
+        container.innerHTML = '<div class="hint">Loading statements…</div>';
+        let data;
+        try {
+          const r = await fetch(`/api/mapping/setup?includeConsumed=${includeConsumed}`);
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          data = await r.json();
+        } catch (err) {
+          container.innerHTML = '<div class="run-error">Could not load statements.</div>';
+          return;
+        }
+
+        container.innerHTML = '';
+        data.sources.forEach((source) => {
+          const field = document.createElement('div');
+          field.className = 'run-source-pick';
+          if (!source.statements.length) {
+            field.innerHTML = `
+              <label>${escapeHtml(source.name || '')}</label>
+              <div class="none">No unused statements — load one on the Ingest screen,
+                or tick the box below to reuse one.</div>
+            `;
+          } else {
+            const options = source.statements.map((s) => {
+              const used = s.consumed ? ` — already used by ${s.consumedByMonth || 'another run'}` : '';
+              return `<option value="${s.importId}">${formatMmDdYy(s.statementDate)} · ${escapeHtml(s.fileName || '')} · ${s.transactionCount} txns${escapeHtml(used)}</option>`;
+            }).join('');
+            field.innerHTML = `
+              <label>${escapeHtml(source.name || '')}</label>
+              <select data-source="${source.sourceId}">
+                <option value="">— choose a statement —</option>
+                ${options}
+              </select>
+            `;
+          }
+          container.appendChild(field);
+        });
+      }
+
+      async function saveRun() {
+        const month = document.getElementById('runMonth').value.trim();
+        const error = document.getElementById('runError');
+        error.textContent = '';
+        if (!/^\d{4}-\d{2}$/.test(month)) {
+          error.textContent = 'Please choose the month this run represents.';
+          return;
+        }
+
+        const selections = [];
+        let missing = false;
+        document.querySelectorAll('#runSources select[data-source]').forEach((select) => {
+          if (!select.value) missing = true;
+          else selections.push({ sourceId: Number(select.dataset.source), importId: Number(select.value) });
+        });
+        const sourceCount = document.querySelectorAll('#runSources .run-source-pick').length;
+        if (missing || selections.length !== sourceCount) {
+          error.textContent = 'Every source needs a statement before the run can be created.';
+          return;
+        }
+
+        const btn = document.getElementById('saveRunBtn');
+        btn.disabled = true;
+        btn.textContent = 'Mapping…';
+        try {
+          const created = await postJson('/api/analysis-runs', {
+            month,
+            selections,
+            allowConsumed: document.getElementById('showConsumed').checked
+          });
+          const mapped = await postJson(`/api/analysis-runs/${created.id}/map`, {});
+          closeRunModal();
+          const r = mapped.justMapped;
+          alert(`Mapped ${month}\nCategorized: ${r.mapped}\nParked as "Other": ${r.parked}\nExcluded transfers: ${r.excluded}`);
+          await refreshRuns();
+        } catch (err) {
+          error.textContent = err.message;
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Map transactions';
+        }
+      }
+
+      async function remapRun(runId) {
+        try {
+          const mapped = await postJson(`/api/analysis-runs/${runId}/map`, {});
+          const r = mapped.justMapped;
+          alert(`Re-mapped ${mapped.month}\nCategorized: ${r.mapped}\nParked as "Other": ${r.parked}\nExcluded transfers: ${r.excluded}`);
+          await refreshRuns();
+        } catch (err) {
+          alert('Could not re-run mapping: ' + err.message);
+        }
+      }
+
+      async function deleteRun(run) {
+        if (!confirm(`Delete the ${run.month} run? Its statements become available again.`)) return;
+        try {
+          const response = await fetch(`/api/analysis-runs/${run.id}`, { method: 'DELETE' });
+          if (!response.ok) throw new Error('HTTP ' + response.status);
+          await refreshRuns();
+        } catch (err) {
+          alert('Could not delete the run.');
+          console.error(err);
+        }
+      }
+
+      async function openParked(run) {
+        document.getElementById('parkedTitle').textContent = `Parked transactions — ${run.month}`;
+        const body = document.getElementById('parkedBody');
+        body.innerHTML = '<div class="parked-row"><span class="muted">Loading…</span></div>';
+        parkedModal.classList.add('open');
+        parkedModal.setAttribute('aria-hidden', 'false');
+
+        let rows;
+        try {
+          const r = await fetch(`/api/analysis-runs/${run.id}/mappings?status=PARKED`);
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          rows = await r.json();
+        } catch (err) {
+          body.innerHTML = '<div class="parked-row"><span class="run-error">Could not load parked transactions.</span></div>';
+          return;
+        }
+        if (!rows.length) {
+          body.innerHTML = '<div class="parked-row"><span class="muted">Nothing parked.</span></div>';
+          return;
+        }
+
+        const options = entries
+          .map((e) => `<option value="${e.id}">${escapeHtml(e.title || '')}</option>`)
+          .join('');
+        body.innerHTML = rows.map((row) => `
+          <div class="parked-row">
+            <div class="desc">
+              <div>${escapeHtml(row.description || '')}</div>
+              <div class="muted">${formatMmDdYy(row.date)}</div>
+            </div>
+            <div class="amt">${formatCurrency(Math.abs(Number(row.amount || 0)))}</div>
+            <select data-txn="${row.transactionId}">
+              <option value="">Other (parked)</option>
+              ${options}
+            </select>
+          </div>
+        `).join('');
+
+        body.querySelectorAll('select[data-txn]').forEach((select) => {
+          select.addEventListener('change', () => assignParked(run.id, select));
+        });
+      }
+
+      function closeParkedModal() {
+        parkedModal.classList.remove('open');
+        parkedModal.setAttribute('aria-hidden', 'true');
+      }
+
+      async function assignParked(runId, select) {
+        const budgetEntryId = select.value ? Number(select.value) : null;
+        select.disabled = true;
+        try {
+          await putJson(`/api/analysis-runs/${runId}/mappings/${select.dataset.txn}`, { budgetEntryId });
+          select.closest('.parked-row').style.opacity = budgetEntryId ? '0.55' : '1';
+          await refreshRuns();
+        } catch (err) {
+          alert('Could not save that categorization: ' + err.message);
+          select.value = '';
+        } finally {
+          select.disabled = false;
+        }
+      }
+
       // ---- Remainder (open spend) --------------------------------------------
 
       function renderRemainder() {
@@ -885,6 +1204,32 @@ Auto Payment $60.00</textarea>
 
       // ---- Helpers -----------------------------------------------------------
 
+      /**
+       * POST/PUT JSON and surface the server's own error text, since the mapping
+       * endpoints explain exactly why a run was rejected ("Every source needs a
+       * statement; missing: ...") and that message belongs in front of the user.
+       */
+      async function postJson(url, body) { return sendJson('POST', url, body); }
+      async function putJson(url, body) { return sendJson('PUT', url, body); }
+
+      async function sendJson(method, url, body) {
+        const response = await fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        let payload = null;
+        try {
+          payload = await response.json();
+        } catch (err) {
+          // no body, fall through to a generic message
+        }
+        if (!response.ok) {
+          throw new Error((payload && payload.error) || `Request failed (HTTP ${response.status})`);
+        }
+        return payload;
+      }
+
       function parseDollarAmount(value) {
         const trimmed = String(value).replace(/\$/g, '').replace(/,/g, '').trim();
         if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) {
@@ -910,12 +1255,14 @@ Auto Payment $60.00</textarea>
         document.getElementById('budgetView').style.display = viewName === 'budget' ? 'block' : 'none';
         document.getElementById('sourcesView').style.display = viewName === 'sources' ? 'block' : 'none';
         document.getElementById('ingestView').style.display = viewName === 'ingest' ? 'block' : 'none';
+        document.getElementById('mappingView').style.display = viewName === 'mapping' ? 'block' : 'none';
         document.getElementById('analysisView').style.display = viewName === 'analysis' ? 'block' : 'none';
         document.getElementById('settingsView').style.display = viewName === 'settings' ? 'block' : 'none';
         document.querySelectorAll('.nav-item').forEach((button) => {
           button.classList.toggle('active', button.dataset.view === viewName);
         });
         if (viewName === 'ingest') refreshIngest();
+        if (viewName === 'mapping') refreshRuns();
       }
 
       async function calculateSpend() {
