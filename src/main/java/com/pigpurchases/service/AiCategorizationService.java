@@ -10,12 +10,12 @@ import com.anthropic.models.messages.JsonOutputFormat;
 import com.anthropic.models.messages.Message;
 import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.OutputConfig;
-import com.anthropic.models.messages.ThinkingConfigAdaptive;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pigpurchases.model.BudgetEntry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -47,7 +47,12 @@ public class AiCategorizationService {
 
     private static final Logger log = LoggerFactory.getLogger(AiCategorizationService.class);
 
+    /** The debug-log category every outbound Claude call is filed under. */
+    private static final String CATEGORY = "anthropic";
+
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @Autowired private DebugLogService debugLog;
 
     @Value("${pigpurchases.ai.enabled:true}")
     private boolean enabled;
@@ -126,6 +131,8 @@ public class AiCategorizationService {
             log.warn("AI categorization disabled for this session — credentials were rejected ({}). "
                     + "Set ANTHROPIC_API_KEY and restart. Unresolved transactions stay parked as \"Other\".",
                     ex.getClass().getSimpleName());
+            debugLog.error(CATEGORY, "Credentials rejected (" + apiErrorText(ex)
+                    + "). AI categorization is off until the key is fixed and the app restarts.");
         }
     }
 
@@ -136,14 +143,27 @@ public class AiCategorizationService {
      */
     public Map<String, Suggestion> categorize(List<Candidate> candidates, List<BudgetEntry> entries) {
         Map<String, Suggestion> result = new LinkedHashMap<>();
-        if (candidates.isEmpty() || entries.isEmpty() || !isAvailable()) {
+        if (candidates.isEmpty() || entries.isEmpty()) {
+            return result;
+        }
+        if (!isAvailable()) {
+            debugLog.info(CATEGORY, "Skipped: AI categorization is "
+                    + (enabled ? "unavailable (no credentials found)" : "disabled in settings")
+                    + "; " + candidates.size() + " merchant(s) stay parked as \"Other\".");
             return result;
         }
 
+        int batches = (candidates.size() + batchSize - 1) / batchSize;
+        debugLog.info(CATEGORY, "Categorizing " + candidates.size() + " distinct merchant(s) in "
+                + batches + " request(s) to model " + model + ".");
+
+        int succeeded = 0;
         for (int start = 0; start < candidates.size(); start += batchSize) {
             List<Candidate> batch = candidates.subList(start, Math.min(start + batchSize, candidates.size()));
             try {
-                result.putAll(categorizeBatch(batch, entries));
+                Map<String, Suggestion> batchResult = categorizeBatch(batch, entries);
+                result.putAll(batchResult);
+                succeeded++;
             } catch (UnauthorizedException | PermissionDeniedException ex) {
                 // Bad or missing credentials: every remaining batch would fail the
                 // same way, so stop rather than firing one doomed request per batch.
@@ -153,25 +173,53 @@ public class AiCategorizationService {
                 // A failed batch means those transactions stay parked, which is the
                 // same outcome as before the AI pass existed. Never fail the run.
                 log.warn("AI categorization batch failed ({} items): {}", batch.size(), ex.toString());
+                debugLog.error(CATEGORY, "Request failed for " + batch.size() + " merchant(s): "
+                        + apiErrorText(ex));
             }
         }
+        debugLog.info(CATEGORY, "Done: " + result.size() + " merchant(s) categorized across "
+                + succeeded + "/" + batches + " successful request(s).");
         return result;
     }
 
     private Map<String, Suggestion> categorizeBatch(List<Candidate> batch, List<BudgetEntry> entries)
             throws Exception {
+        // No `thinking` config: this is a simple classification, and adaptive
+        // thinking is rejected on older models such as Haiku 4.5. Omitting it
+        // works on every model and keeps the request cheap.
         MessageCreateParams params = MessageCreateParams.builder()
                 .model(model)
                 .maxTokens(maxTokens)
                 .system(SYSTEM_PROMPT)
-                .thinking(ThinkingConfigAdaptive.builder().build())
                 .outputConfig(OutputConfig.builder().format(responseSchema()).build())
                 .addUserMessage(promptFor(batch, entries))
                 .build();
 
+        long startedAt = System.nanoTime();
         Message message = clientOrNull().messages().create(params);
+        long ms = (System.nanoTime() - startedAt) / 1_000_000;
+
         String json = firstText(message);
-        return parseSuggestions(json, batch, entries);
+        Map<String, Suggestion> suggestions = parseSuggestions(json, batch, entries);
+        debugLog.info(CATEGORY, "Request OK (" + batch.size() + " sent, " + suggestions.size()
+                + " categorized, " + tokenUsage(message) + ", " + ms + " ms).");
+        return suggestions;
+    }
+
+    /** Compact token line for the debug log, e.g. "1,842 in / 512 out tokens". */
+    private static String tokenUsage(Message message) {
+        try {
+            var usage = message.usage();
+            return usage.inputTokens() + " in / " + usage.outputTokens() + " out tokens";
+        } catch (Exception ignored) {
+            return "usage n/a";
+        }
+    }
+
+    /** Prefer the API's own error message over the SDK exception's toString(). */
+    private static String apiErrorText(Exception ex) {
+        String text = ex.getMessage();
+        return text != null && !text.isBlank() ? text : ex.toString();
     }
 
     private static String firstText(Message message) {

@@ -15,6 +15,9 @@ public class AppSettings {
 
     private BigDecimal annualBudget = BigDecimal.ZERO;
 
+    /** How many days the in-app debug log is kept before entries are pruned. */
+    private int debugLogRetentionDays = 2;
+
     public AppSettings() {}
 
     public Long getId() {
@@ -31,5 +34,13 @@ public class AppSettings {
 
     public void setAnnualBudget(BigDecimal annualBudget) {
         this.annualBudget = annualBudget;
+    }
+
+    public int getDebugLogRetentionDays() {
+        return debugLogRetentionDays;
+    }
+
+    public void setDebugLogRetentionDays(int debugLogRetentionDays) {
+        this.debugLogRetentionDays = debugLogRetentionDays;
     }
 }

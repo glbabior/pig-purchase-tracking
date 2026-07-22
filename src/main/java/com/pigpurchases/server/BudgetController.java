@@ -99,6 +99,10 @@ public class BudgetController {
     public Map<String, Object> updateSettings(@RequestBody Map<String, Object> payload) {
         AppSettings settings = loadOrCreateSettings();
         settings.setAnnualBudget(new BigDecimal(String.valueOf(payload.get("annualBudget"))));
+        if (payload.get("debugLogRetentionDays") != null) {
+            int days = ((Number) payload.get("debugLogRetentionDays")).intValue();
+            settings.setDebugLogRetentionDays(Math.max(0, days));
+        }
         return settingsResponse(appSettingsRepository.save(settings));
     }
 
@@ -117,6 +121,7 @@ public class BudgetController {
         Map<String, Object> response = new HashMap<>();
         response.put("annualBudget", annual.toPlainString());
         response.put("monthlyAllowance", monthly.toPlainString());
+        response.put("debugLogRetentionDays", settings.getDebugLogRetentionDays());
         return response;
     }
 

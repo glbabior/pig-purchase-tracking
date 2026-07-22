@@ -86,6 +86,16 @@
       .parked-row .desc { flex: 1; min-width: 0; word-break: break-word; }
       .parked-row .amt { white-space: nowrap; font-weight: bold; color: #8a4b00; }
       .parked-row select { border: 1px solid #ddd; padding: 0.35rem; border-radius: 8px; font: inherit; max-width: 190px; }
+      /* Debug log */
+      .log-row { display: grid; grid-template-columns: 12rem 4.5rem 1fr; gap: 0.6rem; padding: 0.4rem 0.6rem; border-bottom: 1px solid #f3f3f3; font-size: 0.88rem; align-items: start; }
+      .log-row:first-child { border-top: 1px solid #eee; }
+      .log-row .log-time { color: #7a6753; white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .log-row .log-msg { word-break: break-word; white-space: pre-wrap; }
+      .log-level { font-weight: bold; }
+      .log-level.INFO { color: #2f7d32; }
+      .log-level.WARN { color: #8a4b00; }
+      .log-level.ERROR { color: #b3261e; }
+      @media (max-width: 640px) { .log-row { grid-template-columns: 1fr; gap: 0.15rem; } }
       .ingest-source { padding: 1rem 0; border-bottom: 1px solid #eee; }
       .ingest-source:last-child { border-bottom: none; }
       .ingest-source h3 { margin: 0 0 0.2rem; color: #6b3b00; }
@@ -141,6 +151,7 @@
           <button class="nav-item" data-view="mapping">Mapping</button>
           <button class="nav-item" data-view="analysis">Analyze Spend</button>
           <button class="nav-item" data-view="settings">Settings</button>
+          <button class="nav-item" data-view="debug">Debug</button>
         </nav>
         <div class="budget-summary">
           <div class="label">Annual budget</div>
@@ -250,11 +261,28 @@ Auto Payment $60.00</textarea>
                   <div class="label muted">Monthly allowance (calculated)</div>
                   <div class="value" id="settingsMonthlyPreview" style="font-size:1.2rem;color:#8a4b00;font-weight:bold;">$0.00</div>
                 </div>
+                <div class="field">
+                  <label for="retentionInput">Debug log retention (days)</label>
+                  <input id="retentionInput" type="number" min="0" step="1" value="2" />
+                  <div class="hint">How long Debug-screen entries are kept. 0 keeps them until you clear them by hand.</div>
+                </div>
                 <div class="modal-actions" style="justify-content:flex-start;">
                   <button class="primary" id="saveSettingsBtn">Save settings</button>
                 </div>
                 <div id="settingsMsg" class="hint"></div>
               </div>
+            </section>
+
+            <section id="debugView" style="display:none">
+              <h2 class="view-title">Debug</h2>
+              <p class="hint">A record of what the app did behind the scenes &mdash; most usefully, every
+                call out to Anthropic for AI categorization, with its result or error. Newest first.</p>
+              <div class="toolbar" style="justify-content:flex-start; gap:0.6rem;">
+                <button class="secondary" id="refreshLogBtn">Refresh</button>
+                <button class="secondary" id="clearLogBtn">Clear log</button>
+              </div>
+              <div id="debugBody"></div>
+              <div id="debugEmptyState" class="empty">No log entries yet.</div>
             </section>
           </div>
         </div>
@@ -413,6 +441,9 @@ Auto Payment $60.00</textarea>
         if (event.target === parkedModal) closeParkedModal();
       });
 
+      document.getElementById('refreshLogBtn').addEventListener('click', loadDebugLog);
+      document.getElementById('clearLogBtn').addEventListener('click', clearDebugLog);
+
       // Live-preview the monthly allowance as the annual budget is typed.
       annualBudgetInput.addEventListener('input', () => {
         const annual = parseDollarAmount(annualBudgetInput.value);
@@ -458,6 +489,9 @@ Auto Payment $60.00</textarea>
         // Settings form fields.
         annualBudgetInput.value = Number(settings.annualBudget || 0).toFixed(2);
         document.getElementById('settingsMonthlyPreview').textContent = formatCurrency(settings.monthlyAllowance);
+        if (settings.debugLogRetentionDays != null) {
+          document.getElementById('retentionInput').value = settings.debugLogRetentionDays;
+        }
         // Remainder depends on the monthly allowance too.
         renderRemainder();
       }
@@ -468,12 +502,17 @@ Auto Payment $60.00</textarea>
           alert('Please enter a valid dollar amount for the annual budget.');
           return;
         }
+        const retentionValue = document.getElementById('retentionInput').value.trim();
+        if (!/^\d+$/.test(retentionValue)) {
+          alert('Please enter a whole number of days (0 or more) for debug log retention.');
+          return;
+        }
         const msg = document.getElementById('settingsMsg');
         try {
           const response = await fetch('/api/settings', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ annualBudget: annual })
+            body: JSON.stringify({ annualBudget: annual, debugLogRetentionDays: Number(retentionValue) })
           });
           if (!response.ok) throw new Error('HTTP ' + response.status);
           settings = await response.json();
@@ -484,6 +523,50 @@ Auto Payment $60.00</textarea>
           alert('Could not save settings. Is the server running?');
           console.error(err);
         }
+      }
+
+      // ---- Debug log ---------------------------------------------------------
+
+      async function loadDebugLog() {
+        const body = document.getElementById('debugBody');
+        const empty = document.getElementById('debugEmptyState');
+        let rows;
+        try {
+          const r = await fetch('/api/debug-log');
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          rows = await r.json();
+        } catch (err) {
+          body.innerHTML = '<div class="log-row"><span class="log-msg" style="color:#b3261e;">Could not load the log.</span></div>';
+          empty.style.display = 'none';
+          return;
+        }
+        empty.style.display = rows.length ? 'none' : 'block';
+        body.innerHTML = rows.map((e) => `
+          <div class="log-row">
+            <span class="log-time">${escapeHtml(formatLogTime(e.at))}</span>
+            <span class="log-level ${escapeHtml(e.level || 'INFO')}">${escapeHtml(e.level || 'INFO')}</span>
+            <span class="log-msg">${escapeHtml(e.message || '')}</span>
+          </div>
+        `).join('');
+      }
+
+      async function clearDebugLog() {
+        if (!confirm('Clear all debug log entries?')) return;
+        try {
+          const r = await fetch('/api/debug-log', { method: 'DELETE' });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          await loadDebugLog();
+        } catch (err) {
+          alert('Could not clear the log.');
+          console.error(err);
+        }
+      }
+
+      function formatLogTime(iso) {
+        if (!iso) return '';
+        // "2026-07-22T15:53:38.53" -> "07/22 15:53:38"
+        const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
+        return m ? `${m[2]}/${m[3]} ${m[4]}:${m[5]}:${m[6]}` : iso;
       }
 
       // ---- Statement sources -------------------------------------------------
@@ -1273,11 +1356,13 @@ Auto Payment $60.00</textarea>
         document.getElementById('mappingView').style.display = viewName === 'mapping' ? 'block' : 'none';
         document.getElementById('analysisView').style.display = viewName === 'analysis' ? 'block' : 'none';
         document.getElementById('settingsView').style.display = viewName === 'settings' ? 'block' : 'none';
+        document.getElementById('debugView').style.display = viewName === 'debug' ? 'block' : 'none';
         document.querySelectorAll('.nav-item').forEach((button) => {
           button.classList.toggle('active', button.dataset.view === viewName);
         });
         if (viewName === 'ingest') refreshIngest();
         if (viewName === 'mapping') refreshRuns();
+        if (viewName === 'debug') loadDebugLog();
       }
 
       async function calculateSpend() {

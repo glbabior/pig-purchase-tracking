@@ -54,6 +54,8 @@ Pig Purchases is a desktop budget tracking application for managing monthly budg
 - **Ingest Tab**: Browse a source's folder and load statements; open them in Acrobat
 - **Mapping Tab**: "Map Transactions" button plus the status of every previous run
 - **Analysis Tab**: View spend calculations and reports
+- **Debug Tab**: A durable log of what the app did behind the scenes — every outbound
+  Claude API call with its result or error — with a configurable retention window
 - **Modal Dialogs**: Inline add/edit forms for budget entries and transactions
 - **Edit Buttons**: Per-row edit buttons to modify transaction details and categorization
 
@@ -120,7 +122,11 @@ imported_at (LocalDateTime)
 transaction_count (int)
 ```
 
-**app_settings** table — a single row (id=1) holding `annual_budget`.
+**app_settings** table — a single row (id=1) holding `annual_budget` and
+`debug_log_retention_days` (default 2).
+
+**app_log_entries** table — the in-app debug log: `created_at`, `level`,
+`category`, `message`. Pruned past the retention window; backs the Debug screen.
 
 Schema is created and evolved by Hibernate `ddl-auto=update`; there are no
 migration scripts.
@@ -136,8 +142,13 @@ All live endpoints are served by `BudgetController` under `/api`.
 - `DELETE /api/entries/{id}` — Delete budget entry
 
 #### Settings
-- `GET /api/settings` — Annual budget + calculated monthly allowance
-- `PUT /api/settings` — Set the annual budget
+- `GET /api/settings` — Annual budget, calculated monthly allowance, debug-log retention days
+- `PUT /api/settings` — Set the annual budget and/or debug-log retention days
+
+#### Debug log
+- `GET /api/debug-log` — Recent log entries, newest first (most usefully, every
+  outbound Claude API call and its outcome)
+- `DELETE /api/debug-log` — Clear the log
 
 #### Statement Sources
 - `GET /api/statement-sources` — List sources (with their spend exclusions)
@@ -231,14 +242,12 @@ _Last verified: 2026-07-22 (end-to-end against a running server, real statements
   A source created through the UI therefore has no parser, and ingest fails with
   `No parser configured for id: ''`. Rules must be set via
   `PUT /api/statement-sources/{id}/parser-rules` until this is surfaced.
-- **The AI pass has not been run against real data yet.** It is implemented and
-  unit-tested, but no Anthropic credentials are configured on this machine, so
-  every run so far has fallen back to the deterministic matcher alone. On the
-  June 2026 run (181 transactions across all four sources) that matcher mapped 9,
-  excluded 3 transfers, and parked 169 — every match correct, but recall is low
-  because 29 of 32 budget entries have no hints and merchant names like
-  `FRESHMARKET WHSE` don't resemble entry names like `Groceries`. Set
-  `ANTHROPIC_API_KEY` (below) and re-run the mapping to close that gap.
+- **The AI pass has not yet produced a successful run against real data.** It is
+  implemented and unit-tested, and the deterministic matcher alone maps 9 of the
+  181 June transactions (every match correct; recall is low because 29 of 32
+  budget entries have no hints and names like `FRESHMARKET WHSE` don't resemble
+  `Groceries`). With a key + credits configured, a re-run should categorize most
+  of the rest. The Debug screen shows each call's outcome if it doesn't.
 - **Analyze Spend is still the original placeholder.** It posts pasted textarea
   lines to `POST /api/summary`, which regex-sums any line containing `$`, and
   ignores the parsed transactions sitting in H2. The rolling average is likewise
@@ -572,6 +581,10 @@ Relevant settings in `application.properties`:
 Every merchant is charged for at most once — answers are cached across runs (see
 Remembered answers above), so leaving the AI on is cheap after the first month.
 
+**If a run categorizes nothing**, open the **Debug** screen: every outbound Claude
+call is logged there with its result or error (e.g. a rejected key, or no credits),
+so you never have to dig through the console to find out why.
+
 Tests set `pigpurchases.ai.enabled=false`, so the suite never calls the API even
 if your shell has a key exported.
 
@@ -626,6 +639,7 @@ PigPurchases/
 │   │   ├── StatementSource.java  (account folder + parser rules)
 │   │   ├── StatementImport.java  (one ingested statement file)
 │   │   ├── MerchantCategory.java (cross-run merchant→category cache)
+│   │   ├── AppLogEntry.java      (one debug-log line)
 │   │   ├── AnalysisRun.java      (a month + its chosen statements)
 │   │   ├── AnalysisRunSource.java(one source's statement in a run)
 │   │   └── TransactionMapping.java (how one txn resolved in one run)
@@ -641,6 +655,7 @@ PigPurchases/
 │   │   ├── MappingService.java   (run setup, validation, mapping execution)
 │   │   ├── HintMatcher.java      (pure matching logic, heavily unit-tested)
 │   │   ├── AiCategorizationService.java (Claude API pass; the privacy boundary)
+│   │   ├── DebugLogService.java  (durable in-app log + retention pruning)
 │   │   ├── BudgetService.java    (pure calculation logic, @Service bean)
 │   │   └── MonthlyHistoryEntry.java
 │   └── server/
