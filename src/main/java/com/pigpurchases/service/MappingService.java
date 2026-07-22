@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 /**
@@ -52,6 +53,15 @@ public class MappingService {
     @Autowired private BudgetEntryRepository budgetEntryRepository;
     @Autowired private MerchantCategoryRepository merchantCategoryRepository;
     @Autowired private AiCategorizationService aiCategorizationService;
+
+    /**
+     * Run ids currently being mapped. Mapping now makes real (slow) API calls,
+     * so a second request for the same run — an impatient double-click, or a
+     * second browser tab — would otherwise collide on the transaction_mappings
+     * row locks and fail with a lock-timeout stack trace. This makes the second
+     * caller fail fast and clearly instead.
+     */
+    private final Set<Long> mappingInProgress = ConcurrentHashMap.newKeySet();
 
     /** One source's contribution to a run, as chosen in the UI. */
     public record SourceSelection(Long sourceId, Long importId) {}
@@ -158,6 +168,18 @@ public class MappingService {
      */
     @Transactional
     public MapResult map(Long runId) {
+        if (!mappingInProgress.add(runId)) {
+            throw new IllegalStateException(
+                    "Mapping is already running for this month — please wait for it to finish.");
+        }
+        try {
+            return doMap(runId);
+        } finally {
+            mappingInProgress.remove(runId);
+        }
+    }
+
+    private MapResult doMap(Long runId) {
         AnalysisRun run = runRepository.findById(runId)
                 .orElseThrow(() -> new IllegalArgumentException("No such run: " + runId));
 

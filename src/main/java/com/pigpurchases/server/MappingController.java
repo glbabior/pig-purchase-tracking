@@ -232,4 +232,11 @@ public class MappingController {
     public Map<String, String> handleBadRequest(IllegalArgumentException ex) {
         return Map.of("error", ex.getMessage() != null ? ex.getMessage() : "Bad request");
     }
+
+    /** Mapping already running for this run -> 409 rather than a lock-timeout 500. */
+    @ExceptionHandler(IllegalStateException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public Map<String, String> handleConflict(IllegalStateException ex) {
+        return Map.of("error", ex.getMessage() != null ? ex.getMessage() : "Already in progress");
+    }
 }

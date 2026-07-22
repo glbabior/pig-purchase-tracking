@@ -112,6 +112,13 @@
       .browse-icon { width: 1.2rem; text-align: center; flex-shrink: 0; }
       .empty { color: #7a6753; padding: 1rem 0; }
 
+      /* Busy overlay — shown during slow operations (mapping calls out to the AI) */
+      .busy-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: none; align-items: center; justify-content: center; z-index: 1000; }
+      .busy-overlay.open { display: flex; }
+      .busy-box { background: white; border-radius: 14px; padding: 1.5rem 2rem; display: flex; flex-direction: column; align-items: center; gap: 0.9rem; box-shadow: 0 8px 24px rgba(0,0,0,0.2); max-width: 22rem; text-align: center; }
+      .spinner { width: 2rem; height: 2rem; border: 3px solid #eadfd0; border-top-color: #8a4b00; border-radius: 50%; animation: spin 0.8s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+
       /* Modal */
       .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: none; align-items: center; justify-content: center; padding: 1rem; }
       .modal.open { display: flex; }
@@ -289,6 +296,13 @@ Auto Payment $60.00</textarea>
       </main>
     </div>
 
+    <div id="busyOverlay" class="busy-overlay" aria-hidden="true">
+      <div class="busy-box">
+        <div class="spinner"></div>
+        <div id="busyMsg">Working&hellip;</div>
+      </div>
+    </div>
+
     <div id="browseModal" class="modal" aria-hidden="true">
       <div class="modal-body wide">
         <h2 id="browseTitle">Load statement</h2>
@@ -408,6 +422,20 @@ Auto Payment $60.00</textarea>
       const browseModal = document.getElementById('browseModal');
       const runModal = document.getElementById('runModal');
       const parkedModal = document.getElementById('parkedModal');
+      const busyOverlay = document.getElementById('busyOverlay');
+
+      // A screen-blocking spinner for slow operations. Blocking is intentional:
+      // it shows work is happening and prevents the double-clicks that otherwise
+      // fire overlapping mapping runs.
+      function showBusy(message) {
+        document.getElementById('busyMsg').textContent = message || 'Working…';
+        busyOverlay.classList.add('open');
+        busyOverlay.setAttribute('aria-hidden', 'false');
+      }
+      function hideBusy() {
+        busyOverlay.classList.remove('open');
+        busyOverlay.setAttribute('aria-hidden', 'true');
+      }
 
       document.getElementById('addItemBtn').addEventListener('click', openAddModal);
       document.getElementById('cancelModalBtn').addEventListener('click', closeModal);
@@ -993,6 +1021,7 @@ Auto Payment $60.00</textarea>
         const btn = document.getElementById('saveRunBtn');
         btn.disabled = true;
         btn.textContent = 'Mapping…';
+        showBusy('Mapping transactions… looking up categories can take a moment.');
         try {
           const created = await postJson('/api/analysis-runs', {
             month,
@@ -1006,18 +1035,22 @@ Auto Payment $60.00</textarea>
         } catch (err) {
           error.textContent = err.message;
         } finally {
+          hideBusy();
           btn.disabled = false;
           btn.textContent = 'Map transactions';
         }
       }
 
       async function remapRun(runId) {
+        showBusy('Re-mapping transactions… looking up categories can take a moment.');
         try {
           const mapped = await postJson(`/api/analysis-runs/${runId}/map`, {});
           alert(mapSummary(mapped.month, mapped.justMapped, 'Re-mapped'));
           await refreshRuns();
         } catch (err) {
           alert('Could not re-run mapping: ' + err.message);
+        } finally {
+          hideBusy();
         }
       }
 
