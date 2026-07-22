@@ -48,11 +48,12 @@ public class MappingService {
     @Autowired private StatementImportRepository importRepository;
     @Autowired private TransactionRepository transactionRepository;
     @Autowired private BudgetEntryRepository budgetEntryRepository;
+    @Autowired private AiCategorizationService aiCategorizationService;
 
     /** One source's contribution to a run, as chosen in the UI. */
     public record SourceSelection(Long sourceId, Long importId) {}
 
-    public record MapResult(Long runId, String month, int mapped, int parked, int excluded) {}
+    public record MapResult(Long runId, String month, int mapped, int parked, int excluded, int aiMapped) {}
 
     // ---- Run setup ---------------------------------------------------------
 
@@ -157,35 +158,52 @@ public class MappingService {
         mappingRepository.deleteByAnalysisRunId(runId);
         mappingRepository.flush();
 
-        HintMatcher matcher = new HintMatcher(budgetEntryRepository.findAll());
-        int mapped = 0;
-        int parked = 0;
-        int excluded = 0;
+        List<BudgetEntry> entries = budgetEntryRepository.findAll();
+        HintMatcher matcher = new HintMatcher(entries);
+
+        // Pass 1 — deterministic. Build every mapping in memory first so the AI pass
+        // can see the whole parked set at once and de-duplicate repeated merchants.
+        List<TransactionMapping> mappings = new ArrayList<>();
+        Map<Long, Transaction> parkedTransactions = new LinkedHashMap<>();
 
         for (AnalysisRunSource link : runSourceRepository.findByAnalysisRunId(runId)) {
             for (Transaction txn : transactionRepository.findByStatementImportId(link.getStatementImportId())) {
-                TransactionMapping mapping;
                 if (txn.isExcludeFromSpend()) {
                     // A transfer the source's parser rules already carved out. Recorded
                     // for completeness so the run accounts for every line, never counted.
-                    mapping = new TransactionMapping(runId, txn.getId(), null,
-                            TransactionMapping.Status.EXCLUDED, "Excluded by source parser rules");
-                    excluded++;
-                } else {
-                    Optional<HintMatcher.Match> match = matcher.match(txn.getDescription(), txn.getVendor());
-                    if (match.isPresent()) {
-                        mapping = new TransactionMapping(runId, txn.getId(), match.get().entry().getId(),
-                                TransactionMapping.Status.MAPPED_HINT, "Matched on \"" + match.get().matchedOn() + "\"");
-                        mapped++;
-                    } else {
-                        // Parked: shows as "Other" and still counts as spend.
-                        mapping = new TransactionMapping(runId, txn.getId(), null,
-                                TransactionMapping.Status.PARKED, "No hint or name matched");
-                        parked++;
-                    }
+                    mappings.add(new TransactionMapping(runId, txn.getId(), null,
+                            TransactionMapping.Status.EXCLUDED, "Excluded by source parser rules"));
+                    continue;
                 }
-                mappingRepository.save(mapping);
+                Optional<HintMatcher.Match> match = matcher.match(txn.getDescription(), txn.getVendor());
+                if (match.isPresent()) {
+                    mappings.add(new TransactionMapping(runId, txn.getId(), match.get().entry().getId(),
+                            TransactionMapping.Status.MAPPED_HINT,
+                            "Matched on \"" + match.get().matchedOn() + "\""));
+                } else {
+                    // Parked for now: shows as "Other" and still counts as spend.
+                    TransactionMapping parkedMapping = new TransactionMapping(runId, txn.getId(), null,
+                            TransactionMapping.Status.PARKED, "No hint or name matched");
+                    mappings.add(parkedMapping);
+                    parkedTransactions.put(txn.getId(), txn);
+                }
             }
+        }
+
+        // Pass 2 — AI, on whatever the matcher couldn't resolve. Skipped silently when
+        // no credentials are configured, leaving those transactions parked.
+        int aiMapped = applyAiSuggestions(mappings, parkedTransactions, entries);
+
+        int mapped = 0;
+        int parked = 0;
+        int excluded = 0;
+        for (TransactionMapping mapping : mappings) {
+            switch (mapping.getStatus()) {
+                case PARKED -> parked++;
+                case EXCLUDED -> excluded++;
+                default -> mapped++;
+            }
+            mappingRepository.save(mapping);
         }
 
         run.setMappedCount(mapped);
@@ -195,7 +213,53 @@ public class MappingService {
         run.setMappedAt(LocalDateTime.now());
         runRepository.save(run);
 
-        return new MapResult(runId, run.getMonth(), mapped, parked, excluded);
+        return new MapResult(runId, run.getMonth(), mapped, parked, excluded, aiMapped);
+    }
+
+    /**
+     * Ask the AI to categorize the parked transactions, and promote the ones it
+     * answers confidently to MAPPED_AI. Repeated merchants are collapsed to one
+     * candidate, so five Fresh Market visits cost a single line in the request and all
+     * five resolve identically.
+     */
+    private int applyAiSuggestions(List<TransactionMapping> mappings,
+                                   Map<Long, Transaction> parkedTransactions,
+                                   List<BudgetEntry> entries) {
+        if (parkedTransactions.isEmpty() || !aiCategorizationService.isAvailable()) {
+            return 0;
+        }
+
+        Map<Long, String> keyByTransaction = new LinkedHashMap<>();
+        List<AiCategorizationService.Candidate> candidates = new ArrayList<>();
+        for (Transaction txn : parkedTransactions.values()) {
+            String key = HintMatcher.normalize(txn.getDescription());
+            keyByTransaction.put(txn.getId(), key);
+            candidates.add(new AiCategorizationService.Candidate(
+                    key, txn.getDescription(), txn.getVendor()));
+        }
+
+        Map<String, AiCategorizationService.Suggestion> suggestions = aiCategorizationService
+                .categorize(AiCategorizationService.dedupe(candidates), entries);
+        if (suggestions.isEmpty()) {
+            return 0;
+        }
+
+        int promoted = 0;
+        for (TransactionMapping mapping : mappings) {
+            if (mapping.getStatus() != TransactionMapping.Status.PARKED) {
+                continue;
+            }
+            AiCategorizationService.Suggestion suggestion =
+                    suggestions.get(keyByTransaction.get(mapping.getTransactionId()));
+            if (suggestion == null) {
+                continue;
+            }
+            mapping.setBudgetEntryId(suggestion.budgetEntryId());
+            mapping.setStatus(TransactionMapping.Status.MAPPED_AI);
+            mapping.setReason(suggestion.reason());
+            promoted++;
+        }
+        return promoted;
     }
 
     /** Categorize one transaction by hand, e.g. while working through the parked bucket. */

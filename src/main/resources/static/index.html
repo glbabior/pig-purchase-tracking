@@ -284,6 +284,7 @@ Auto Payment $60.00</textarea>
         <label class="hint" style="display:block;margin-top:0.9rem;">
           <input type="checkbox" id="showConsumed" /> Show statements already used by another run
         </label>
+        <div id="aiStatus" class="hint"></div>
         <div id="runError" class="run-error"></div>
         <div class="modal-actions">
           <button class="secondary" id="cancelRunBtn">Cancel</button>
@@ -765,6 +766,15 @@ Auto Payment $60.00</textarea>
       // A run defines a month by binding it to one loaded statement per source.
       // Statement dates are deliberately ignored: the user asserts the pairing.
 
+      /** Mapping outcome, broken out so the AI's contribution is visible. */
+      function mapSummary(month, r, verb) {
+        const byAi = r.aiMapped ? ` (${r.aiMapped} by AI)` : '';
+        return `${verb || 'Mapped'} ${month}\n`
+          + `Categorized: ${r.mapped}${byAi}\n`
+          + `Parked as "Other": ${r.parked}\n`
+          + `Excluded transfers: ${r.excluded}`;
+      }
+
       async function refreshRuns() {
         try {
           const r = await fetch('/api/analysis-runs');
@@ -842,6 +852,10 @@ Auto Payment $60.00</textarea>
           return;
         }
 
+        document.getElementById('aiStatus').innerHTML = data.aiAvailable
+          ? 'Transactions that don\'t match a budget entry name will be sent for AI categorization &mdash; descriptions and vendors only, never amounts. Anything still unresolved lands in &ldquo;Other&rdquo;.'
+          : 'AI categorization is off (no API key found), so anything that doesn\'t match a budget entry name will land in &ldquo;Other&rdquo;.';
+
         container.innerHTML = '';
         data.sources.forEach((source) => {
           const field = document.createElement('div');
@@ -901,8 +915,7 @@ Auto Payment $60.00</textarea>
           });
           const mapped = await postJson(`/api/analysis-runs/${created.id}/map`, {});
           closeRunModal();
-          const r = mapped.justMapped;
-          alert(`Mapped ${month}\nCategorized: ${r.mapped}\nParked as "Other": ${r.parked}\nExcluded transfers: ${r.excluded}`);
+          alert(mapSummary(month, mapped.justMapped));
           await refreshRuns();
         } catch (err) {
           error.textContent = err.message;
@@ -915,8 +928,7 @@ Auto Payment $60.00</textarea>
       async function remapRun(runId) {
         try {
           const mapped = await postJson(`/api/analysis-runs/${runId}/map`, {});
-          const r = mapped.justMapped;
-          alert(`Re-mapped ${mapped.month}\nCategorized: ${r.mapped}\nParked as "Other": ${r.parked}\nExcluded transfers: ${r.excluded}`);
+          alert(mapSummary(mapped.month, mapped.justMapped, 'Re-mapped'));
           await refreshRuns();
         } catch (err) {
           alert('Could not re-run mapping: ' + err.message);

@@ -36,6 +36,14 @@
             <version>3.0.3</version>
         </dependency>
         <dependency>
+            <!-- Categorizes the transactions the deterministic matcher can't
+                 resolve. Only descriptions and vendor names are ever sent;
+                 amounts, balances, and account details never leave the machine. -->
+            <groupId>com.anthropic</groupId>
+            <artifactId>anthropic-java</artifactId>
+            <version>2.50.0</version>
+        </dependency>
+        <dependency>
             <!-- Enables the in-app "Restart" button and auto-reload of
                  recompiled classes when running via spring-boot:run. -->
             <groupId>org.springframework.boot</groupId>

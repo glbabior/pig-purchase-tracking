@@ -189,8 +189,9 @@ All live endpoints are served by `BudgetController` under `/api`.
 - No analytics tracking
 - No data sharing with third parties
 
-> Status: no categorization code exists yet, so today **nothing at all leaves the
-> machine**. The rules above describe the intended boundary once it is built.
+> Status: the boundary above is enforced in code and asserted by a test. With no
+> API key configured, **nothing at all leaves the machine** — the AI pass is
+> skipped and unresolved transactions stay in "Other".
 
 ## Current Implementation Status
 
@@ -221,8 +222,8 @@ _Last verified: 2026-07-22 (end-to-end against a running server, real statements
 - **Mapping runs**: the Mapping screen, run setup with consumed-statement
   hiding, deterministic categorization, the parked "Other" bucket with manual
   assignment, re-running, and deletion — everything in
-  [Transaction Mapping — Analysis Runs](#transaction-mapping--analysis-runs)
-  except the AI pass
+  [Transaction Mapping — Analysis Runs](#transaction-mapping--analysis-runs),
+  including the Claude-API categorization pass for what the matcher can't resolve
 
 ### 🧱 Known gaps in what's built
 - **Parser rules are not editable in the UI.** Which parser runs is decided by the
@@ -230,14 +231,14 @@ _Last verified: 2026-07-22 (end-to-end against a running server, real statements
   A source created through the UI therefore has no parser, and ingest fails with
   `No parser configured for id: ''`. Rules must be set via
   `PUT /api/statement-sources/{id}/parser-rules` until this is surfaced.
-- **Categorization recall is low until hints are written.** The deterministic
-  matcher is precise but narrow: on the June 2026 run (181 transactions across
-  all four sources) it mapped 9, excluded 3 transfers, and parked 169. Every
-  match was correct — the gap is recall, not accuracy, because 29 of 32 budget
-  entries have no hints and merchant names like `FRESHMARKET WHSE` don't resemble
-  entry names like `Groceries`. Closing it means either adding `match:` lines to
-  the entries or landing the AI pass.
-- **The AI pass is not implemented.** Everything unresolved parks as "Other".
+- **The AI pass has not been run against real data yet.** It is implemented and
+  unit-tested, but no Anthropic credentials are configured on this machine, so
+  every run so far has fallen back to the deterministic matcher alone. On the
+  June 2026 run (181 transactions across all four sources) that matcher mapped 9,
+  excluded 3 transfers, and parked 169 — every match correct, but recall is low
+  because 29 of 32 budget entries have no hints and merchant names like
+  `FRESHMARKET WHSE` don't resemble entry names like `Groceries`. Set
+  `ANTHROPIC_API_KEY` (below) and re-run the mapping to close that gap.
 - **Analyze Spend is still the original placeholder.** It posts pasted textarea
   lines to `POST /api/summary`, which regex-sums any line containing `$`, and
   ignores the parsed transactions sitting in H2. The rolling average is likewise
@@ -245,7 +246,6 @@ _Last verified: 2026-07-22 (end-to-end against a running server, real statements
 - Only PDF is supported. CSV and OFX are not implemented.
 
 ### ⚠️ Planned
-- **AI categorization pass** for what the deterministic matcher cannot resolve
 - **Real analysis**: total spend vs. total budget per month driven by mapping runs;
   per-entry breakdown, month-over-month comparison, rolling averages, charts
 - **Parked-transaction review**: work through the "Other" bucket and turn the
@@ -339,12 +339,24 @@ resolved in this order:
 2. **Deterministic matching runs first** (`HintMatcher`, implemented). Each
    remaining transaction is matched against the budget entries. This is cheap,
    repeatable, and keeps the entries the real knowledge base.
-3. **Only the leftovers go to the Claude API** (not implemented yet). Descriptions
-   and vendor names that matching could not resolve will be sent for
-   categorization, along with the budget entry list and the name of the source the
-   transaction came from as context. **Amounts, balances, and account identifiers
-   are never included.**
+3. **Only the leftovers go to the Claude API** (`AiCategorizationService`).
+   Descriptions and vendor names that matching could not resolve are sent for
+   categorization, along with the budget entry names and their hints. **Amounts,
+   balances, dates, and account identifiers are never included** — the request is
+   built in one method (`promptFor`) so that guarantee is checkable in one place,
+   and `AiCategorizationServiceTest` asserts it.
+
+   Repeated merchants are collapsed first: five Fresh Market visits become one line in
+   the request and all five resolve identically. The model is told to answer
+   `null` rather than guess when nothing fits or two categories fit equally well,
+   so a wrong answer is preferred over a review item only when the model is
+   confident.
 4. **Anything still unresolved is parked** — see below.
+
+The AI pass is skipped entirely when no credentials are configured, and any API
+failure leaves those transactions parked rather than failing the run. Rejected
+credentials switch it off for the rest of the session instead of re-failing once
+per batch.
 
 Hints live on **budget entries**, not on statement sources. The source a
 transaction came from is supplied to the mapper as context, but the knowledge base
@@ -502,6 +514,31 @@ session, which is what makes "open in Acrobat" work (see below).
 .\mvnw.cmd test
 ```
 
+### Enabling AI categorization
+
+The AI pass needs Anthropic credentials. Set the key once, for your user account,
+then restart the app:
+
+```powershell
+[Environment]::SetEnvironmentVariable('ANTHROPIC_API_KEY', 'sk-ant-...', 'User')
+```
+
+Open a new terminal afterwards so the variable is picked up (an `ant auth login`
+profile works too — the SDK finds either). The Mapping dialog says which mode it
+is in before you start a run, and the run summary reports how many transactions
+the AI categorized.
+
+Relevant settings in `application.properties`:
+
+| Property | Default | Purpose |
+|---|---|---|
+| `pigpurchases.ai.enabled` | `true` | Set `false` to skip the AI pass entirely |
+| `pigpurchases.ai.model` | `claude-opus-4-8` | Model used for categorization |
+| `pigpurchases.ai.batch-size` | `40` | Transactions per request |
+
+Tests set `pigpurchases.ai.enabled=false`, so the suite never calls the API even
+if your shell has a key exported.
+
 ### Restarting after code changes
 Click **Restart server** in the sidebar. Spring Boot DevTools reloads the
 recompiled classes; the page polls `/api/health` and refreshes itself once the
@@ -566,6 +603,7 @@ PigPurchases/
 │   │   ├── IngestService.java    (parse -> exclude -> store, idempotent)
 │   │   ├── MappingService.java   (run setup, validation, mapping execution)
 │   │   ├── HintMatcher.java      (pure matching logic, heavily unit-tested)
+│   │   ├── AiCategorizationService.java (Claude API pass; the privacy boundary)
 │   │   ├── BudgetService.java    (pure calculation logic, @Service bean)
 │   │   └── MonthlyHistoryEntry.java
 │   └── server/
@@ -595,11 +633,12 @@ PigPurchases/
 
 ## Next Steps
 
-1. **Raise categorization recall.** Two complementary routes: add `match:` lines
-   to budget entry hints for the recurring merchants (`FRESHMARKET`, `FRESHMARKET`,
-   `DAILYGRIND`, `HPK`/Harbor Park, `KP SCAL`), and/or implement the AI pass for
-   description + vendor (amounts stay local). Working through the parked bucket
-   on the Mapping screen is the natural way to discover which hints to write.
+1. **Configure `ANTHROPIC_API_KEY` and re-run the June mapping.** The AI pass is
+   built but has never run against real data; this is the step that tells us what
+   recall actually looks like. Writing prose hints on the budget entries (the AI
+   reads them) and `match:` lines for recurring merchants (`FRESHMARKET`,
+   `FRESHMARKET`, `DAILYGRIND`, `HPK`/Harbor Park, `KP SCAL`) both raise it
+   further — the parked bucket on the Mapping screen shows which to write.
 2. **Monthly analysis.** Total actual spend vs. total budget with variance, plus
    the per-entry breakdown, driven by a completed run — including "Other".
 3. Surface parser selection + exclusions in the statement-source UI, so a source

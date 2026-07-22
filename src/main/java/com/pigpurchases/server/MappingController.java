@@ -36,6 +36,7 @@ import java.util.Set;
 public class MappingController {
 
     @Autowired private MappingService mappingService;
+    @Autowired private com.pigpurchases.service.AiCategorizationService aiCategorizationService;
     @Autowired private AnalysisRunRepository runRepository;
     @Autowired private AnalysisRunSourceRepository runSourceRepository;
     @Autowired private TransactionMappingRepository mappingRepository;
@@ -82,6 +83,9 @@ public class MappingController {
         response.put("sources", sources);
         // Every source must contribute, so the dialog can say up front when it can't proceed.
         response.put("ready", sources.stream().noneMatch(s -> ((List<?>) s.get("statements")).isEmpty()));
+        // So the dialog can say whether unmatched transactions will be sent for
+        // categorization or will simply land in "Other".
+        response.put("aiAvailable", aiCategorizationService.isAvailable());
         return response;
     }
 
@@ -119,7 +123,8 @@ public class MappingController {
         MappingService.MapResult result = mappingService.map(id);
         Map<String, Object> response = runResponse(runRepository.findById(id).orElseThrow());
         response.put("justMapped", Map.of(
-                "mapped", result.mapped(), "parked", result.parked(), "excluded", result.excluded()));
+                "mapped", result.mapped(), "parked", result.parked(),
+                "excluded", result.excluded(), "aiMapped", result.aiMapped()));
         return response;
     }
 
