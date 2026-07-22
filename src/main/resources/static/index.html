@@ -86,6 +86,11 @@
       .parked-row .desc { flex: 1; min-width: 0; word-break: break-word; }
       .parked-row .amt { white-space: nowrap; font-weight: bold; color: #8a4b00; }
       .parked-row select { border: 1px solid #ddd; padding: 0.35rem; border-radius: 8px; font: inherit; max-width: 190px; }
+      .parked-check { width: 1.05rem; height: 1.05rem; flex-shrink: 0; cursor: pointer; }
+      .parked-toolbar { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; margin: 0.4rem 0 0.2rem; padding: 0.5rem 0.1rem; border-bottom: 1px solid #eadfd0; }
+      .parked-toolbar .parked-selall { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; }
+      .parked-toolbar select { border: 1px solid #ddd; padding: 0.4rem; border-radius: 8px; font: inherit; margin-left: auto; max-width: 220px; }
+      .parked-toolbar select:disabled { opacity: 0.5; }
       /* Debug log */
       .log-row { display: grid; grid-template-columns: 12rem 4.5rem 1fr; gap: 0.6rem; padding: 0.4rem 0.6rem; border-bottom: 1px solid #f3f3f3; font-size: 0.88rem; align-items: start; }
       .log-row:first-child { border-top: 1px solid #eee; }
@@ -341,7 +346,13 @@ Auto Payment $60.00</textarea>
         <p class="hint">These couldn't be categorized automatically and currently count as
           &ldquo;Other&rdquo;. Assign one to a budget entry, or mark it
           <strong>Not spend</strong> for card payments, deposits, and transfers. Either
-          choice is remembered, so the same merchant handles itself on future runs.</p>
+          choice is remembered, so the same merchant handles itself on future runs.
+          Tick several rows and use &ldquo;Apply to selected&rdquo; to do them in one go.</p>
+        <div class="parked-toolbar">
+          <label class="parked-selall"><input type="checkbox" id="parkedSelectAll" /> Select all</label>
+          <span id="parkedSelCount" class="muted">0 selected</span>
+          <select id="parkedBulkSelect" aria-label="Apply to selected rows"></select>
+        </div>
         <div class="browse-list" id="parkedBody"></div>
         <div class="modal-actions">
           <button class="secondary" id="closeParkedBtn">Close</button>
@@ -468,6 +479,11 @@ Auto Payment $60.00</textarea>
       document.getElementById('closeParkedBtn').addEventListener('click', closeParkedModal);
       parkedModal.addEventListener('click', (event) => {
         if (event.target === parkedModal) closeParkedModal();
+      });
+      document.getElementById('parkedBulkSelect').addEventListener('change', bulkApplyParked);
+      document.getElementById('parkedSelectAll').addEventListener('change', (event) => {
+        document.querySelectorAll('.parked-check').forEach((cb) => { cb.checked = event.target.checked; });
+        updateParkedSelCount();
       });
 
       document.getElementById('refreshLogBtn').addEventListener('click', loadDebugLog);
@@ -1067,16 +1083,35 @@ Auto Payment $60.00</textarea>
         }
       }
 
+      let parkedRunId = null;
+
+      /** Budget-entry <option>s, alphabetical by title, shared by the row and bulk dropdowns. */
+      function sortedEntryOptions() {
+        return [...entries]
+          .sort((a, b) => String(a.title || '').localeCompare(String(b.title || ''), undefined, { sensitivity: 'base' }))
+          .map((e) => `<option value="${e.id}">${escapeHtml(e.title || '')}</option>`)
+          .join('');
+      }
+
       async function openParked(run) {
+        parkedRunId = run.id;
         document.getElementById('parkedTitle').textContent = `Parked transactions — ${run.month}`;
-        const body = document.getElementById('parkedBody');
-        body.innerHTML = '<div class="parked-row"><span class="muted">Loading…</span></div>';
         parkedModal.classList.add('open');
         parkedModal.setAttribute('aria-hidden', 'false');
+        document.getElementById('parkedBulkSelect').innerHTML =
+          '<option value="">Apply to selected…</option>'
+          + '<option value="__EXCLUDE__">🚫 Not spend — exclude</option>'
+          + sortedEntryOptions();
+        document.getElementById('parkedSelectAll').checked = false;
+        await renderParked();
+      }
 
+      async function renderParked() {
+        const body = document.getElementById('parkedBody');
+        body.innerHTML = '<div class="parked-row"><span class="muted">Loading…</span></div>';
         let rows;
         try {
-          const r = await fetch(`/api/analysis-runs/${run.id}/mappings?status=PARKED`);
+          const r = await fetch(`/api/analysis-runs/${parkedRunId}/mappings?status=PARKED`);
           if (!r.ok) throw new Error('HTTP ' + r.status);
           rows = await r.json();
         } catch (err) {
@@ -1084,15 +1119,16 @@ Auto Payment $60.00</textarea>
           return;
         }
         if (!rows.length) {
-          body.innerHTML = '<div class="parked-row"><span class="muted">Nothing parked.</span></div>';
+          body.innerHTML = '<div class="parked-row"><span class="muted">Nothing parked — all done.</span></div>';
+          document.getElementById('parkedSelectAll').checked = false;
+          updateParkedSelCount();
           return;
         }
 
-        const options = entries
-          .map((e) => `<option value="${e.id}">${escapeHtml(e.title || '')}</option>`)
-          .join('');
+        const options = sortedEntryOptions();
         body.innerHTML = rows.map((row) => `
           <div class="parked-row">
+            <input type="checkbox" class="parked-check" data-txn="${row.transactionId}" />
             <div class="desc">
               <div>${escapeHtml(row.description || '')}</div>
               <div class="muted">${formatMmDdYy(row.date)}</div>
@@ -1107,8 +1143,47 @@ Auto Payment $60.00</textarea>
         `).join('');
 
         body.querySelectorAll('select[data-txn]').forEach((select) => {
-          select.addEventListener('change', () => assignParked(run.id, select));
+          select.addEventListener('change', () => assignParked(parkedRunId, select));
         });
+        body.querySelectorAll('.parked-check').forEach((cb) => {
+          cb.addEventListener('change', updateParkedSelCount);
+        });
+        document.getElementById('parkedSelectAll').checked = false;
+        updateParkedSelCount();
+      }
+
+      function updateParkedSelCount() {
+        const n = document.querySelectorAll('.parked-check:checked').length;
+        document.getElementById('parkedSelCount').textContent = `${n} selected`;
+      }
+
+      /** Apply one choice (a budget entry, or exclude) to every ticked row at once. */
+      async function bulkApplyParked() {
+        const bulk = document.getElementById('parkedBulkSelect');
+        const value = bulk.value;
+        if (!value) return;
+        const checked = [...document.querySelectorAll('.parked-check:checked')];
+        if (!checked.length) {
+          alert('Tick the rows you want first — the checkboxes on the left.');
+          bulk.value = '';
+          return;
+        }
+        const payload = value === '__EXCLUDE__' ? { exclude: true } : { budgetEntryId: Number(value) };
+        showBusy(`Applying to ${checked.length} transaction${checked.length > 1 ? 's' : ''}…`);
+        try {
+          // Sequential on purpose: each assign re-tallies the run, so parallel
+          // writes would contend on the same run row.
+          for (const cb of checked) {
+            await putJson(`/api/analysis-runs/${parkedRunId}/mappings/${cb.dataset.txn}`, payload);
+          }
+          await refreshRuns();
+          await renderParked(); // applied rows are no longer PARKED, so they drop off
+        } catch (err) {
+          alert('Could not apply to all selected: ' + err.message);
+        } finally {
+          hideBusy();
+          bulk.value = '';
+        }
       }
 
       function closeParkedModal() {
