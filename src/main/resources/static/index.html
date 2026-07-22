@@ -338,9 +338,10 @@ Auto Payment $60.00</textarea>
     <div id="parkedModal" class="modal" aria-hidden="true">
       <div class="modal-body wide">
         <h2 id="parkedTitle">Parked transactions</h2>
-        <p class="hint">These couldn't be categorized automatically and are counted as
-          &ldquo;Other&rdquo;. Assign one to a budget entry here, then add a
-          <code>match:</code> line to that entry's hints so it maps itself next month.</p>
+        <p class="hint">These couldn't be categorized automatically and currently count as
+          &ldquo;Other&rdquo;. Assign one to a budget entry, or mark it
+          <strong>Not spend</strong> for card payments, deposits, and transfers. Either
+          choice is remembered, so the same merchant handles itself on future runs.</p>
         <div class="browse-list" id="parkedBody"></div>
         <div class="modal-actions">
           <button class="secondary" id="closeParkedBtn">Close</button>
@@ -1099,6 +1100,7 @@ Auto Payment $60.00</textarea>
             <div class="amt">${formatCurrency(Math.abs(Number(row.amount || 0)))}</div>
             <select data-txn="${row.transactionId}">
               <option value="">Other (parked)</option>
+              <option value="__EXCLUDE__">🚫 Not spend — exclude</option>
               ${options}
             </select>
           </div>
@@ -1115,14 +1117,17 @@ Auto Payment $60.00</textarea>
       }
 
       async function assignParked(runId, select) {
-        const budgetEntryId = select.value ? Number(select.value) : null;
+        const excluded = select.value === '__EXCLUDE__';
+        const budgetEntryId = (excluded || !select.value) ? null : Number(select.value);
+        const payload = excluded ? { exclude: true } : { budgetEntryId };
         select.disabled = true;
         try {
-          await putJson(`/api/analysis-runs/${runId}/mappings/${select.dataset.txn}`, { budgetEntryId });
-          select.closest('.parked-row').style.opacity = budgetEntryId ? '0.55' : '1';
+          await putJson(`/api/analysis-runs/${runId}/mappings/${select.dataset.txn}`, payload);
+          // Dim once it's been dealt with (categorized or excluded); "Other" leaves it active.
+          select.closest('.parked-row').style.opacity = (budgetEntryId || excluded) ? '0.55' : '1';
           await refreshRuns();
         } catch (err) {
-          alert('Could not save that categorization: ' + err.message);
+          alert('Could not save that change: ' + err.message);
           select.value = '';
         } finally {
           select.disabled = false;

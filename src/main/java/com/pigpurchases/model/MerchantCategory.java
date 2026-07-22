@@ -1,6 +1,7 @@
 package com.pigpurchases.model;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.ColumnDefault;
 import java.time.LocalDateTime;
 
 /**
@@ -28,6 +29,15 @@ public class MerchantCategory {
     private String merchantKey;
 
     private Long budgetEntryId;
+
+    /**
+     * True for a remembered "not spend" decision (a transfer, deposit, or card
+     * payment the user excluded by hand). budgetEntryId is null in that case.
+     * The @ColumnDefault is required: this column is added to a merchant_categories
+     * table that already has rows, so it needs a DB-level default to backfill them.
+     */
+    @ColumnDefault("false")
+    private boolean excluded;
 
     @Enumerated(EnumType.STRING)
     private Source source;
@@ -59,6 +69,8 @@ public class MerchantCategory {
     public void setMerchantKey(String merchantKey) { this.merchantKey = merchantKey; }
     public Long getBudgetEntryId() { return budgetEntryId; }
     public void setBudgetEntryId(Long budgetEntryId) { this.budgetEntryId = budgetEntryId; }
+    public boolean isExcluded() { return excluded; }
+    public void setExcluded(boolean excluded) { this.excluded = excluded; }
     public Source getSource() { return source; }
     public void setSource(Source source) { this.source = source; }
     public String getSampleDescription() { return sampleDescription; }

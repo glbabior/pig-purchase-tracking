@@ -174,11 +174,17 @@ public class MappingController {
         return result;
     }
 
-    /** Categorize one transaction by hand; a null budgetEntryId parks it again. */
+    /**
+     * Update one transaction's mapping by hand. {@code exclude:true} marks it as
+     * not-spend (and remembers that); otherwise {@code budgetEntryId} assigns it
+     * to an entry, or null parks it again as "Other".
+     */
     @PutMapping("/analysis-runs/{id}/mappings/{transactionId}")
     public Map<String, Object> assign(@PathVariable Long id, @PathVariable Long transactionId,
                                       @RequestBody Map<String, Object> payload) {
-        TransactionMapping mapping = mappingService.assign(id, transactionId, asLong(payload.get("budgetEntryId")));
+        TransactionMapping mapping = Boolean.TRUE.equals(payload.get("exclude"))
+                ? mappingService.exclude(id, transactionId)
+                : mappingService.assign(id, transactionId, asLong(payload.get("budgetEntryId")));
         Map<String, Object> response = new HashMap<>();
         response.put("transactionId", mapping.getTransactionId());
         response.put("status", mapping.getStatus().name());

@@ -282,6 +282,14 @@ public class MappingService {
                 continue;
             }
             MerchantCategory mc = remembered.get();
+            if (mc.isExcluded()) {
+                // A remembered "not spend" decision (card payment, deposit, transfer).
+                mapping.setBudgetEntryId(null);
+                mapping.setStatus(TransactionMapping.Status.EXCLUDED);
+                mapping.setReason("Remembered — you excluded this from spend");
+                parkedTransactions.remove(mapping.getTransactionId());
+                continue; // counted as excluded by the final tally, not as a categorization
+            }
             if (!validEntryIds.contains(mc.getBudgetEntryId())) {
                 merchantCategoryRepository.delete(mc); // entry gone; forget the stale answer
                 continue;
@@ -337,7 +345,7 @@ public class MappingService {
             }
             Transaction sample = sampleByKey.get(e.getKey());
             remember(e.getKey(), s.budgetEntryId(), MerchantCategory.Source.AI,
-                    sample != null ? sample.getDescription() : null, s.reason());
+                    sample != null ? sample.getDescription() : null, s.reason(), false);
         }
 
         int promoted = 0;
@@ -365,7 +373,7 @@ public class MappingService {
      * AI when it wasn't already cached, so in practice this only guards races).
      */
     private void remember(String merchantKey, Long budgetEntryId, MerchantCategory.Source source,
-                          String sampleDescription, String reason) {
+                          String sampleDescription, String reason, boolean excluded) {
         MerchantCategory existing = merchantCategoryRepository.findByMerchantKey(merchantKey).orElse(null);
         if (existing != null && source == MerchantCategory.Source.AI
                 && existing.getSource() == MerchantCategory.Source.MANUAL) {
@@ -374,6 +382,7 @@ public class MappingService {
         MerchantCategory mc = existing != null ? existing
                 : new MerchantCategory(merchantKey, null, source, sampleDescription, reason, null);
         mc.setBudgetEntryId(budgetEntryId);
+        mc.setExcluded(excluded);
         mc.setSource(source);
         if (sampleDescription != null) {
             mc.setSampleDescription(sampleDescription);
@@ -413,10 +422,36 @@ public class MappingService {
             if (merchantKey != null) {
                 Transaction txn = transactionRepository.findById(transactionId).orElse(null);
                 remember(merchantKey, entry.getId(), MerchantCategory.Source.MANUAL,
-                        txn != null ? txn.getDescription() : null, "Categorized by hand");
+                        txn != null ? txn.getDescription() : null, "Categorized by hand", false);
             }
         }
         mappingRepository.save(mapping);
+        recount(runId);
+        return mapping;
+    }
+
+    /**
+     * Mark one transaction as not-spend within this run, and remember the
+     * decision so the same merchant auto-excludes on every future run (card
+     * payments, deposits, account transfers). Distinct from parking: excluded
+     * money never counts toward the month's spend.
+     */
+    @Transactional
+    public TransactionMapping exclude(Long runId, Long transactionId) {
+        TransactionMapping mapping = mappingRepository.findByAnalysisRunIdAndTransactionId(runId, transactionId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Transaction " + transactionId + " is not part of run " + runId));
+
+        mapping.setBudgetEntryId(null);
+        mapping.setStatus(TransactionMapping.Status.EXCLUDED);
+        mapping.setReason("Excluded from spend by hand");
+        mappingRepository.save(mapping);
+
+        transactionRepository.findById(transactionId).ifPresent(txn ->
+                remember(HintMatcher.normalize(txn.getDescription()), null,
+                        MerchantCategory.Source.MANUAL, txn.getDescription(),
+                        "Excluded from spend", true));
+
         recount(runId);
         return mapping;
     }

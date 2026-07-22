@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -142,6 +143,33 @@ class MappingServiceTest {
                 .findByAnalysisRunIdAndTransactionId(run.getId(), parked.getTransactionId()).orElseThrow();
         assertEquals(TransactionMapping.Status.MAPPED_MANUAL, reapplied.getStatus());
         assertEquals(coffeeId, reapplied.getBudgetEntryId());
+    }
+
+    @Test
+    void excludingByHandIsRememberedAndReappliedOnReRun() {
+        AnalysisRun run = mappingService.createRun("2026-06", select(juneImportId), false);
+        mappingService.map(run.getId());
+
+        TransactionMapping parked = mappingRepo
+                .findByAnalysisRunIdAndStatus(run.getId(), TransactionMapping.Status.PARKED).get(0);
+
+        // Mark the parked card-payment-style row as not-spend.
+        mappingService.exclude(run.getId(), parked.getTransactionId());
+
+        TransactionMapping after = mappingRepo
+                .findByAnalysisRunIdAndTransactionId(run.getId(), parked.getTransactionId()).orElseThrow();
+        assertEquals(TransactionMapping.Status.EXCLUDED, after.getStatus());
+        assertFalse(after.countsAsSpend(), "excluded money must not count as spend");
+        assertEquals(1, merchantRepo.count(), "the exclusion should be remembered");
+
+        // Re-run: the same merchant auto-excludes, no longer parked, without an AI call.
+        MappingService.MapResult result = mappingService.map(run.getId());
+        assertEquals(0, result.parked());
+        assertEquals(0, result.cached(), "an exclusion is not a categorization");
+        assertEquals(2, result.excluded(), "the parser transfer plus the remembered exclusion");
+        TransactionMapping reapplied = mappingRepo
+                .findByAnalysisRunIdAndTransactionId(run.getId(), parked.getTransactionId()).orElseThrow();
+        assertEquals(TransactionMapping.Status.EXCLUDED, reapplied.getStatus());
     }
 
     @Test
