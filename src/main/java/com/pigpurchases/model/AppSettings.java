@@ -1,6 +1,7 @@
 package com.pigpurchases.model;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.ColumnDefault;
 import java.math.BigDecimal;
 
 /**
@@ -15,7 +16,13 @@ public class AppSettings {
 
     private BigDecimal annualBudget = BigDecimal.ZERO;
 
-    /** How many days the in-app debug log is kept before entries are pruned. */
+    /**
+     * How many days the in-app debug log is kept before entries are pruned.
+     * The {@code @ColumnDefault} is required, not cosmetic: without a DB-level
+     * default, adding this NOT NULL column to an app_settings table that already
+     * has a row fails the schema migration (H2 can't backfill the existing row).
+     */
+    @ColumnDefault("2")
     private int debugLogRetentionDays = 2;
 
     public AppSettings() {}
