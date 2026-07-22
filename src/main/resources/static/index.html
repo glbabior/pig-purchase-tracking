@@ -766,11 +766,14 @@ Auto Payment $60.00</textarea>
       // A run defines a month by binding it to one loaded statement per source.
       // Statement dates are deliberately ignored: the user asserts the pairing.
 
-      /** Mapping outcome, broken out so the AI's contribution is visible. */
+      /** Mapping outcome, broken out so the AI's live cost is visible. */
       function mapSummary(month, r, verb) {
-        const byAi = r.aiMapped ? ` (${r.aiMapped} by AI)` : '';
+        const detail = [];
+        if (r.aiMapped) detail.push(`${r.aiMapped} newly by AI`);
+        if (r.cached) detail.push(`${r.cached} remembered, no API call`);
+        const byline = detail.length ? ` (${detail.join(', ')})` : '';
         return `${verb || 'Mapped'} ${month}\n`
-          + `Categorized: ${r.mapped}${byAi}\n`
+          + `Categorized: ${r.mapped}${byline}\n`
           + `Parked as "Other": ${r.parked}\n`
           + `Excluded transfers: ${r.excluded}`;
       }

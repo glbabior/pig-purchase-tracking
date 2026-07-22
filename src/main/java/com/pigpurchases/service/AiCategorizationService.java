@@ -52,7 +52,7 @@ public class AiCategorizationService {
     @Value("${pigpurchases.ai.enabled:true}")
     private boolean enabled;
 
-    @Value("${pigpurchases.ai.model:claude-opus-4-8}")
+    @Value("${pigpurchases.ai.model:claude-haiku-4-5}")
     private String model;
 
     /** Transactions per request. Keeps any single response comfortably inside maxTokens. */

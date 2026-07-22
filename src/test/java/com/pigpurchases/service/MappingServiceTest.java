@@ -47,6 +47,7 @@ class MappingServiceTest {
     @Autowired private AnalysisRunRepository runRepo;
     @Autowired private AnalysisRunSourceRepository runSourceRepo;
     @Autowired private BudgetEntryRepository entryRepo;
+    @Autowired private com.pigpurchases.repository.MerchantCategoryRepository merchantRepo;
 
     private Long sourceId;
     private Long juneImportId;
@@ -55,6 +56,7 @@ class MappingServiceTest {
     @BeforeEach
     void reset(@TempDir Path dir) throws IOException {
         mappingRepo.deleteAll();
+        merchantRepo.deleteAll();
         runSourceRepo.deleteAll();
         runRepo.deleteAll();
         txnRepo.deleteAll();
@@ -111,6 +113,77 @@ class MappingServiceTest {
                 mappingRepo.findByAnalysisRunIdAndStatus(run.getId(), TransactionMapping.Status.PARKED);
         assertEquals(1, parked.size());
         assertTrue(parked.get(0).countsAsSpend(), "parked money is real spend, just unattributed");
+    }
+
+    @Test
+    void aManualCorrectionIsRememberedAndReappliedOnReRunWithoutAi() {
+        // AI is disabled in tests, so the cache is the ONLY thing that can promote
+        // the parked payment on the second run — which is exactly what we're testing.
+        AnalysisRun run = mappingService.createRun("2026-06", select(juneImportId), false);
+        mappingService.map(run.getId());
+
+        TransactionMapping parked = mappingRepo
+                .findByAnalysisRunIdAndStatus(run.getId(), TransactionMapping.Status.PARKED).get(0);
+        Long coffeeId = entryRepo.findAll().stream()
+                .filter(e -> e.getName().equals("Coffee Shop")).findFirst().orElseThrow().getId();
+
+        // Correct it by hand — this should teach the merchant cache.
+        mappingService.assign(run.getId(), parked.getTransactionId(), coffeeId);
+        assertEquals(1, merchantRepo.count(), "the manual correction should be remembered");
+
+        // Re-run: the same merchant now resolves from the cache, no AI call, nothing parked.
+        MappingService.MapResult result = mappingService.map(run.getId());
+        assertEquals(0, result.parked());
+        assertEquals(1, result.cached(), "the payment is remembered from the manual correction");
+        assertEquals(0, result.aiMapped(), "no live API call — the answer was cached");
+        assertEquals(3, result.mapped());
+
+        TransactionMapping reapplied = mappingRepo
+                .findByAnalysisRunIdAndTransactionId(run.getId(), parked.getTransactionId()).orElseThrow();
+        assertEquals(TransactionMapping.Status.MAPPED_MANUAL, reapplied.getStatus());
+        assertEquals(coffeeId, reapplied.getBudgetEntryId());
+    }
+
+    @Test
+    void unCategorizingByHandForgetsTheRememberedAnswer() {
+        AnalysisRun run = mappingService.createRun("2026-06", select(juneImportId), false);
+        mappingService.map(run.getId());
+        TransactionMapping parked = mappingRepo
+                .findByAnalysisRunIdAndStatus(run.getId(), TransactionMapping.Status.PARKED).get(0);
+        Long coffeeId = entryRepo.findAll().get(0).getId();
+
+        mappingService.assign(run.getId(), parked.getTransactionId(), coffeeId);
+        assertEquals(1, merchantRepo.count());
+
+        // Deliberately parking it again means "that was wrong" — the memory is dropped.
+        mappingService.assign(run.getId(), parked.getTransactionId(), null);
+        assertEquals(0, merchantRepo.count(), "un-categorizing should forget the merchant");
+
+        MappingService.MapResult result = mappingService.map(run.getId());
+        assertEquals(1, result.parked(), "with the memory gone, it parks again");
+        assertEquals(0, result.cached());
+    }
+
+    @Test
+    void aRememberedAnswerForADeletedEntryIsPurgedRatherThanApplied() {
+        AnalysisRun run = mappingService.createRun("2026-06", select(juneImportId), false);
+        mappingService.map(run.getId());
+        TransactionMapping parked = mappingRepo
+                .findByAnalysisRunIdAndStatus(run.getId(), TransactionMapping.Status.PARKED).get(0);
+        Long coffeeId = entryRepo.findAll().stream()
+                .filter(e -> e.getName().equals("Coffee Shop")).findFirst().orElseThrow().getId();
+
+        mappingService.assign(run.getId(), parked.getTransactionId(), coffeeId);
+        assertEquals(1, merchantRepo.count());
+
+        // The remembered answer now points at an entry that no longer exists.
+        entryRepo.deleteById(coffeeId);
+
+        MappingService.MapResult result = mappingService.map(run.getId());
+        assertEquals(0, merchantRepo.count(), "a stale remembered answer should be purged, not applied");
+        assertEquals(0, result.cached());
+        // The payment parks again; the COFFEE SHOP line no longer name-matches either.
+        assertTrue(result.parked() >= 1);
     }
 
     @Test

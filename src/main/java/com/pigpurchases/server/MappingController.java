@@ -124,7 +124,8 @@ public class MappingController {
         Map<String, Object> response = runResponse(runRepository.findById(id).orElseThrow());
         response.put("justMapped", Map.of(
                 "mapped", result.mapped(), "parked", result.parked(),
-                "excluded", result.excluded(), "aiMapped", result.aiMapped()));
+                "excluded", result.excluded(), "aiMapped", result.aiMapped(),
+                "cached", result.cached()));
         return response;
     }
 

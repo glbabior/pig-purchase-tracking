@@ -358,6 +358,32 @@ failure leaves those transactions parked rather than failing the run. Rejected
 credentials switch it off for the rest of the session instead of re-failing once
 per batch.
 
+#### Remembered answers (the cost control)
+
+Between hint matching and the AI pass sits a **merchant cache**
+(`merchant_categories`). Once a merchant has been categorized — by the AI, or by
+you correcting it during review — the answer is stored keyed by the normalized
+merchant text, and every later run reuses it **without another API call**. So a
+given merchant is paid for at most once, ever; re-running a month after tweaking
+hints costs only whatever genuinely new merchants appeared. The run summary
+breaks this out: *"12 newly by AI, 137 remembered, no API call"*.
+
+The cache is a feedback loop, not just a ledger:
+
+- A **manual correction always wins** over a remembered AI answer, and is itself
+  remembered — fix "FRESHMARKET" once and every future Fresh Market line maps itself.
+- Deliberately **un-categorizing** a transaction (parking it by hand) forgets the
+  remembered answer, so a wrong guess doesn't keep coming back.
+- A remembered answer whose budget entry has since been **deleted** is purged on
+  the next run rather than applied.
+
+#### Model choice
+
+The default is **Haiku 4.5** (`pigpurchases.ai.model`), because merchant →
+category is a simple classification and Haiku is roughly 5× cheaper than Opus.
+Switch to `claude-opus-4-8` if accuracy on your statements needs it. Because of
+the cache, the model cost is a one-time charge per merchant regardless.
+
 Hints live on **budget entries**, not on statement sources. The source a
 transaction came from is supplied to the mapper as context, but the knowledge base
 being refined over time is the per-entry hints.
@@ -446,7 +472,14 @@ transaction_mappings   id, analysis_run_id, transaction_id,
                        status (MAPPED_HINT | MAPPED_AI | MAPPED_MANUAL | PARKED | EXCLUDED),
                        reason
                        unique (analysis_run_id, transaction_id)
+merchant_categories    id, merchant_key (unique), budget_entry_id,
+                       source (AI | MANUAL), sample_description, reason, updated_at
 ```
+
+`merchant_categories` is the cross-run merchant cache: it is what stops the AI
+pass re-charging for a merchant it (or you) already categorized. It is keyed by
+normalized merchant text, not by run, because a merchant maps to the same
+category regardless of month.
 
 `status` distinguishes PARKED (real spend, not yet attributed) from EXCLUDED
 (a transfer that must never count) — both have a null `budget_entry_id`, so the
@@ -533,8 +566,11 @@ Relevant settings in `application.properties`:
 | Property | Default | Purpose |
 |---|---|---|
 | `pigpurchases.ai.enabled` | `true` | Set `false` to skip the AI pass entirely |
-| `pigpurchases.ai.model` | `claude-opus-4-8` | Model used for categorization |
+| `pigpurchases.ai.model` | `claude-haiku-4-5` | Model used for categorization (Opus 4.8 for higher accuracy) |
 | `pigpurchases.ai.batch-size` | `40` | Transactions per request |
+
+Every merchant is charged for at most once — answers are cached across runs (see
+Remembered answers above), so leaving the AI on is cheap after the first month.
 
 Tests set `pigpurchases.ai.enabled=false`, so the suite never calls the API even
 if your shell has a key exported.
@@ -589,6 +625,7 @@ PigPurchases/
 │   │   ├── BudgetEntry.java, Transaction.java, AppSettings.java
 │   │   ├── StatementSource.java  (account folder + parser rules)
 │   │   ├── StatementImport.java  (one ingested statement file)
+│   │   ├── MerchantCategory.java (cross-run merchant→category cache)
 │   │   ├── AnalysisRun.java      (a month + its chosen statements)
 │   │   ├── AnalysisRunSource.java(one source's statement in a run)
 │   │   └── TransactionMapping.java (how one txn resolved in one run)

@@ -5,11 +5,13 @@ import com.pigpurchases.model.AnalysisRunSource;
 import com.pigpurchases.model.BudgetEntry;
 import com.pigpurchases.model.StatementImport;
 import com.pigpurchases.model.StatementSource;
+import com.pigpurchases.model.MerchantCategory;
 import com.pigpurchases.model.Transaction;
 import com.pigpurchases.model.TransactionMapping;
 import com.pigpurchases.repository.AnalysisRunRepository;
 import com.pigpurchases.repository.AnalysisRunSourceRepository;
 import com.pigpurchases.repository.BudgetEntryRepository;
+import com.pigpurchases.repository.MerchantCategoryRepository;
 import com.pigpurchases.repository.StatementImportRepository;
 import com.pigpurchases.repository.StatementSourceRepository;
 import com.pigpurchases.repository.TransactionMappingRepository;
@@ -48,12 +50,19 @@ public class MappingService {
     @Autowired private StatementImportRepository importRepository;
     @Autowired private TransactionRepository transactionRepository;
     @Autowired private BudgetEntryRepository budgetEntryRepository;
+    @Autowired private MerchantCategoryRepository merchantCategoryRepository;
     @Autowired private AiCategorizationService aiCategorizationService;
 
     /** One source's contribution to a run, as chosen in the UI. */
     public record SourceSelection(Long sourceId, Long importId) {}
 
-    public record MapResult(Long runId, String month, int mapped, int parked, int excluded, int aiMapped) {}
+    /**
+     * mapped = everything categorized (hint + remembered + live AI + manual);
+     * cached = of those, how many came from remembered answers (no API call);
+     * aiMapped = of those, how many required a live Claude API call this run.
+     */
+    public record MapResult(Long runId, String month, int mapped, int parked,
+                            int excluded, int aiMapped, int cached) {}
 
     // ---- Run setup ---------------------------------------------------------
 
@@ -190,9 +199,20 @@ public class MappingService {
             }
         }
 
-        // Pass 2 — AI, on whatever the matcher couldn't resolve. Skipped silently when
-        // no credentials are configured, leaving those transactions parked.
-        int aiMapped = applyAiSuggestions(mappings, parkedTransactions, entries);
+        Set<Long> validEntryIds = new HashSet<>();
+        for (BudgetEntry entry : entries) {
+            validEntryIds.add(entry.getId());
+        }
+
+        // Pass 2 — remembered answers. Every parked transaction whose merchant was
+        // categorized on a previous run (by AI, or by the user during review) is
+        // resolved from the cache, for free. This is what stops re-runs re-paying.
+        int cached = applyRememberedCategories(mappings, parkedTransactions, validEntryIds);
+
+        // Pass 3 — AI, on whatever's left. Its answers are written back to the cache
+        // so this is the only run that pays for them. Skipped silently with no
+        // credentials, leaving those transactions parked.
+        int aiMapped = applyAiSuggestions(mappings, parkedTransactions, entries, validEntryIds);
 
         int mapped = 0;
         int parked = 0;
@@ -213,7 +233,47 @@ public class MappingService {
         run.setMappedAt(LocalDateTime.now());
         runRepository.save(run);
 
-        return new MapResult(runId, run.getMonth(), mapped, parked, excluded, aiMapped);
+        return new MapResult(runId, run.getMonth(), mapped, parked, excluded, aiMapped, cached);
+    }
+
+    /**
+     * Resolve parked transactions from the merchant cache, removing the ones it
+     * handles from {@code parkedTransactions} so the AI pass never sees them. A
+     * cached answer pointing at a since-deleted budget entry is dropped (the row
+     * is purged), leaving the transaction parked.
+     */
+    private int applyRememberedCategories(List<TransactionMapping> mappings,
+                                          Map<Long, Transaction> parkedTransactions,
+                                          Set<Long> validEntryIds) {
+        int applied = 0;
+        for (TransactionMapping mapping : mappings) {
+            if (mapping.getStatus() != TransactionMapping.Status.PARKED) {
+                continue;
+            }
+            Transaction txn = parkedTransactions.get(mapping.getTransactionId());
+            if (txn == null) {
+                continue;
+            }
+            String key = HintMatcher.normalize(txn.getDescription());
+            Optional<MerchantCategory> remembered = merchantCategoryRepository.findByMerchantKey(key);
+            if (remembered.isEmpty()) {
+                continue;
+            }
+            MerchantCategory mc = remembered.get();
+            if (!validEntryIds.contains(mc.getBudgetEntryId())) {
+                merchantCategoryRepository.delete(mc); // entry gone; forget the stale answer
+                continue;
+            }
+            boolean manual = mc.getSource() == MerchantCategory.Source.MANUAL;
+            mapping.setBudgetEntryId(mc.getBudgetEntryId());
+            mapping.setStatus(manual ? TransactionMapping.Status.MAPPED_MANUAL
+                                     : TransactionMapping.Status.MAPPED_AI);
+            mapping.setReason("Remembered — " + (manual ? "your earlier categorization"
+                    : "previously categorized by AI"));
+            parkedTransactions.remove(mapping.getTransactionId());
+            applied++;
+        }
+        return applied;
     }
 
     /**
@@ -224,16 +284,19 @@ public class MappingService {
      */
     private int applyAiSuggestions(List<TransactionMapping> mappings,
                                    Map<Long, Transaction> parkedTransactions,
-                                   List<BudgetEntry> entries) {
+                                   List<BudgetEntry> entries,
+                                   Set<Long> validEntryIds) {
         if (parkedTransactions.isEmpty() || !aiCategorizationService.isAvailable()) {
             return 0;
         }
 
         Map<Long, String> keyByTransaction = new LinkedHashMap<>();
+        Map<String, Transaction> sampleByKey = new LinkedHashMap<>();
         List<AiCategorizationService.Candidate> candidates = new ArrayList<>();
         for (Transaction txn : parkedTransactions.values()) {
             String key = HintMatcher.normalize(txn.getDescription());
             keyByTransaction.put(txn.getId(), key);
+            sampleByKey.putIfAbsent(key, txn);
             candidates.add(new AiCategorizationService.Candidate(
                     key, txn.getDescription(), txn.getVendor()));
         }
@@ -244,6 +307,17 @@ public class MappingService {
             return 0;
         }
 
+        // Remember each confident answer so no later run pays for this merchant again.
+        for (Map.Entry<String, AiCategorizationService.Suggestion> e : suggestions.entrySet()) {
+            AiCategorizationService.Suggestion s = e.getValue();
+            if (s.budgetEntryId() == null || !validEntryIds.contains(s.budgetEntryId())) {
+                continue;
+            }
+            Transaction sample = sampleByKey.get(e.getKey());
+            remember(e.getKey(), s.budgetEntryId(), MerchantCategory.Source.AI,
+                    sample != null ? sample.getDescription() : null, s.reason());
+        }
+
         int promoted = 0;
         for (TransactionMapping mapping : mappings) {
             if (mapping.getStatus() != TransactionMapping.Status.PARKED) {
@@ -251,7 +325,8 @@ public class MappingService {
             }
             AiCategorizationService.Suggestion suggestion =
                     suggestions.get(keyByTransaction.get(mapping.getTransactionId()));
-            if (suggestion == null) {
+            if (suggestion == null || suggestion.budgetEntryId() == null
+                    || !validEntryIds.contains(suggestion.budgetEntryId())) {
                 continue;
             }
             mapping.setBudgetEntryId(suggestion.budgetEntryId());
@@ -262,6 +337,30 @@ public class MappingService {
         return promoted;
     }
 
+    /**
+     * Upsert a remembered categorization. A MANUAL answer always wins; an AI
+     * answer never overwrites an existing row (the merchant is only sent to the
+     * AI when it wasn't already cached, so in practice this only guards races).
+     */
+    private void remember(String merchantKey, Long budgetEntryId, MerchantCategory.Source source,
+                          String sampleDescription, String reason) {
+        MerchantCategory existing = merchantCategoryRepository.findByMerchantKey(merchantKey).orElse(null);
+        if (existing != null && source == MerchantCategory.Source.AI
+                && existing.getSource() == MerchantCategory.Source.MANUAL) {
+            return; // never let AI clobber a human correction
+        }
+        MerchantCategory mc = existing != null ? existing
+                : new MerchantCategory(merchantKey, null, source, sampleDescription, reason, null);
+        mc.setBudgetEntryId(budgetEntryId);
+        mc.setSource(source);
+        if (sampleDescription != null) {
+            mc.setSampleDescription(sampleDescription);
+        }
+        mc.setReason(reason);
+        mc.setUpdatedAt(LocalDateTime.now());
+        merchantCategoryRepository.save(mc);
+    }
+
     /** Categorize one transaction by hand, e.g. while working through the parked bucket. */
     @Transactional
     public TransactionMapping assign(Long runId, Long transactionId, Long budgetEntryId) {
@@ -269,16 +368,31 @@ public class MappingService {
                 .orElseThrow(() -> new IllegalArgumentException(
                         "Transaction " + transactionId + " is not part of run " + runId));
 
+        // A manual decision is also taught to the merchant cache, so the same
+        // merchant maps itself on every future run — the "user feedback loop".
+        String merchantKey = transactionRepository.findById(transactionId)
+                .map(txn -> HintMatcher.normalize(txn.getDescription())).orElse(null);
+
         if (budgetEntryId == null) {
             mapping.setBudgetEntryId(null);
             mapping.setStatus(TransactionMapping.Status.PARKED);
             mapping.setReason("Un-categorized by hand");
+            // Deliberately parking it means "this was wrong" — forget the remembered answer.
+            if (merchantKey != null) {
+                merchantCategoryRepository.findByMerchantKey(merchantKey)
+                        .ifPresent(merchantCategoryRepository::delete);
+            }
         } else {
             BudgetEntry entry = budgetEntryRepository.findById(budgetEntryId)
                     .orElseThrow(() -> new IllegalArgumentException("No such budget entry: " + budgetEntryId));
             mapping.setBudgetEntryId(entry.getId());
             mapping.setStatus(TransactionMapping.Status.MAPPED_MANUAL);
             mapping.setReason("Categorized by hand");
+            if (merchantKey != null) {
+                Transaction txn = transactionRepository.findById(transactionId).orElse(null);
+                remember(merchantKey, entry.getId(), MerchantCategory.Source.MANUAL,
+                        txn != null ? txn.getDescription() : null, "Categorized by hand");
+            }
         }
         mappingRepository.save(mapping);
         recount(runId);
