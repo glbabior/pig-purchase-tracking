@@ -1,0 +1,128 @@
+package com.pigpurchases.service;
+
+import com.pigpurchases.TestPdfs;
+import com.pigpurchases.model.AnalysisRun;
+import com.pigpurchases.model.BudgetEntry;
+import com.pigpurchases.model.StatementSource;
+import com.pigpurchases.model.TransactionMapping;
+import com.pigpurchases.repository.AnalysisRunRepository;
+import com.pigpurchases.repository.AnalysisRunSourceRepository;
+import com.pigpurchases.repository.BudgetEntryRepository;
+import com.pigpurchases.repository.MerchantCategoryRepository;
+import com.pigpurchases.repository.StatementImportRepository;
+import com.pigpurchases.repository.StatementSourceRepository;
+import com.pigpurchases.repository.TransactionMappingRepository;
+import com.pigpurchases.repository.TransactionRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
+
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.nio.file.Path;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * Budget-vs-actual math over a mapped run. Uses the generated Crestline statement
+ * (coffee 4.10, a 1,230 transfer excluded by rules, metro 0.35, a -150 card
+ * payment) and models the real workflow: map, then exclude the card payment.
+ */
+@SpringBootTest
+@ActiveProfiles("test")
+class AnalysisServiceTest {
+
+    @Autowired private AnalysisService analysisService;
+    @Autowired private MappingService mappingService;
+    @Autowired private IngestService ingestService;
+    @Autowired private StatementSourceRepository sourceRepo;
+    @Autowired private StatementImportRepository importRepo;
+    @Autowired private TransactionRepository txnRepo;
+    @Autowired private TransactionMappingRepository mappingRepo;
+    @Autowired private AnalysisRunRepository runRepo;
+    @Autowired private AnalysisRunSourceRepository runSourceRepo;
+    @Autowired private BudgetEntryRepository entryRepo;
+    @Autowired private MerchantCategoryRepository merchantRepo;
+
+    private Long runId;
+
+    @BeforeEach
+    void setUp(@TempDir Path dir) throws IOException {
+        mappingRepo.deleteAll();
+        merchantRepo.deleteAll();
+        runSourceRepo.deleteAll();
+        runRepo.deleteAll();
+        txnRepo.deleteAll();
+        importRepo.deleteAll();
+        sourceRepo.deleteAll();
+        entryRepo.deleteAll();
+
+        entryRepo.save(new BudgetEntry("Coffee Shop", new BigDecimal("50.00")));
+        entryRepo.save(new BudgetEntry("Metro Station", new BigDecimal("30.00")));
+
+        StatementSource source = new StatementSource("Crestline Test", dir.toString());
+        source.setParserRules("{\"parser\":\"card-pdf\","
+                + "\"excludeFromSpend\":[{\"contains\":\"BIG PURCHASE\",\"reason\":\"transfer\"}]}");
+        source = sourceRepo.save(source);
+
+        Path pdf = dir.resolve("june.pdf");
+        TestPdfs.write(pdf, TestPdfs.CHASE_LINES);
+        Long importId = ingestService.ingest(source, pdf).importId();
+
+        AnalysisRun run = mappingService.createRun("2026-06",
+                List.of(new MappingService.SourceSelection(source.getId(), importId)), false);
+        mappingService.map(run.getId());
+        runId = run.getId();
+
+        // Model the review step: exclude the card payment so it isn't counted.
+        TransactionMapping payment = mappingRepo
+                .findByAnalysisRunIdAndStatus(runId, TransactionMapping.Status.PARKED).get(0);
+        mappingService.exclude(runId, payment.getTransactionId());
+    }
+
+    @Test
+    void monthSummaryComputesBudgetVsActualPerCategoryAndTotal() {
+        AnalysisService.MonthSummary ms = analysisService.month("2026-06");
+
+        assertEquals(0, new BigDecimal("80.00").compareTo(ms.totalBudget()), "50 + 30 category allowances");
+        assertEquals(0, new BigDecimal("4.45").compareTo(ms.totalActual()), "coffee 4.10 + metro 0.35");
+        assertEquals(0, new BigDecimal("75.55").compareTo(ms.variance()));
+        assertEquals(0, new BigDecimal("1380.00").compareTo(ms.excluded()), "1230 transfer + 150 payment");
+
+        AnalysisService.CategoryRow coffee = ms.categories().stream()
+                .filter(c -> "Coffee Shop".equals(c.name())).findFirst().orElseThrow();
+        assertEquals(0, new BigDecimal("50.00").compareTo(coffee.budget()));
+        assertEquals(0, new BigDecimal("4.10").compareTo(coffee.actual()));
+        assertEquals(0, new BigDecimal("45.90").compareTo(coffee.variance()));
+
+        // Nothing parked after excluding the payment, so no "Other" row.
+        assertTrue(ms.categories().stream().noneMatch(c -> c.entryId() == null),
+                "no uncategorized spend remains");
+    }
+
+    @Test
+    void rollingOverOneMonthEqualsThatMonth() {
+        AnalysisService.RollingSummary r = analysisService.rolling();
+        assertEquals(1, r.months());
+        assertEquals(0, new BigDecimal("4.45").compareTo(r.avgActual()));
+        assertEquals(0, new BigDecimal("80.00").compareTo(r.totalBudget()));
+    }
+
+    @Test
+    void trendsHasOnePointForTheMappedMonth() {
+        List<AnalysisService.TrendPoint> trends = analysisService.trends();
+        assertEquals(1, trends.size());
+        assertEquals("2026-06", trends.get(0).month());
+        assertEquals(0, new BigDecimal("4.45").compareTo(trends.get(0).totalActual()));
+    }
+
+    @Test
+    void mappedMonthsListsTheRun() {
+        assertEquals(List.of("2026-06"), analysisService.mappedMonths());
+    }
+}

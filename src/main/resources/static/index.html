@@ -139,6 +139,29 @@
       .summary { font-size: 0.95rem; }
       .settings-form { max-width: 420px; }
 
+      /* Analysis */
+      .section-title { color: #6b3b00; margin: 1.6rem 0 0.6rem; font-size: 1.05rem; }
+      .analysis-table { width: 100%; border-collapse: collapse; margin-top: 0.3rem; }
+      .analysis-table th, .analysis-table td { padding: 0.35rem 0.7rem; border-bottom: 1px solid #eee; text-align: right; white-space: nowrap; }
+      .analysis-table th:first-child, .analysis-table td:first-child { text-align: left; }
+      .analysis-table th { color: #8a4b00; font-size: 0.85rem; }
+      .analysis-table tr.other td { color: #7a6753; font-style: italic; }
+      .analysis-table tr.total-row td { border-top: 2px solid #eadfd0; font-weight: bold; }
+      .num { font-variant-numeric: tabular-nums; }
+      .over { color: #b3261e; }
+      .under { color: #2f7d32; }
+      .bar-cell { width: 30%; min-width: 90px; }
+      .minibar { position: relative; height: 0.7rem; background: #eef0ee; border-radius: 4px; overflow: hidden; }
+      .minibar > span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; }
+      .minibar > span.ok { background: #7cbf82; }
+      .minibar > span.over { background: #d98b86; }
+
+      /* Trend chart (inline SVG, no external libs) */
+      .trend-chart { margin-top: 0.3rem; overflow-x: auto; }
+      .trend-chart svg { display: block; max-width: 100%; height: auto; }
+      .trend-legend { display: flex; gap: 1.2rem; flex-wrap: wrap; margin-top: 0.4rem; font-size: 0.85rem; color: #7a6753; }
+      .trend-legend .swatch { display: inline-block; width: 0.9rem; height: 0.9rem; border-radius: 3px; vertical-align: -1px; margin-right: 0.35rem; }
+
       @media (max-width: 760px) {
         .app { flex-direction: column; }
         .sidebar { width: auto; flex-direction: row; flex-wrap: wrap; align-items: center; }
@@ -251,13 +274,27 @@
 
             <section id="analysisView" style="display:none">
               <h2 class="view-title">Analyze Spend</h2>
-              <div class="analysis-grid">
-                <div class="hint">Uses the budget items you entered. Paste statement lines for the month below.</div>
-                <label for="statements">Statements</label>
-                <textarea id="statements" rows="8">Groceries $45.00
-Auto Payment $60.00</textarea>
-                <button class="primary" id="calculateBtn">Calculate spend</button>
-                <div id="result" class="result">No calculation run yet.</div>
+              <div id="analysisEmpty" class="empty" style="display:none">
+                No mapped months yet. Map a month on the Mapping screen, then come back here.
+              </div>
+              <div id="analysisBody" style="display:none">
+                <!-- Rolling / typical month -->
+                <h3 class="section-title" id="rollingTitle">Typical month</h3>
+                <div class="remainder-bar" id="rollingStats"></div>
+                <div id="rollingTableWrap"></div>
+
+                <!-- Trend -->
+                <h3 class="section-title">Trend over time</h3>
+                <div id="trendChart" class="trend-chart"></div>
+
+                <!-- A specific month -->
+                <h3 class="section-title">A specific month</h3>
+                <div class="field" style="max-width:220px;">
+                  <label for="analysisMonth">Month (mapped runs only)</label>
+                  <select id="analysisMonth"></select>
+                </div>
+                <div class="remainder-bar" id="monthStats"></div>
+                <div id="monthTableWrap"></div>
               </div>
             </section>
 
@@ -452,7 +489,6 @@ Auto Payment $60.00</textarea>
       document.getElementById('addItemBtn').addEventListener('click', openAddModal);
       document.getElementById('cancelModalBtn').addEventListener('click', closeModal);
       document.getElementById('saveItemBtn').addEventListener('click', saveItem);
-      document.getElementById('calculateBtn').addEventListener('click', calculateSpend);
       document.getElementById('restartBtn').addEventListener('click', restartServer);
       document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
       document.getElementById('addSourceBtn').addEventListener('click', openAddSource);
@@ -1476,31 +1512,179 @@ Auto Payment $60.00</textarea>
         if (viewName === 'ingest') refreshIngest();
         if (viewName === 'mapping') refreshRuns();
         if (viewName === 'debug') loadDebugLog();
+        if (viewName === 'analysis') loadAnalysis();
       }
 
-      async function calculateSpend() {
-        const statements = document.getElementById('statements').value.split(/\n/).filter(Boolean);
-        const payloadEntries = entries.map((entry) => ({
-          name: entry.title,
-          allowance: entry.monthlyBudget
-        }));
+      // ---- Analysis ----------------------------------------------------------
 
-        const response = await fetch('/api/summary', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ entries: payloadEntries, statements })
+      async function loadAnalysis() {
+        const empty = document.getElementById('analysisEmpty');
+        const bodyEl = document.getElementById('analysisBody');
+        let months;
+        try {
+          const r = await fetch('/api/analysis/months');
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          months = await r.json();
+        } catch (err) {
+          empty.textContent = 'Could not load analysis. Is the server running?';
+          empty.style.display = 'block';
+          bodyEl.style.display = 'none';
+          return;
+        }
+        if (!months.length) {
+          empty.textContent = 'No mapped months yet. Map a month on the Mapping screen, then come back here.';
+          empty.style.display = 'block';
+          bodyEl.style.display = 'none';
+          return;
+        }
+        empty.style.display = 'none';
+        bodyEl.style.display = 'block';
+
+        await Promise.all([loadRolling(), loadTrends()]);
+
+        const select = document.getElementById('analysisMonth');
+        select.innerHTML = months.map((m) => `<option value="${m}">${escapeHtml(m)}</option>`).join('');
+        select.onchange = () => loadMonth(select.value);
+        await loadMonth(months[0]); // newest first
+      }
+
+      async function loadRolling() {
+        const data = await (await fetch('/api/analysis/rolling')).json();
+        const label = data.months === 1 ? 'this 1 mapped month' : `${data.months} mapped months`;
+        document.getElementById('rollingTitle').textContent = `Typical month (average across ${label})`;
+        document.getElementById('rollingStats').innerHTML =
+          statTiles(data.totalBudget, data.avgActual, data.variance);
+        document.getElementById('rollingTableWrap').innerHTML =
+          categoryTable(data.categories, data.totalBudget, data.avgActual, data.variance, 'Avg spend');
+      }
+
+      async function loadMonth(month) {
+        const data = await (await fetch(`/api/analysis/month/${encodeURIComponent(month)}`)).json();
+        document.getElementById('monthStats').innerHTML =
+          statTiles(data.totalBudget, data.totalActual, data.variance)
+          + (Number(data.excluded) ? statTile('Excluded (not spend)', data.excluded, false) : '');
+        document.getElementById('monthTableWrap').innerHTML =
+          categoryTable(data.categories, data.totalBudget, data.totalActual, data.variance, 'Spend');
+      }
+
+      // Three headline tiles: budget, actual, and variance (green under / red over).
+      function statTiles(budget, actual, variance) {
+        return statTile('Total budget', budget, false)
+          + statTile('Total spend', actual, false)
+          + varianceTile(variance);
+      }
+      function statTile(label, amount, highlight) {
+        return `<div class="stat${highlight ? ' highlight' : ''}">
+          <div class="label">${escapeHtml(label)}</div>
+          <div class="amt">${formatCurrency(amount)}</div></div>`;
+      }
+      function varianceTile(variance) {
+        const v = Number(variance);
+        const cls = v < 0 ? 'amt negative' : 'amt';
+        const label = v < 0 ? 'Over budget by' : 'Under budget by';
+        return `<div class="stat highlight">
+          <div class="label">${label}</div>
+          <div class="${cls}">${formatCurrency(Math.abs(v))}</div></div>`;
+      }
+
+      // Per-category budget vs actual, with a mini progress bar and a total row.
+      function categoryTable(categories, totalBudget, totalActual, totalVariance, actualHeader) {
+        const rows = categories.map((c) => {
+          const budget = Number(c.budget), actual = Number(c.actual), variance = Number(c.variance);
+          const isOther = c.entryId === null;
+          const pct = budget > 0 ? Math.min(100, (actual / budget) * 100) : (actual > 0 ? 100 : 0);
+          const over = budget > 0 && actual > budget;
+          const bar = isOther
+            ? '<span class="muted">—</span>'
+            : `<div class="minibar"><span class="${over ? 'over' : 'ok'}" style="width:${pct}%"></span></div>`;
+          const vCls = variance < 0 ? 'over' : 'under';
+          return `<tr class="${isOther ? 'other' : ''}">
+            <td>${escapeHtml(c.name)}</td>
+            <td class="num">${isOther ? '—' : formatCurrency(budget)}</td>
+            <td class="num">${formatCurrency(actual)}</td>
+            <td class="num ${vCls}">${formatCurrency(variance)}</td>
+            <td class="bar-cell">${bar}</td>
+          </tr>`;
+        }).join('');
+        const totCls = Number(totalVariance) < 0 ? 'over' : 'under';
+        return `<table class="analysis-table">
+          <thead><tr><th>Category</th><th>Budget</th><th>${escapeHtml(actualHeader)}</th><th>Variance</th><th class="bar-cell"></th></tr></thead>
+          <tbody>${rows}
+            <tr class="total-row"><td>Total</td><td class="num">${formatCurrency(totalBudget)}</td>
+            <td class="num">${formatCurrency(totalActual)}</td>
+            <td class="num ${totCls}">${formatCurrency(totalVariance)}</td><td></td></tr>
+          </tbody></table>`;
+      }
+
+      async function loadTrends() {
+        const points = await (await fetch('/api/analysis/trends')).json();
+        document.getElementById('trendChart').innerHTML = renderTrendChart(points);
+      }
+
+      /**
+       * Inline SVG, no libraries. Monthly spend as bars against a dashed budget
+       * reference line; over/under is shown by the bar crossing the line AND by
+       * colour AND by the value label, so it never relies on colour alone.
+       */
+      function renderTrendChart(points) {
+        if (!points || !points.length) {
+          return '<div class="empty">No mapped months to chart yet.</div>';
+        }
+        const OK = '#8bc78f', OVER = '#db8a84', LINE = '#6b3b00', AXIS = '#cbb89a', INK = '#7a6753';
+        const slot = 72, barW = 38, leftPad = 56, rightPad = 16, topPad = 18, plotH = 170, bottomPad = 30;
+        const width = leftPad + rightPad + slot * points.length;
+        const height = topPad + plotH + bottomPad;
+        const baseY = topPad + plotH;
+
+        const maxVal = Math.max(
+          1,
+          ...points.map((p) => Math.max(Number(p.totalActual) || 0, Number(p.totalBudget) || 0))
+        ) * 1.15;
+        const y = (v) => baseY - (Math.max(0, v) / maxVal) * plotH;
+
+        // Light gridlines + $ labels at 0, half, max.
+        let grid = '';
+        [0, maxVal / 2, maxVal].forEach((v) => {
+          const gy = y(v);
+          grid += `<line x1="${leftPad}" y1="${gy.toFixed(1)}" x2="${width - rightPad}" y2="${gy.toFixed(1)}" stroke="${AXIS}" stroke-width="1" opacity="0.5"/>`
+            + `<text x="${leftPad - 8}" y="${(gy + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="${INK}">$${Math.round(v).toLocaleString()}</text>`;
         });
-        const data = await response.json();
-        document.getElementById('result').innerHTML = `
-          <div class="summary">
-            <strong>Total budget:</strong> ${formatCurrency(data.totalBudget)}<br/>
-            <strong>Total spend:</strong> ${formatCurrency(data.totalSpend)}<br/>
-            <strong>Variance:</strong> ${formatCurrency(data.variance)}<br/>
-            <strong>Percent used:</strong> ${data.percentUsed}%<br/>
-            <strong>Rolling average budget:</strong> ${formatCurrency(data.rollingAverageBudget)}<br/>
-            <strong>Rolling average spend:</strong> ${formatCurrency(data.rollingAverageSpend)}
-          </div>
-        `;
+
+        let bars = '';
+        const budgetPts = [];
+        points.forEach((p, i) => {
+          const cx = leftPad + slot * i + slot / 2;
+          const actual = Number(p.totalActual) || 0;
+          const budget = Number(p.totalBudget) || 0;
+          const over = actual > budget && budget > 0;
+          const bx = cx - barW / 2;
+          const by = y(actual);
+          const bh = baseY - by;
+          bars += `<rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${barW}" height="${Math.max(0, bh).toFixed(1)}" rx="4" fill="${over ? OVER : OK}"><title>${escapeHtml(p.month)}: ${formatCurrency(actual)} spent of ${formatCurrency(budget)}</title></rect>`;
+          bars += `<text x="${cx.toFixed(1)}" y="${(by - 5).toFixed(1)}" text-anchor="middle" font-size="10" fill="${INK}">${formatCurrency(actual)}</text>`;
+          bars += `<text x="${cx.toFixed(1)}" y="${(baseY + 16).toFixed(1)}" text-anchor="middle" font-size="10" fill="${INK}">${escapeHtml(p.month)}</text>`;
+          budgetPts.push([cx, y(budget)]);
+        });
+
+        // Budget reference line across the months (handles budget changing over time).
+        let budgetLine = '';
+        if (budgetPts.length === 1) {
+          const [cx, gy] = budgetPts[0];
+          budgetLine = `<line x1="${(cx - barW).toFixed(1)}" y1="${gy.toFixed(1)}" x2="${(cx + barW).toFixed(1)}" y2="${gy.toFixed(1)}" stroke="${LINE}" stroke-width="2" stroke-dasharray="5 3"/>`;
+        } else {
+          const d = budgetPts.map(([x, yy], i) => `${i ? 'L' : 'M'}${x.toFixed(1)} ${yy.toFixed(1)}`).join(' ');
+          budgetLine = `<path d="${d}" fill="none" stroke="${LINE}" stroke-width="2" stroke-dasharray="5 3"/>`;
+        }
+
+        const svg = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Monthly spend versus budget">
+          ${grid}${bars}${budgetLine}
+        </svg>`;
+        const legend = `<div class="trend-legend">
+          <span><span class="swatch" style="background:${OK}"></span>Spend (within budget)</span>
+          <span><span class="swatch" style="background:${OVER}"></span>Spend (over budget)</span>
+          <span><span class="swatch" style="background:${LINE}"></span>Budget</span>
+        </div>`;
+        return svg + legend;
       }
     </script>
   </body>

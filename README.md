@@ -173,8 +173,11 @@ All live endpoints are served by `BudgetController` under `/api`.
 - `GET /api/transactions/{id}/source` — Trace a transaction to its import + source file
 
 #### Analysis
-- `POST /api/summary` — **Placeholder.** Regex-sums pasted text; does not read the
-  stored transactions. See Current Implementation Status.
+- `GET /api/analysis/months` — months with a completed mapping run (drives the picker)
+- `GET /api/analysis/month/{month}` — budget vs actual for one month, total + per category
+- `GET /api/analysis/rolling` — rolling average across every mapped month
+- `GET /api/analysis/trends` — per-month totals for the trend chart
+- `POST /api/summary` — legacy placeholder, superseded by the above and no longer used by the UI
 
 #### Housekeeping
 - `GET /api/health` — Liveness check used by the restart flow
@@ -235,6 +238,9 @@ _Last verified: 2026-07-22 (end-to-end against a running server, real statements
   assignment, re-running, and deletion — everything in
   [Transaction Mapping — Analysis Runs](#transaction-mapping--analysis-runs),
   including the Claude-API categorization pass for what the matcher can't resolve
+- **Analyze Spend**: budget vs. actual for a chosen month and as a rolling average,
+  per category and in total, plus an over-time trend chart — all driven by the
+  mapping runs (`AnalysisService`)
 
 ### 🧱 Known gaps in what's built
 - **Parser rules are not editable in the UI.** Which parser runs is decided by the
@@ -248,17 +254,13 @@ _Last verified: 2026-07-22 (end-to-end against a running server, real statements
   budget entries have no hints and names like `FRESHMARKET WHSE` don't resemble
   `Groceries`). With a key + credits configured, a re-run should categorize most
   of the rest. The Debug screen shows each call's outcome if it doesn't.
-- **Analyze Spend is still the original placeholder.** It posts pasted textarea
-  lines to `POST /api/summary`, which regex-sums any line containing `$`, and
-  ignores the parsed transactions sitting in H2. The rolling average is likewise
-  synthetic — it averages a one-element history built from the current month.
+- **Spend semantics are type-based, not yet reconciled to statement totals.**
+  Spend nets by transaction type (purchases add, refunds/payments/deposits
+  subtract) and drops EXCLUDED transfers, but there's no check that a month's
+  computed spend ties back to the statements' own totals.
 - Only PDF is supported. CSV and OFX are not implemented.
 
 ### ⚠️ Planned
-- **Real analysis**: total spend vs. total budget per month driven by mapping runs;
-  per-entry breakdown, month-over-month comparison, rolling averages, charts
-- **Parked-transaction review**: work through the "Other" bucket and turn the
-  results into budget entry hints
 - **Transaction Management UI**: view, edit, and recategorize stored transactions
 - **Parser rules UI**: pick a parser and edit exclusions when creating a source
 - **Export Functionality**: generate and download reports
@@ -656,11 +658,13 @@ PigPurchases/
 │   │   ├── HintMatcher.java      (pure matching logic, heavily unit-tested)
 │   │   ├── AiCategorizationService.java (Claude API pass; the privacy boundary)
 │   │   ├── DebugLogService.java  (durable in-app log + retention pruning)
+│   │   ├── AnalysisService.java  (budget-vs-actual: month, rolling, trends)
 │   │   ├── BudgetService.java    (pure calculation logic, @Service bean)
 │   │   └── MonthlyHistoryEntry.java
 │   └── server/
 │       ├── BudgetController.java  (entries, settings, sources, ingest)
 │       ├── MappingController.java (mapping runs and review)
+│       ├── AnalysisController.java (budget-vs-actual endpoints)
 │       └── DataInitializer.java   (one-time flat-file → DB migration)
 ├── src/main/resources/
 │   ├── static/index.html         (the entire vanilla-JS frontend)
@@ -691,10 +695,8 @@ PigPurchases/
    reads them) and `match:` lines for recurring merchants (`FRESHMARKET`,
    `FRESHMARKET`, `DAILYGRIND`, `HPK`/Harbor Park, `KP SCAL`) both raise it
    further — the parked bucket on the Mapping screen shows which to write.
-2. **Monthly analysis.** Total actual spend vs. total budget with variance, plus
-   the per-entry breakdown, driven by a completed run — including "Other".
-3. Surface parser selection + exclusions in the statement-source UI, so a source
+2. Surface parser selection + exclusions in the statement-source UI, so a source
    created in the app can actually be ingested.
-4. Month-over-month comparison, rolling averages, charts.
-5. Export / reporting.
-6. Additional statement formats (CSV, OFX) as needed.
+3. Transaction management UI: view / edit / recategorize stored transactions.
+4. Export / reporting.
+5. Additional statement formats (CSV, OFX) as needed.
