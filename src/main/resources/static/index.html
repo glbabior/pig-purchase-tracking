@@ -160,6 +160,7 @@
       .cat-row .cat-amt { white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: bold; color: #8a4b00; }
       .cat-row select { border: 1px solid #ddd; padding: 0.35rem; border-radius: 8px; font: inherit; max-width: 190px; }
       .cat-check { width: 1.05rem; height: 1.05rem; flex-shrink: 0; cursor: pointer; }
+      .review-search { width: 100%; box-sizing: border-box; border: 1px solid #ddd; padding: 0.6rem 0.7rem; border-radius: 8px; font: inherit; margin: 0.2rem 0 0.4rem; }
       .bar-cell { width: 30%; min-width: 90px; }
       .minibar { position: relative; height: 0.7rem; background: #eef0ee; border-radius: 4px; overflow: hidden; }
       .minibar > span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; }
@@ -407,6 +408,25 @@
       </div>
     </div>
 
+    <div id="reviewAllModal" class="modal" aria-hidden="true">
+      <div class="modal-body wide">
+        <h2 id="reviewAllTitle">Review all</h2>
+        <p class="hint">Every transaction in this run and its current category. Change any of them —
+          changes are remembered for future months. Search narrows the list; &ldquo;Apply to
+          selected&rdquo; changes many at once.</p>
+        <input id="reviewAllSearch" type="search" class="review-search" placeholder="Search description, vendor, or category…" />
+        <div class="parked-toolbar">
+          <label class="parked-selall"><input type="checkbox" id="reviewAllSelectAll" /> Select all shown</label>
+          <span id="reviewAllSelCount" class="muted">0 selected</span>
+          <select id="reviewAllBulkSelect" aria-label="Apply to selected rows"></select>
+        </div>
+        <div class="browse-list" id="reviewAllBody"></div>
+        <div class="modal-actions">
+          <button class="secondary" id="closeReviewAllBtn">Close</button>
+        </div>
+      </div>
+    </div>
+
     <div id="catModal" class="modal" aria-hidden="true">
       <div class="modal-body wide">
         <h2 id="catTitle">Category</h2>
@@ -547,6 +567,16 @@
       document.getElementById('closeCatBtn').addEventListener('click', closeCatModal);
       document.getElementById('catModal').addEventListener('click', (event) => {
         if (event.target.id === 'catModal') closeCatModal();
+      });
+      document.getElementById('closeReviewAllBtn').addEventListener('click', closeReviewAllModal);
+      document.getElementById('reviewAllModal').addEventListener('click', (event) => {
+        if (event.target.id === 'reviewAllModal') closeReviewAllModal();
+      });
+      document.getElementById('reviewAllSearch').addEventListener('input', renderReviewAll);
+      document.getElementById('reviewAllBulkSelect').addEventListener('change', bulkReviewAll);
+      document.getElementById('reviewAllSelectAll').addEventListener('change', (event) => {
+        document.querySelectorAll('.review-check').forEach((cb) => { cb.checked = event.target.checked; });
+        updateReviewAllSelCount();
       });
       document.getElementById('catBulkSelect').addEventListener('change', bulkReassignCat);
       document.getElementById('catSelectAll').addEventListener('change', (event) => {
@@ -1014,11 +1044,13 @@
               <span class="badge excluded">${run.excludedCount} excluded</span>
             </div>
             <div class="actions">
+              <button class="secondary" data-review-all>Review all</button>
               ${run.parkedCount ? '<button class="secondary" data-parked>Review parked</button>' : ''}
               <button class="secondary" data-remap>Re-run mapping</button>
               <button class="secondary" data-delete-run>Delete</button>
             </div>
           `;
+          card.querySelector('[data-review-all]').addEventListener('click', () => openReviewAll(run));
           const parkedBtn = card.querySelector('[data-parked]');
           if (parkedBtn) parkedBtn.addEventListener('click', () => openParked(run));
           card.querySelector('[data-remap]').addEventListener('click', () => remapRun(run.id));
@@ -1693,8 +1725,136 @@
           .map((e) => `<option value="${e.id}" ${String(e.id) === curVal ? 'selected' : ''}>${escapeHtml(e.title || '')}</option>`)
           .join('');
         return `<option value="" ${curVal === '' ? 'selected' : ''}>Other (parked)</option>`
-          + '<option value="__EXCLUDE__">🚫 Not spend — exclude</option>'
+          + `<option value="__EXCLUDE__" ${curVal === '__EXCLUDE__' ? 'selected' : ''}>🚫 Not spend — exclude</option>`
           + entryOpts;
+      }
+
+      // ---- Review all (per run, searchable) ----------------------------------
+
+      let reviewAllRunId = null;
+      let reviewAllRows = [];
+
+      /** The dropdown value that represents a row's current mapping. */
+      function currentCatValue(row) {
+        if (row.status === 'EXCLUDED') return '__EXCLUDE__';
+        return row.budgetEntryId != null ? String(row.budgetEntryId) : '';
+      }
+      function entryName(id) {
+        const e = entries.find((x) => x.id === id);
+        return e ? e.title : '';
+      }
+
+      async function openReviewAll(run) {
+        reviewAllRunId = run.id;
+        document.getElementById('reviewAllTitle').textContent = `Review all — ${run.month}`;
+        document.getElementById('reviewAllSearch').value = '';
+        document.getElementById('reviewAllSelectAll').checked = false;
+        document.getElementById('reviewAllBulkSelect').innerHTML =
+          '<option value="">Apply to selected…</option>'
+          + '<option value="__EXCLUDE__">🚫 Not spend — exclude</option>'
+          + sortedEntryOptions();
+        document.getElementById('reviewAllModal').classList.add('open');
+        document.getElementById('reviewAllModal').setAttribute('aria-hidden', 'false');
+        const body = document.getElementById('reviewAllBody');
+        body.innerHTML = '<div class="cat-row"><span class="muted">Loading…</span></div>';
+        try {
+          reviewAllRows = await (await fetch(`/api/analysis-runs/${run.id}/mappings`)).json();
+        } catch (err) {
+          body.innerHTML = '<div class="cat-row"><span class="run-error">Could not load transactions.</span></div>';
+          return;
+        }
+        renderReviewAll();
+      }
+
+      function renderReviewAll() {
+        const q = document.getElementById('reviewAllSearch').value.trim().toLowerCase();
+        const shown = reviewAllRows.filter((r) => !q
+          || `${r.description || ''} ${r.vendor || ''} ${r.budgetEntryName || ''}`.toLowerCase().includes(q));
+        const body = document.getElementById('reviewAllBody');
+        if (!shown.length) {
+          body.innerHTML = '<div class="cat-row"><span class="muted">Nothing matches.</span></div>';
+          document.getElementById('reviewAllSelectAll').checked = false;
+          updateReviewAllSelCount();
+          return;
+        }
+        body.innerHTML = shown.map((r) => `
+          <div class="cat-row">
+            <input type="checkbox" class="review-check" data-txn="${r.transactionId}" />
+            <div class="cat-desc">
+              <div>${escapeHtml(r.description || '')}</div>
+              <div class="cat-date">${formatMmDdYy(r.date)}${r.vendor && r.vendor !== r.description ? ' · ' + escapeHtml(r.vendor) : ''}</div>
+            </div>
+            <div class="cat-amt">${formatCurrency(Math.abs(Number(r.amount || 0)))}</div>
+            <select data-txn="${r.transactionId}">${reassignRowOptions(currentCatValue(r))}</select>
+          </div>
+        `).join('');
+        body.querySelectorAll('select[data-txn]').forEach((sel) => {
+          sel.addEventListener('change', () => reassignInReviewAll(sel));
+        });
+        body.querySelectorAll('.review-check').forEach((cb) => {
+          cb.addEventListener('change', updateReviewAllSelCount);
+        });
+        document.getElementById('reviewAllSelectAll').checked = false;
+        updateReviewAllSelCount();
+      }
+
+      function updateReviewAllSelCount() {
+        const n = document.querySelectorAll('.review-check:checked').length;
+        document.getElementById('reviewAllSelCount').textContent = `${n} selected`;
+      }
+
+      /** Reflect a saved change in the local row so search and re-render stay correct. */
+      function applyRowValue(row, value) {
+        if (value === '__EXCLUDE__') { row.status = 'EXCLUDED'; row.budgetEntryId = null; row.budgetEntryName = null; }
+        else if (!value) { row.status = 'PARKED'; row.budgetEntryId = null; row.budgetEntryName = 'Other'; }
+        else { row.status = 'MAPPED_MANUAL'; row.budgetEntryId = Number(value); row.budgetEntryName = entryName(Number(value)); }
+      }
+
+      async function reassignInReviewAll(select) {
+        const row = reviewAllRows.find((r) => String(r.transactionId) === select.dataset.txn);
+        select.disabled = true;
+        try {
+          await putJson(`/api/analysis-runs/${reviewAllRunId}/mappings/${select.dataset.txn}`, catPayload(select.value));
+          if (row) applyRowValue(row, select.value);
+          refreshRuns(); // run counts changed
+        } catch (err) {
+          alert('Could not save that change: ' + err.message);
+          if (row) select.value = currentCatValue(row);
+        } finally {
+          select.disabled = false;
+        }
+      }
+
+      async function bulkReviewAll() {
+        const bulk = document.getElementById('reviewAllBulkSelect');
+        const value = bulk.value;
+        if (!value) return;
+        const checked = [...document.querySelectorAll('.review-check:checked')];
+        if (!checked.length) {
+          alert('Tick the rows you want first — the checkboxes on the left.');
+          bulk.value = '';
+          return;
+        }
+        showBusy(`Updating ${checked.length} transaction${checked.length > 1 ? 's' : ''}…`);
+        try {
+          for (const cb of checked) {
+            await putJson(`/api/analysis-runs/${reviewAllRunId}/mappings/${cb.dataset.txn}`, catPayload(value));
+            const row = reviewAllRows.find((r) => String(r.transactionId) === cb.dataset.txn);
+            if (row) applyRowValue(row, value);
+          }
+          refreshRuns();
+          renderReviewAll();
+        } catch (err) {
+          alert('Could not apply to all selected: ' + err.message);
+        } finally {
+          hideBusy();
+          bulk.value = '';
+        }
+      }
+
+      function closeReviewAllModal() {
+        document.getElementById('reviewAllModal').classList.remove('open');
+        document.getElementById('reviewAllModal').setAttribute('aria-hidden', 'true');
       }
 
       function updateCatSelCount() {
