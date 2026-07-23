@@ -2094,8 +2094,15 @@
         });
 
         const actualPath = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(Number(p.actual) || 0).toFixed(1)}`).join(' ');
-        const budgetPath = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(Number(p.budget) || 0).toFixed(1)}`).join(' ');
         const fewPoints = points.length <= 8;
+
+        // Budget is the same each month (the category's current allowance), so show it
+        // as a single labelled horizontal reference line with its dollar value.
+        const budgetVal = Number(points[0].budget) || 0;
+        const budgetY = y(budgetVal);
+        const budgetLine =
+          `<line x1="${leftPad}" y1="${budgetY.toFixed(1)}" x2="${(width - rightPad).toFixed(1)}" y2="${budgetY.toFixed(1)}" stroke="${BUDGET}" stroke-width="2" stroke-dasharray="6 4"/>`
+          + `<text x="${(width - rightPad).toFixed(1)}" y="${(budgetY - 5).toFixed(1)}" text-anchor="end" font-size="10" font-weight="bold" fill="${BUDGET}">Budget ${formatCurrency(budgetVal)}</text>`;
 
         let marks = '';
         points.forEach((p, i) => {
@@ -2109,7 +2116,7 @@
 
         const svg = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Category spend over time">
           ${grid}
-          <path d="${budgetPath}" fill="none" stroke="${BUDGET}" stroke-width="2" stroke-dasharray="5 3"/>
+          ${budgetLine}
           <path d="${actualPath}" fill="none" stroke="${LINE}" stroke-width="2"/>
           ${marks}
         </svg>`;
