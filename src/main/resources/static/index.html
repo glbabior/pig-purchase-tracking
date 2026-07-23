@@ -1597,17 +1597,23 @@
         await loadMonth(months[0]); // newest first
       }
 
+      // Each table keeps its own sort so it survives reloads (e.g. after an edit).
+      let rollingState = { sort: { key: null, dir: 1 } };
+      let monthState = { sort: { key: null, dir: 1 } };
+      let currentAnalysisMonth = null;
+
       async function loadRolling() {
         const data = await (await fetch('/api/analysis/rolling')).json();
         const label = data.months === 1 ? 'this 1 mapped month' : `${data.months} mapped months`;
         document.getElementById('rollingTitle').textContent = `Typical month (average across ${label})`;
         document.getElementById('rollingStats').innerHTML =
           statTiles(data.totalBudget, data.avgActual, data.variance);
-        document.getElementById('rollingTableWrap').innerHTML =
-          categoryTable(data.categories, data.totalBudget, data.avgActual, data.variance, 'Avg spend');
+        rollingState = {
+          categories: data.categories, totalBudget: data.totalBudget, totalActual: data.avgActual,
+          totalVariance: data.variance, actualHeader: 'Avg spend', clickable: false, sort: rollingState.sort
+        };
+        renderAnalysisTable('rollingTableWrap', rollingState);
       }
-
-      let currentAnalysisMonth = null;
 
       async function loadMonth(month) {
         currentAnalysisMonth = month;
@@ -1615,12 +1621,11 @@
         document.getElementById('monthStats').innerHTML =
           statTiles(data.totalBudget, data.totalActual, data.variance)
           + (Number(data.excluded) ? statTile('Excluded (not spend)', data.excluded, false) : '');
-        const wrap = document.getElementById('monthTableWrap');
-        // Clickable: month rows drill into their transactions.
-        wrap.innerHTML = categoryTable(data.categories, data.totalBudget, data.totalActual, data.variance, 'Spend', true);
-        wrap.querySelectorAll('tr[data-cat]').forEach((tr) => {
-          tr.addEventListener('click', () => openCategoryDetail(month, tr.dataset.cat, tr.dataset.name));
-        });
+        monthState = {
+          categories: data.categories, totalBudget: data.totalBudget, totalActual: data.totalActual,
+          totalVariance: data.variance, actualHeader: 'Spend', clickable: true, month, sort: monthState.sort
+        };
+        renderAnalysisTable('monthTableWrap', monthState);
       }
 
       async function openCategoryDetail(month, categoryKey, name) {
@@ -1775,8 +1780,33 @@
 
       // Per-category budget vs actual, with a mini progress bar and a total row.
       // When clickable, each row carries the info needed to drill into its transactions.
-      function categoryTable(categories, totalBudget, totalActual, totalVariance, actualHeader, clickable) {
-        const rows = categories.map((c) => {
+      /**
+       * Render a per-category budget/actual/variance table into a container,
+       * sorted per state.sort and with clickable headers. The Total row is always
+       * pinned last; month tables also get clickable rows for the drill-down.
+       */
+      function renderAnalysisTable(containerId, state) {
+        const cols = [
+          { key: 'name', label: 'Category', num: false },
+          { key: 'budget', label: 'Budget', num: true },
+          { key: 'actual', label: state.actualHeader, num: true },
+          { key: 'variance', label: 'Variance', num: true },
+        ];
+
+        const sorted = [...state.categories];
+        const { key, dir } = state.sort;
+        if (key) {
+          sorted.sort((a, b) => key === 'name'
+            ? String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' }) * dir
+            : (Number(a[key]) - Number(b[key])) * dir);
+        }
+
+        const head = cols.map((col) => {
+          const arrow = key === col.key ? ` <span class="arrow">${dir === 1 ? '▲' : '▼'}</span>` : '';
+          return `<th class="sortable" data-sort="${col.key}">${escapeHtml(col.label)}${arrow}</th>`;
+        }).join('') + '<th class="bar-cell"></th>';
+
+        const rows = sorted.map((c) => {
           const budget = Number(c.budget), actual = Number(c.actual), variance = Number(c.variance);
           const isOther = c.entryId === null;
           const pct = budget > 0 ? Math.min(100, (actual / budget) * 100) : (actual > 0 ? 100 : 0);
@@ -1784,7 +1814,7 @@
           const bar = `<div class="minibar"><span class="${over ? 'over' : 'ok'}" style="width:${pct}%"></span></div>`;
           const vCls = variance < 0 ? 'over' : 'under';
           const cat = isOther ? 'other' : c.entryId;
-          const rowAttrs = clickable ? ` class="clickable" data-cat="${cat}" data-name="${escapeHtml(c.name)}"` : '';
+          const rowAttrs = state.clickable ? ` class="clickable" data-cat="${cat}" data-name="${escapeHtml(c.name)}"` : '';
           return `<tr${rowAttrs}>
             <td>${escapeHtml(c.name)}</td>
             <td class="num">${formatCurrency(budget)}</td>
@@ -1793,14 +1823,30 @@
             <td class="bar-cell">${bar}</td>
           </tr>`;
         }).join('');
-        const totCls = Number(totalVariance) < 0 ? 'over' : 'under';
-        return `<table class="analysis-table">
-          <thead><tr><th>Category</th><th>Budget</th><th>${escapeHtml(actualHeader)}</th><th>Variance</th><th class="bar-cell"></th></tr></thead>
+
+        const totCls = Number(state.totalVariance) < 0 ? 'over' : 'under';
+        const container = document.getElementById(containerId);
+        container.innerHTML = `<table class="analysis-table">
+          <thead><tr>${head}</tr></thead>
           <tbody>${rows}
-            <tr class="total-row"><td>Total</td><td class="num">${formatCurrency(totalBudget)}</td>
-            <td class="num">${formatCurrency(totalActual)}</td>
-            <td class="num ${totCls}">${formatCurrency(totalVariance)}</td><td></td></tr>
+            <tr class="total-row"><td>Total</td><td class="num">${formatCurrency(state.totalBudget)}</td>
+            <td class="num">${formatCurrency(state.totalActual)}</td>
+            <td class="num ${totCls}">${formatCurrency(state.totalVariance)}</td><td></td></tr>
           </tbody></table>`;
+
+        container.querySelectorAll('th[data-sort]').forEach((th) => {
+          th.addEventListener('click', () => {
+            const k = th.dataset.sort;
+            if (state.sort.key === k) state.sort.dir *= -1;
+            else { state.sort.key = k; state.sort.dir = 1; }
+            renderAnalysisTable(containerId, state);
+          });
+        });
+        if (state.clickable) {
+          container.querySelectorAll('tr[data-cat]').forEach((tr) => {
+            tr.addEventListener('click', () => openCategoryDetail(state.month, tr.dataset.cat, tr.dataset.name));
+          });
+        }
       }
 
       async function loadTrends() {
