@@ -19,3 +19,6 @@ budget-import.json
 
 # OS / shortcut noise
 *.lnk
+
+# Recovered DB candidates and any local db working folder — never commit financial data
+/db/

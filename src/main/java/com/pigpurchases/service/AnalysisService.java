@@ -5,8 +5,10 @@ import com.pigpurchases.model.AnalysisRunSource;
 import com.pigpurchases.model.BudgetEntry;
 import com.pigpurchases.model.Transaction;
 import com.pigpurchases.model.TransactionMapping;
+import com.pigpurchases.model.AppSettings;
 import com.pigpurchases.repository.AnalysisRunRepository;
 import com.pigpurchases.repository.AnalysisRunSourceRepository;
+import com.pigpurchases.repository.AppSettingsRepository;
 import com.pigpurchases.repository.BudgetEntryRepository;
 import com.pigpurchases.repository.TransactionMappingRepository;
 import com.pigpurchases.repository.TransactionRepository;
@@ -49,6 +51,9 @@ public class AnalysisService {
     @Autowired private TransactionMappingRepository mappingRepository;
     @Autowired private TransactionRepository transactionRepository;
     @Autowired private BudgetEntryRepository budgetEntryRepository;
+    @Autowired private AppSettingsRepository appSettingsRepository;
+
+    private static final BigDecimal MONTHS_PER_YEAR = BigDecimal.valueOf(12);
 
     /** entryId is null for the synthetic "Other" (parked) row, which has no budget. */
     public record CategoryRow(Long entryId, String name, BigDecimal budget,
@@ -61,6 +66,9 @@ public class AnalysisService {
                                  BigDecimal variance, List<CategoryRow> categories) {}
 
     public record TrendPoint(String month, BigDecimal totalActual, BigDecimal totalBudget) {}
+
+    /** One transaction behind a category's total, for the click-through detail. */
+    public record TxnLine(String date, String description, String vendor, BigDecimal amount, String type) {}
 
     /** Months that have a completed mapping run, newest first. */
     @Transactional(readOnly = true)
@@ -87,10 +95,10 @@ public class AnalysisService {
         List<BudgetEntry> entries = budgetEntryRepository.findAll();
         List<MonthSummary> all = mappedRuns().stream().map(r -> summarize(r, entries)).toList();
 
-        BigDecimal totalBudget = totalBudget(entries);
+        BigDecimal totalBudget = monthlyAllowance();
         if (all.isEmpty()) {
             return new RollingSummary(0, totalBudget, BigDecimal.ZERO, totalBudget, categoryRows(entries,
-                    new HashMap<>(), BigDecimal.ZERO, 1));
+                    new HashMap<>(), BigDecimal.ZERO, 1, totalBudget));
         }
 
         int n = all.size();
@@ -109,7 +117,7 @@ public class AnalysisService {
                 }
             }
         }
-        List<CategoryRow> categories = categoryRows(entries, summedByEntry, summedOther, n);
+        List<CategoryRow> categories = categoryRows(entries, summedByEntry, summedOther, n, totalBudget);
         return new RollingSummary(n, totalBudget, avgActual, totalBudget.subtract(avgActual), categories);
     }
 
@@ -158,10 +166,10 @@ public class AnalysisService {
             }
         }
 
-        List<CategoryRow> categories = categoryRows(entries, byEntry, other, 1);
+        BigDecimal totalBudget = monthlyAllowance();
+        List<CategoryRow> categories = categoryRows(entries, byEntry, other, 1, totalBudget);
         BigDecimal totalActual = categories.stream().map(CategoryRow::actual)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal totalBudget = totalBudget(entries);
         return new MonthSummary(run.getMonth(), totalBudget, round(totalActual),
                 round(totalBudget.subtract(totalActual)), round(excluded), categories);
     }
@@ -172,21 +180,27 @@ public class AnalysisService {
      * and a rolling average (divisor = month count).
      */
     private List<CategoryRow> categoryRows(List<BudgetEntry> entries, Map<Long, BigDecimal> actualByEntry,
-                                           BigDecimal otherTotal, int divisor) {
+                                           BigDecimal otherTotal, int divisor, BigDecimal monthlyAllowance) {
         BigDecimal div = BigDecimal.valueOf(Math.max(divisor, 1));
         List<CategoryRow> rows = new ArrayList<>();
+        BigDecimal allocated = BigDecimal.ZERO;
         for (BudgetEntry entry : entries) {
             BigDecimal budget = entry.getMonthlyAllowance() != null ? entry.getMonthlyAllowance() : BigDecimal.ZERO;
+            allocated = allocated.add(budget);
             BigDecimal actual = actualByEntry.getOrDefault(entry.getId(), BigDecimal.ZERO)
                     .divide(div, 2, RoundingMode.HALF_UP);
             rows.add(new CategoryRow(entry.getId(), entry.getName(), round(budget), actual,
                     round(budget.subtract(actual))));
         }
         rows.sort(Comparator.comparing(r -> r.name() == null ? "" : r.name().toLowerCase()));
-        // "Other" last: unbudgeted parked spend.
+        // "Other" last. Its budget is the discretionary remainder — whatever of the
+        // monthly allowance isn't allocated to a category — so category budgets plus
+        // Other's budget always sum to the monthly allowance.
+        BigDecimal otherBudget = monthlyAllowance.subtract(allocated);
         BigDecimal other = otherTotal.divide(div, 2, RoundingMode.HALF_UP);
-        if (other.signum() != 0) {
-            rows.add(new CategoryRow(null, "Other (uncategorized)", BigDecimal.ZERO, other, other.negate()));
+        if (otherBudget.signum() != 0 || other.signum() != 0) {
+            rows.add(new CategoryRow(null, "Other (discretionary)", round(otherBudget), other,
+                    round(otherBudget.subtract(other))));
         }
         return rows;
     }
@@ -201,10 +215,53 @@ public class AnalysisService {
         return byId;
     }
 
-    private static BigDecimal totalBudget(List<BudgetEntry> entries) {
-        return entries.stream()
-                .map(e -> e.getMonthlyAllowance() != null ? e.getMonthlyAllowance() : BigDecimal.ZERO)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    /** The month's top-line budget: the annual budget from settings divided by 12. */
+    private BigDecimal monthlyAllowance() {
+        BigDecimal annual = appSettingsRepository.findById(1L)
+                .map(AppSettings::getAnnualBudget).orElse(BigDecimal.ZERO);
+        if (annual == null) {
+            annual = BigDecimal.ZERO;
+        }
+        return annual.divide(MONTHS_PER_YEAR, 2, RoundingMode.HALF_UP);
+    }
+
+    /** The transactions behind one category's total for a month; key is an entry id or "other". */
+    @Transactional(readOnly = true)
+    public List<TxnLine> categoryTransactions(String month, String categoryKey) {
+        AnalysisRun run = runRepository.findByMonth(month)
+                .filter(r -> r.getStatus() == AnalysisRun.Status.MAPPED)
+                .orElseThrow(() -> new IllegalArgumentException("No completed mapping run for " + month));
+        boolean other = "other".equalsIgnoreCase(categoryKey);
+        Long entryId = null;
+        if (!other) {
+            try {
+                entryId = Long.valueOf(categoryKey);
+            } catch (NumberFormatException ex) {
+                throw new IllegalArgumentException("Unknown category: " + categoryKey);
+            }
+        }
+
+        Map<Long, Transaction> txnById = transactionsForRun(run);
+        List<TxnLine> lines = new ArrayList<>();
+        for (TransactionMapping m : mappingRepository.findByAnalysisRunId(run.getId())) {
+            if (m.getStatus() == TransactionMapping.Status.EXCLUDED) {
+                continue;
+            }
+            boolean isParked = m.getStatus() == TransactionMapping.Status.PARKED || m.getBudgetEntryId() == null;
+            boolean matches = other ? isParked : (!isParked && entryId.equals(m.getBudgetEntryId()));
+            if (!matches) {
+                continue;
+            }
+            Transaction txn = txnById.get(m.getTransactionId());
+            if (txn == null) {
+                continue;
+            }
+            lines.add(new TxnLine(
+                    txn.getTransactionDate() != null ? txn.getTransactionDate().toString() : null,
+                    txn.getDescription(), txn.getVendor(), round(signedSpend(txn)), txn.getType()));
+        }
+        lines.sort(Comparator.comparing(l -> l.date() == null ? "" : l.date()));
+        return lines;
     }
 
     /** Money out adds to spend; money in (refunds, payments, deposits) subtracts. */

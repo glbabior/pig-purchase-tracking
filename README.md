@@ -72,7 +72,11 @@ Pig Purchases is a desktop budget tracking application for managing monthly budg
 ### Data Storage Strategy
 
 #### Database (H2)
-- **Location**: `pig-purchases-db` (file-based, stored locally)
+- **Location**: `${user.home}/.pigpurchases/pig-purchases-db` (file-based, local).
+  **Deliberately outside any cloud-synced folder.** An earlier build kept the DB
+  in the project directory under OneDrive, which synced the live file and once
+  restored an older version over it, losing a session's work. Never point the
+  datasource at a OneDrive/Dropbox/iCloud path.
 - **Auto-initialization**: Database schema created automatically on first run
 - **Data Migration**: Existing flat-file budget data migrated to database on startup
 
@@ -240,7 +244,10 @@ _Last verified: 2026-07-22 (end-to-end against a running server, real statements
   including the Claude-API categorization pass for what the matcher can't resolve
 - **Analyze Spend**: budget vs. actual for a chosen month and as a rolling average,
   per category and in total, plus an over-time trend chart — all driven by the
-  mapping runs (`AnalysisService`)
+  mapping runs (`AnalysisService`). The month total budget is the monthly allowance
+  (annual ÷ 12); category budgets are the entry allowances; the unallocated
+  remainder is the budget for "Other" (discretionary spend). Clicking a category
+  lists the transactions behind its total.
 
 ### 🧱 Known gaps in what's built
 - **Parser rules are not editable in the UI.** Which parser runs is decided by the

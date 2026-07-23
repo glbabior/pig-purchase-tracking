@@ -150,6 +150,14 @@
       .num { font-variant-numeric: tabular-nums; }
       .over { color: #b3261e; }
       .under { color: #2f7d32; }
+      .analysis-table tr.clickable { cursor: pointer; }
+      .analysis-table tr.clickable:hover { background: #faf3e8; }
+      .analysis-table tr.clickable td:first-child::after { content: " ›"; color: #b57a2b; }
+      .cat-row { display: flex; align-items: baseline; justify-content: space-between; gap: 0.8rem; padding: 0.45rem 0.7rem; border-bottom: 1px solid #f3f3f3; }
+      .cat-row:last-child { border-bottom: none; }
+      .cat-row .cat-desc { flex: 1; min-width: 0; word-break: break-word; }
+      .cat-row .cat-date { color: #7a6753; font-size: 0.82rem; }
+      .cat-row .cat-amt { white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: bold; color: #8a4b00; }
       .bar-cell { width: 30%; min-width: 90px; }
       .minibar { position: relative; height: 0.7rem; background: #eef0ee; border-radius: 4px; overflow: hidden; }
       .minibar > span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; }
@@ -397,6 +405,16 @@
       </div>
     </div>
 
+    <div id="catModal" class="modal" aria-hidden="true">
+      <div class="modal-body wide">
+        <h2 id="catTitle">Category</h2>
+        <div class="browse-list" id="catBody"></div>
+        <div class="modal-actions">
+          <button class="secondary" id="closeCatBtn">Close</button>
+        </div>
+      </div>
+    </div>
+
     <div id="sourceModal" class="modal" aria-hidden="true">
       <div class="modal-body">
         <h2 id="sourceModalTitle">Add Source</h2>
@@ -515,6 +533,16 @@
       document.getElementById('closeParkedBtn').addEventListener('click', closeParkedModal);
       parkedModal.addEventListener('click', (event) => {
         if (event.target === parkedModal) closeParkedModal();
+      });
+      document.getElementById('closeCatBtn').addEventListener('click', () => {
+        document.getElementById('catModal').classList.remove('open');
+        document.getElementById('catModal').setAttribute('aria-hidden', 'true');
+      });
+      document.getElementById('catModal').addEventListener('click', (event) => {
+        if (event.target.id === 'catModal') {
+          event.target.classList.remove('open');
+          event.target.setAttribute('aria-hidden', 'true');
+        }
       });
       document.getElementById('parkedBulkSelect').addEventListener('change', bulkApplyParked);
       document.getElementById('parkedSelectAll').addEventListener('change', (event) => {
@@ -1558,13 +1586,54 @@
           categoryTable(data.categories, data.totalBudget, data.avgActual, data.variance, 'Avg spend');
       }
 
+      let currentAnalysisMonth = null;
+
       async function loadMonth(month) {
+        currentAnalysisMonth = month;
         const data = await (await fetch(`/api/analysis/month/${encodeURIComponent(month)}`)).json();
         document.getElementById('monthStats').innerHTML =
           statTiles(data.totalBudget, data.totalActual, data.variance)
           + (Number(data.excluded) ? statTile('Excluded (not spend)', data.excluded, false) : '');
-        document.getElementById('monthTableWrap').innerHTML =
-          categoryTable(data.categories, data.totalBudget, data.totalActual, data.variance, 'Spend');
+        const wrap = document.getElementById('monthTableWrap');
+        // Clickable: month rows drill into their transactions.
+        wrap.innerHTML = categoryTable(data.categories, data.totalBudget, data.totalActual, data.variance, 'Spend', true);
+        wrap.querySelectorAll('tr[data-cat]').forEach((tr) => {
+          tr.addEventListener('click', () => openCategoryDetail(month, tr.dataset.cat, tr.dataset.name));
+        });
+      }
+
+      async function openCategoryDetail(month, categoryKey, name) {
+        document.getElementById('catTitle').textContent = `${name} — ${month}`;
+        const body = document.getElementById('catBody');
+        body.innerHTML = '<div class="cat-row"><span class="muted">Loading…</span></div>';
+        document.getElementById('catModal').classList.add('open');
+        document.getElementById('catModal').setAttribute('aria-hidden', 'false');
+        let lines;
+        try {
+          const url = `/api/analysis/month/${encodeURIComponent(month)}/transactions?category=${encodeURIComponent(categoryKey)}`;
+          const r = await fetch(url);
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          lines = await r.json();
+        } catch (err) {
+          body.innerHTML = '<div class="cat-row"><span class="run-error">Could not load transactions.</span></div>';
+          return;
+        }
+        if (!lines.length) {
+          body.innerHTML = '<div class="cat-row"><span class="muted">No transactions.</span></div>';
+          return;
+        }
+        const total = lines.reduce((sum, l) => sum + Number(l.amount || 0), 0);
+        body.innerHTML = lines.map((l) => `
+          <div class="cat-row">
+            <div class="cat-desc">
+              <div>${escapeHtml(l.description || '')}</div>
+              <div class="cat-date">${formatMmDdYy(l.date)}${l.vendor && l.vendor !== l.description ? ' · ' + escapeHtml(l.vendor) : ''}</div>
+            </div>
+            <div class="cat-amt">${formatCurrency(l.amount)}</div>
+          </div>
+        `).join('')
+          + `<div class="cat-row"><div class="cat-desc"><strong>Total (${lines.length})</strong></div>`
+          + `<div class="cat-amt">${formatCurrency(total)}</div></div>`;
       }
 
       // Three headline tiles: budget, actual, and variance (green under / red over).
@@ -1588,19 +1657,20 @@
       }
 
       // Per-category budget vs actual, with a mini progress bar and a total row.
-      function categoryTable(categories, totalBudget, totalActual, totalVariance, actualHeader) {
+      // When clickable, each row carries the info needed to drill into its transactions.
+      function categoryTable(categories, totalBudget, totalActual, totalVariance, actualHeader, clickable) {
         const rows = categories.map((c) => {
           const budget = Number(c.budget), actual = Number(c.actual), variance = Number(c.variance);
           const isOther = c.entryId === null;
           const pct = budget > 0 ? Math.min(100, (actual / budget) * 100) : (actual > 0 ? 100 : 0);
           const over = budget > 0 && actual > budget;
-          const bar = isOther
-            ? '<span class="muted">—</span>'
-            : `<div class="minibar"><span class="${over ? 'over' : 'ok'}" style="width:${pct}%"></span></div>`;
+          const bar = `<div class="minibar"><span class="${over ? 'over' : 'ok'}" style="width:${pct}%"></span></div>`;
           const vCls = variance < 0 ? 'over' : 'under';
-          return `<tr class="${isOther ? 'other' : ''}">
+          const cat = isOther ? 'other' : c.entryId;
+          const rowAttrs = clickable ? ` class="clickable" data-cat="${cat}" data-name="${escapeHtml(c.name)}"` : '';
+          return `<tr${rowAttrs}>
             <td>${escapeHtml(c.name)}</td>
-            <td class="num">${isOther ? '—' : formatCurrency(budget)}</td>
+            <td class="num">${formatCurrency(budget)}</td>
             <td class="num">${formatCurrency(actual)}</td>
             <td class="num ${vCls}">${formatCurrency(variance)}</td>
             <td class="bar-cell">${bar}</td>

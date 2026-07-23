@@ -2,11 +2,13 @@ package com.pigpurchases.service;
 
 import com.pigpurchases.TestPdfs;
 import com.pigpurchases.model.AnalysisRun;
+import com.pigpurchases.model.AppSettings;
 import com.pigpurchases.model.BudgetEntry;
 import com.pigpurchases.model.StatementSource;
 import com.pigpurchases.model.TransactionMapping;
 import com.pigpurchases.repository.AnalysisRunRepository;
 import com.pigpurchases.repository.AnalysisRunSourceRepository;
+import com.pigpurchases.repository.AppSettingsRepository;
 import com.pigpurchases.repository.BudgetEntryRepository;
 import com.pigpurchases.repository.MerchantCategoryRepository;
 import com.pigpurchases.repository.StatementImportRepository;
@@ -26,7 +28,6 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Budget-vs-actual math over a mapped run. Uses the generated Crestline statement
@@ -48,6 +49,7 @@ class AnalysisServiceTest {
     @Autowired private AnalysisRunSourceRepository runSourceRepo;
     @Autowired private BudgetEntryRepository entryRepo;
     @Autowired private MerchantCategoryRepository merchantRepo;
+    @Autowired private AppSettingsRepository settingsRepo;
 
     private Long runId;
 
@@ -61,6 +63,13 @@ class AnalysisServiceTest {
         importRepo.deleteAll();
         sourceRepo.deleteAll();
         entryRepo.deleteAll();
+
+        // Monthly allowance = annual / 12 = 100.00 is the top-line budget.
+        settingsRepo.deleteAll();
+        AppSettings settings = new AppSettings();
+        settings.setId(1L);
+        settings.setAnnualBudget(new BigDecimal("1200.00"));
+        settingsRepo.save(settings);
 
         entryRepo.save(new BudgetEntry("Coffee Shop", new BigDecimal("50.00")));
         entryRepo.save(new BudgetEntry("Metro Station", new BigDecimal("30.00")));
@@ -89,9 +98,9 @@ class AnalysisServiceTest {
     void monthSummaryComputesBudgetVsActualPerCategoryAndTotal() {
         AnalysisService.MonthSummary ms = analysisService.month("2026-06");
 
-        assertEquals(0, new BigDecimal("80.00").compareTo(ms.totalBudget()), "50 + 30 category allowances");
+        assertEquals(0, new BigDecimal("100.00").compareTo(ms.totalBudget()), "monthly allowance (1200/12)");
         assertEquals(0, new BigDecimal("4.45").compareTo(ms.totalActual()), "coffee 4.10 + metro 0.35");
-        assertEquals(0, new BigDecimal("75.55").compareTo(ms.variance()));
+        assertEquals(0, new BigDecimal("95.55").compareTo(ms.variance()));
         assertEquals(0, new BigDecimal("1380.00").compareTo(ms.excluded()), "1230 transfer + 150 payment");
 
         AnalysisService.CategoryRow coffee = ms.categories().stream()
@@ -100,9 +109,12 @@ class AnalysisServiceTest {
         assertEquals(0, new BigDecimal("4.10").compareTo(coffee.actual()));
         assertEquals(0, new BigDecimal("45.90").compareTo(coffee.variance()));
 
-        // Nothing parked after excluding the payment, so no "Other" row.
-        assertTrue(ms.categories().stream().noneMatch(c -> c.entryId() == null),
-                "no uncategorized spend remains");
+        // Nothing parked, but "Other" carries the discretionary remainder as its budget:
+        // 100 allowance - 80 allocated = 20, with 0 actual.
+        AnalysisService.CategoryRow other = ms.categories().stream()
+                .filter(c -> c.entryId() == null).findFirst().orElseThrow();
+        assertEquals(0, new BigDecimal("20.00").compareTo(other.budget()), "discretionary = 100 - 80");
+        assertEquals(0, BigDecimal.ZERO.compareTo(other.actual()));
     }
 
     @Test
@@ -110,7 +122,7 @@ class AnalysisServiceTest {
         AnalysisService.RollingSummary r = analysisService.rolling();
         assertEquals(1, r.months());
         assertEquals(0, new BigDecimal("4.45").compareTo(r.avgActual()));
-        assertEquals(0, new BigDecimal("80.00").compareTo(r.totalBudget()));
+        assertEquals(0, new BigDecimal("100.00").compareTo(r.totalBudget()));
     }
 
     @Test

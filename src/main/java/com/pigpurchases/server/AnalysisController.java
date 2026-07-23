@@ -27,6 +27,13 @@ public class AnalysisController {
         return analysisService.month(month);
     }
 
+    /** The transactions behind one category for a month; category is an entry id or "other". */
+    @GetMapping("/month/{month}/transactions")
+    public List<AnalysisService.TxnLine> categoryTransactions(@PathVariable String month,
+                                                             @RequestParam String category) {
+        return analysisService.categoryTransactions(month, category);
+    }
+
     /** Rolling average across every mapped month. */
     @GetMapping("/rolling")
     public AnalysisService.RollingSummary rolling() {
