@@ -67,6 +67,9 @@ public class AnalysisService {
 
     public record TrendPoint(String month, BigDecimal totalActual, BigDecimal totalBudget) {}
 
+    /** One month's actual (and constant budget) for a single category, for its trend line. */
+    public record CategoryTrendPoint(String month, BigDecimal actual, BigDecimal budget) {}
+
     /** One transaction behind a category's total, for the click-through detail (and reassigning it). */
     public record TxnLine(Long transactionId, String date, String description, String vendor,
                           BigDecimal amount, String type) {}
@@ -131,6 +134,42 @@ public class AnalysisService {
         for (AnalysisRun run : runs) {
             MonthSummary ms = summarize(run, entries);
             points.add(new TrendPoint(run.getMonth(), ms.totalActual(), ms.totalBudget()));
+        }
+        return points;
+    }
+
+    /**
+     * One category's actual spend month by month (most recent 12), for a line
+     * chart. Budget is the category's current allowance, constant across months.
+     */
+    @Transactional(readOnly = true)
+    public List<CategoryTrendPoint> categoryTrend(String categoryKey) {
+        boolean other = "other".equalsIgnoreCase(categoryKey);
+        Long entryId = null;
+        if (!other) {
+            try {
+                entryId = Long.valueOf(categoryKey);
+            } catch (NumberFormatException ex) {
+                throw new IllegalArgumentException("Unknown category: " + categoryKey);
+            }
+        }
+        final Long id = entryId;
+
+        List<BudgetEntry> entries = budgetEntryRepository.findAll();
+        List<AnalysisRun> runs = new ArrayList<>(mappedRuns());
+        runs.sort(Comparator.comparing(AnalysisRun::getMonth)); // oldest first
+        if (runs.size() > 12) {
+            runs = runs.subList(runs.size() - 12, runs.size()); // most recent 12
+        }
+
+        List<CategoryTrendPoint> points = new ArrayList<>();
+        for (AnalysisRun run : runs) {
+            CategoryRow row = summarize(run, entries).categories().stream()
+                    .filter(c -> other ? c.entryId() == null : (c.entryId() != null && c.entryId().equals(id)))
+                    .findFirst().orElse(null);
+            BigDecimal actual = row != null ? row.actual() : BigDecimal.ZERO;
+            BigDecimal budget = row != null ? row.budget() : BigDecimal.ZERO;
+            points.add(new CategoryTrendPoint(run.getMonth(), actual, budget));
         }
         return points;
     }

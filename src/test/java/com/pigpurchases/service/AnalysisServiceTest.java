@@ -154,4 +154,16 @@ class AnalysisServiceTest {
         // Payment was excluded, so "other" (parked) is empty.
         assertEquals(0, analysisService.categoryTransactions("2026-06", "other").size());
     }
+
+    @Test
+    void categoryTrendReturnsAPointPerMappedMonth() {
+        Long coffeeId = entryRepo.findAll().stream()
+                .filter(e -> "Coffee Shop".equals(e.getName())).findFirst().orElseThrow().getId();
+
+        List<AnalysisService.CategoryTrendPoint> trend = analysisService.categoryTrend(coffeeId.toString());
+        assertEquals(1, trend.size());
+        assertEquals("2026-06", trend.get(0).month());
+        assertEquals(0, new BigDecimal("4.10").compareTo(trend.get(0).actual()));
+        assertEquals(0, new BigDecimal("50.00").compareTo(trend.get(0).budget()), "constant category allowance");
+    }
 }

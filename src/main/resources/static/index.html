@@ -195,7 +195,8 @@
           <button class="nav-item" data-view="sources">Statement Sources</button>
           <button class="nav-item" data-view="ingest">Ingest</button>
           <button class="nav-item" data-view="mapping">Mapping</button>
-          <button class="nav-item" data-view="analysis">Analyze Spend</button>
+          <button class="nav-item" data-view="spend-monthly">Spend: Monthly</button>
+          <button class="nav-item" data-view="spend-rolling">Spend: Rolling</button>
           <button class="nav-item" data-view="settings">Settings</button>
           <button class="nav-item" data-view="debug">Debug</button>
         </nav>
@@ -283,29 +284,33 @@
               <div id="runsEmptyState" class="empty">No mapping runs yet. Map transactions to define your first month.</div>
             </section>
 
-            <section id="analysisView" style="display:none">
-              <h2 class="view-title">Analyze Spend</h2>
-              <div id="analysisEmpty" class="empty" style="display:none">
+            <section id="spendMonthlyView" style="display:none">
+              <h2 class="view-title">Spend: Monthly</h2>
+              <div id="monthlyEmpty" class="empty" style="display:none">
                 No mapped months yet. Map a month on the Mapping screen, then come back here.
               </div>
-              <div id="analysisBody" style="display:none">
-                <!-- Rolling / typical month -->
-                <h3 class="section-title" id="rollingTitle">Typical month</h3>
-                <div class="remainder-bar" id="rollingStats"></div>
-                <div id="rollingTableWrap"></div>
-
-                <!-- Trend -->
-                <h3 class="section-title">Trend over time</h3>
-                <div id="trendChart" class="trend-chart"></div>
-
-                <!-- A specific month -->
-                <h3 class="section-title">A specific month</h3>
+              <div id="monthlyBody" style="display:none">
                 <div class="field" style="max-width:220px;">
                   <label for="analysisMonth">Month (mapped runs only)</label>
                   <select id="analysisMonth"></select>
                 </div>
                 <div class="remainder-bar" id="monthStats"></div>
                 <div id="monthTableWrap"></div>
+              </div>
+            </section>
+
+            <section id="spendRollingView" style="display:none">
+              <h2 class="view-title">Spend: Rolling</h2>
+              <div id="rollingEmpty" class="empty" style="display:none">
+                No mapped months yet. Map a month on the Mapping screen, then come back here.
+              </div>
+              <div id="rollingBody" style="display:none">
+                <h3 class="section-title" id="rollingTitle">Typical month</h3>
+                <div class="remainder-bar" id="rollingStats"></div>
+                <div id="rollingTableWrap"></div>
+
+                <h3 class="section-title">Trend over time</h3>
+                <div id="trendChart" class="trend-chart"></div>
               </div>
             </section>
 
@@ -423,6 +428,16 @@
         <div class="browse-list" id="reviewAllBody"></div>
         <div class="modal-actions">
           <button class="secondary" id="closeReviewAllBtn">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="catTrendModal" class="modal" aria-hidden="true">
+      <div class="modal-body wide">
+        <h2 id="catTrendTitle">Category trend</h2>
+        <div id="catTrendChart" class="trend-chart"></div>
+        <div class="modal-actions">
+          <button class="secondary" id="closeCatTrendBtn">Close</button>
         </div>
       </div>
     </div>
@@ -567,6 +582,10 @@
       document.getElementById('closeCatBtn').addEventListener('click', closeCatModal);
       document.getElementById('catModal').addEventListener('click', (event) => {
         if (event.target.id === 'catModal') closeCatModal();
+      });
+      document.getElementById('closeCatTrendBtn').addEventListener('click', closeCatTrendModal);
+      document.getElementById('catTrendModal').addEventListener('click', (event) => {
+        if (event.target.id === 'catTrendModal') closeCatTrendModal();
       });
       document.getElementById('closeReviewAllBtn').addEventListener('click', closeReviewAllModal);
       document.getElementById('reviewAllModal').addEventListener('click', (event) => {
@@ -1575,7 +1594,8 @@
         document.getElementById('sourcesView').style.display = viewName === 'sources' ? 'block' : 'none';
         document.getElementById('ingestView').style.display = viewName === 'ingest' ? 'block' : 'none';
         document.getElementById('mappingView').style.display = viewName === 'mapping' ? 'block' : 'none';
-        document.getElementById('analysisView').style.display = viewName === 'analysis' ? 'block' : 'none';
+        document.getElementById('spendMonthlyView').style.display = viewName === 'spend-monthly' ? 'block' : 'none';
+        document.getElementById('spendRollingView').style.display = viewName === 'spend-rolling' ? 'block' : 'none';
         document.getElementById('settingsView').style.display = viewName === 'settings' ? 'block' : 'none';
         document.getElementById('debugView').style.display = viewName === 'debug' ? 'block' : 'none';
         document.querySelectorAll('.nav-item').forEach((button) => {
@@ -1584,49 +1604,60 @@
         if (viewName === 'ingest') refreshIngest();
         if (viewName === 'mapping') refreshRuns();
         if (viewName === 'debug') loadDebugLog();
-        if (viewName === 'analysis') loadAnalysis();
+        if (viewName === 'spend-monthly') loadSpendMonthly();
+        if (viewName === 'spend-rolling') loadSpendRolling();
       }
 
       // ---- Analysis ----------------------------------------------------------
 
-      async function loadAnalysis() {
-        const empty = document.getElementById('analysisEmpty');
-        const bodyEl = document.getElementById('analysisBody');
-        let months;
+      // Shared setup for both spend pages: the list of mapped months and the
+      // month -> run id map (so the drill-down can reassign via the run endpoint).
+      // Returns the months array, or null if the fetch failed.
+      async function loadMappedMonths() {
         try {
-          const r = await fetch('/api/analysis/months');
-          if (!r.ok) throw new Error('HTTP ' + r.status);
-          months = await r.json();
-        } catch (err) {
-          empty.textContent = 'Could not load analysis. Is the server running?';
-          empty.style.display = 'block';
-          bodyEl.style.display = 'none';
-          return;
-        }
-        if (!months.length) {
-          empty.textContent = 'No mapped months yet. Map a month on the Mapping screen, then come back here.';
-          empty.style.display = 'block';
-          bodyEl.style.display = 'none';
-          return;
-        }
-        empty.style.display = 'none';
-        bodyEl.style.display = 'block';
-
-        // Map month -> run id, so the drill-down can reassign via the run's endpoint.
-        try {
+          const months = await (await fetch('/api/analysis/months')).json();
           const runs = await (await fetch('/api/analysis-runs')).json();
           analysisRunIdByMonth = {};
           runs.forEach((r) => { analysisRunIdByMonth[r.month] = r.id; });
+          return months;
         } catch (err) {
-          analysisRunIdByMonth = {};
+          return null;
         }
+      }
 
-        await Promise.all([loadRolling(), loadTrends()]);
+      function toggleSpendView(emptyId, bodyId, months) {
+        const empty = document.getElementById(emptyId);
+        const body = document.getElementById(bodyId);
+        if (months === null) {
+          empty.textContent = 'Could not load analysis. Is the server running?';
+          empty.style.display = 'block'; body.style.display = 'none';
+          return false;
+        }
+        if (!months.length) {
+          empty.textContent = 'No mapped months yet. Map a month on the Mapping screen, then come back here.';
+          empty.style.display = 'block'; body.style.display = 'none';
+          return false;
+        }
+        empty.style.display = 'none'; body.style.display = 'block';
+        return true;
+      }
 
+      async function loadSpendMonthly() {
+        const months = await loadMappedMonths();
+        if (!toggleSpendView('monthlyEmpty', 'monthlyBody', months)) return;
         const select = document.getElementById('analysisMonth');
         select.innerHTML = months.map((m) => `<option value="${m}">${escapeHtml(m)}</option>`).join('');
         select.onchange = () => loadMonth(select.value);
-        await loadMonth(months[0]); // newest first
+        // Keep the chosen month across visits if it's still valid.
+        const month = months.includes(currentAnalysisMonth) ? currentAnalysisMonth : months[0];
+        select.value = month;
+        await loadMonth(month);
+      }
+
+      async function loadSpendRolling() {
+        const months = await loadMappedMonths();
+        if (!toggleSpendView('rollingEmpty', 'rollingBody', months)) return;
+        await Promise.all([loadRolling(), loadTrends()]);
       }
 
       // Each table keeps its own sort so it survives reloads (e.g. after an edit).
@@ -1642,7 +1673,8 @@
           statTiles(data.totalBudget, data.avgActual, data.variance);
         rollingState = {
           categories: data.categories, totalBudget: data.totalBudget, totalActual: data.avgActual,
-          totalVariance: data.variance, actualHeader: 'Avg spend', clickable: false, sort: rollingState.sort
+          totalVariance: data.variance, actualHeader: 'Avg spend', sort: rollingState.sort,
+          onRowClick: (cat, name) => openCategoryTrend(cat, name)
         };
         renderAnalysisTable('rollingTableWrap', rollingState);
       }
@@ -1655,7 +1687,8 @@
           + (Number(data.excluded) ? statTile('Excluded (not spend)', data.excluded, false) : '');
         monthState = {
           categories: data.categories, totalBudget: data.totalBudget, totalActual: data.totalActual,
-          totalVariance: data.variance, actualHeader: 'Spend', clickable: true, month, sort: monthState.sort
+          totalVariance: data.variance, actualHeader: 'Spend', sort: monthState.sort,
+          onRowClick: (cat, name) => openCategoryDetail(month, cat, name)
         };
         renderAnalysisTable('monthTableWrap', monthState);
       }
@@ -1974,7 +2007,7 @@
           const bar = `<div class="minibar"><span class="${over ? 'over' : 'ok'}" style="width:${pct}%"></span></div>`;
           const vCls = variance < 0 ? 'over' : 'under';
           const cat = isOther ? 'other' : c.entryId;
-          const rowAttrs = state.clickable ? ` class="clickable" data-cat="${cat}" data-name="${escapeHtml(c.name)}"` : '';
+          const rowAttrs = state.onRowClick ? ` class="clickable" data-cat="${cat}" data-name="${escapeHtml(c.name)}"` : '';
           return `<tr${rowAttrs}>
             <td>${escapeHtml(c.name)}</td>
             <td class="num">${formatCurrency(budget)}</td>
@@ -2002,9 +2035,9 @@
             renderAnalysisTable(containerId, state);
           });
         });
-        if (state.clickable) {
+        if (state.onRowClick) {
           container.querySelectorAll('tr[data-cat]').forEach((tr) => {
-            tr.addEventListener('click', () => openCategoryDetail(state.month, tr.dataset.cat, tr.dataset.name));
+            tr.addEventListener('click', () => state.onRowClick(tr.dataset.cat, tr.dataset.name));
           });
         }
       }
@@ -2012,6 +2045,80 @@
       async function loadTrends() {
         const points = await (await fetch('/api/analysis/trends')).json();
         document.getElementById('trendChart').innerHTML = renderTrendChart(points);
+      }
+
+      // ---- Category trend (rolling page: click a category) --------------------
+
+      async function openCategoryTrend(categoryKey, name) {
+        document.getElementById('catTrendTitle').textContent = `${name} — spend over time`;
+        const chart = document.getElementById('catTrendChart');
+        chart.innerHTML = '<div class="empty">Loading…</div>';
+        document.getElementById('catTrendModal').classList.add('open');
+        document.getElementById('catTrendModal').setAttribute('aria-hidden', 'false');
+        let points;
+        try {
+          const r = await fetch(`/api/analysis/category-trend?category=${encodeURIComponent(categoryKey)}`);
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          points = await r.json();
+        } catch (err) {
+          chart.innerHTML = '<div class="empty" style="color:#b3261e">Could not load the trend.</div>';
+          return;
+        }
+        chart.innerHTML = renderLineChart(points);
+      }
+
+      function closeCatTrendModal() {
+        document.getElementById('catTrendModal').classList.remove('open');
+        document.getElementById('catTrendModal').setAttribute('aria-hidden', 'true');
+      }
+
+      /** One category's actual-over-time as a line, with a dashed budget reference. Inline SVG. */
+      function renderLineChart(points) {
+        if (!points || !points.length) {
+          return '<div class="empty">No mapped months to chart yet.</div>';
+        }
+        const LINE = '#8a4b00', BUDGET = '#c9a66b', OVER = '#b3261e', AXIS = '#cbb89a', INK = '#7a6753';
+        const slot = 74, leftPad = 56, rightPad = 20, topPad = 18, plotH = 180, bottomPad = 30;
+        const width = leftPad + rightPad + slot * Math.max(points.length - 1, 1) + slot;
+        const height = topPad + plotH + bottomPad;
+        const baseY = topPad + plotH;
+        const maxVal = Math.max(1, ...points.map((p) => Math.max(Number(p.actual) || 0, Number(p.budget) || 0))) * 1.15;
+        const y = (v) => baseY - (Math.max(0, v) / maxVal) * plotH;
+        const x = (i) => leftPad + slot / 2 + slot * i;
+
+        let grid = '';
+        [0, maxVal / 2, maxVal].forEach((v) => {
+          const gy = y(v);
+          grid += `<line x1="${leftPad}" y1="${gy.toFixed(1)}" x2="${width - rightPad}" y2="${gy.toFixed(1)}" stroke="${AXIS}" stroke-width="1" opacity="0.5"/>`
+            + `<text x="${leftPad - 8}" y="${(gy + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="${INK}">$${Math.round(v).toLocaleString()}</text>`;
+        });
+
+        const actualPath = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(Number(p.actual) || 0).toFixed(1)}`).join(' ');
+        const budgetPath = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(Number(p.budget) || 0).toFixed(1)}`).join(' ');
+        const fewPoints = points.length <= 8;
+
+        let marks = '';
+        points.forEach((p, i) => {
+          const actual = Number(p.actual) || 0, budget = Number(p.budget) || 0;
+          const over = budget > 0 && actual > budget;
+          const cx = x(i), cy = y(actual);
+          marks += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="4" fill="${over ? OVER : LINE}"><title>${escapeHtml(p.month)}: ${formatCurrency(actual)} of ${formatCurrency(budget)}</title></circle>`;
+          if (fewPoints) marks += `<text x="${cx.toFixed(1)}" y="${(cy - 8).toFixed(1)}" text-anchor="middle" font-size="10" fill="${INK}">${formatCurrency(actual)}</text>`;
+          marks += `<text x="${cx.toFixed(1)}" y="${(baseY + 16).toFixed(1)}" text-anchor="middle" font-size="10" fill="${INK}">${escapeHtml(p.month)}</text>`;
+        });
+
+        const svg = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Category spend over time">
+          ${grid}
+          <path d="${budgetPath}" fill="none" stroke="${BUDGET}" stroke-width="2" stroke-dasharray="5 3"/>
+          <path d="${actualPath}" fill="none" stroke="${LINE}" stroke-width="2"/>
+          ${marks}
+        </svg>`;
+        const legend = `<div class="trend-legend">
+          <span><span class="swatch" style="background:${LINE}"></span>Spend</span>
+          <span><span class="swatch" style="background:${BUDGET}"></span>Budget</span>
+          <span><span class="swatch" style="background:${OVER}"></span>Over budget</span>
+        </div>`;
+        return svg + legend;
       }
 
       /**

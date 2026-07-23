@@ -34,6 +34,12 @@ public class AnalysisController {
         return analysisService.categoryTransactions(month, category);
     }
 
+    /** One category's actual spend over time (most recent 12 months); category is an entry id or "other". */
+    @GetMapping("/category-trend")
+    public List<AnalysisService.CategoryTrendPoint> categoryTrend(@RequestParam String category) {
+        return analysisService.categoryTrend(category);
+    }
+
     /** Rolling average across every mapped month. */
     @GetMapping("/rolling")
     public AnalysisService.RollingSummary rolling() {
