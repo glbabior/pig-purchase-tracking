@@ -28,6 +28,8 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Budget-vs-actual math over a mapped run. Uses the generated Crestline statement
@@ -136,5 +138,20 @@ class AnalysisServiceTest {
     @Test
     void mappedMonthsListsTheRun() {
         assertEquals(List.of("2026-06"), analysisService.mappedMonths());
+    }
+
+    @Test
+    void categoryTransactionsListsTheItemsBehindACategory() {
+        Long coffeeId = entryRepo.findAll().stream()
+                .filter(e -> "Coffee Shop".equals(e.getName())).findFirst().orElseThrow().getId();
+
+        List<AnalysisService.TxnLine> coffee = analysisService.categoryTransactions("2026-06", coffeeId.toString());
+        assertEquals(1, coffee.size());
+        assertTrue(coffee.get(0).description().contains("COFFEE SHOP"));
+        assertEquals(0, new BigDecimal("4.10").compareTo(coffee.get(0).amount()));
+        assertNotNull(coffee.get(0).transactionId(), "id is needed to reassign the row");
+
+        // Payment was excluded, so "other" (parked) is empty.
+        assertEquals(0, analysisService.categoryTransactions("2026-06", "other").size());
     }
 }

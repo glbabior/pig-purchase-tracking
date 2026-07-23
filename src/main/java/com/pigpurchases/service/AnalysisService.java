@@ -67,8 +67,9 @@ public class AnalysisService {
 
     public record TrendPoint(String month, BigDecimal totalActual, BigDecimal totalBudget) {}
 
-    /** One transaction behind a category's total, for the click-through detail. */
-    public record TxnLine(String date, String description, String vendor, BigDecimal amount, String type) {}
+    /** One transaction behind a category's total, for the click-through detail (and reassigning it). */
+    public record TxnLine(Long transactionId, String date, String description, String vendor,
+                          BigDecimal amount, String type) {}
 
     /** Months that have a completed mapping run, newest first. */
     @Transactional(readOnly = true)
@@ -256,7 +257,7 @@ public class AnalysisService {
             if (txn == null) {
                 continue;
             }
-            lines.add(new TxnLine(
+            lines.add(new TxnLine(txn.getId(),
                     txn.getTransactionDate() != null ? txn.getTransactionDate().toString() : null,
                     txn.getDescription(), txn.getVendor(), round(signedSpend(txn)), txn.getType()));
         }

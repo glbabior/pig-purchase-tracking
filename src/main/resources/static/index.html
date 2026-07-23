@@ -158,6 +158,8 @@
       .cat-row .cat-desc { flex: 1; min-width: 0; word-break: break-word; }
       .cat-row .cat-date { color: #7a6753; font-size: 0.82rem; }
       .cat-row .cat-amt { white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: bold; color: #8a4b00; }
+      .cat-row select { border: 1px solid #ddd; padding: 0.35rem; border-radius: 8px; font: inherit; max-width: 190px; }
+      .cat-check { width: 1.05rem; height: 1.05rem; flex-shrink: 0; cursor: pointer; }
       .bar-cell { width: 30%; min-width: 90px; }
       .minibar { position: relative; height: 0.7rem; background: #eef0ee; border-radius: 4px; overflow: hidden; }
       .minibar > span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; }
@@ -408,6 +410,14 @@
     <div id="catModal" class="modal" aria-hidden="true">
       <div class="modal-body wide">
         <h2 id="catTitle">Category</h2>
+        <p class="hint">Reassign any that belong elsewhere, or mark one <strong>Not spend</strong>.
+          Changes are remembered, so the same merchant follows the new choice on future runs.
+          Tick several rows and use &ldquo;Apply to selected&rdquo; to move them together.</p>
+        <div class="parked-toolbar">
+          <label class="parked-selall"><input type="checkbox" id="catSelectAll" /> Select all</label>
+          <span id="catSelCount" class="muted">0 selected</span>
+          <select id="catBulkSelect" aria-label="Apply to selected rows"></select>
+        </div>
         <div class="browse-list" id="catBody"></div>
         <div class="modal-actions">
           <button class="secondary" id="closeCatBtn">Close</button>
@@ -534,15 +544,14 @@
       parkedModal.addEventListener('click', (event) => {
         if (event.target === parkedModal) closeParkedModal();
       });
-      document.getElementById('closeCatBtn').addEventListener('click', () => {
-        document.getElementById('catModal').classList.remove('open');
-        document.getElementById('catModal').setAttribute('aria-hidden', 'true');
-      });
+      document.getElementById('closeCatBtn').addEventListener('click', closeCatModal);
       document.getElementById('catModal').addEventListener('click', (event) => {
-        if (event.target.id === 'catModal') {
-          event.target.classList.remove('open');
-          event.target.setAttribute('aria-hidden', 'true');
-        }
+        if (event.target.id === 'catModal') closeCatModal();
+      });
+      document.getElementById('catBulkSelect').addEventListener('change', bulkReassignCat);
+      document.getElementById('catSelectAll').addEventListener('change', (event) => {
+        document.querySelectorAll('.cat-check').forEach((cb) => { cb.checked = event.target.checked; });
+        updateCatSelCount();
       });
       document.getElementById('parkedBulkSelect').addEventListener('change', bulkApplyParked);
       document.getElementById('parkedSelectAll').addEventListener('change', (event) => {
@@ -1148,6 +1157,9 @@
       }
 
       let parkedRunId = null;
+      let analysisRunIdByMonth = {};
+      let catRunId = null;
+      let catViewedKey = null;
 
       /** Budget-entry <option>s, alphabetical by title, shared by the row and bulk dropdowns. */
       function sortedEntryOptions() {
@@ -1568,6 +1580,15 @@
         empty.style.display = 'none';
         bodyEl.style.display = 'block';
 
+        // Map month -> run id, so the drill-down can reassign via the run's endpoint.
+        try {
+          const runs = await (await fetch('/api/analysis-runs')).json();
+          analysisRunIdByMonth = {};
+          runs.forEach((r) => { analysisRunIdByMonth[r.month] = r.id; });
+        } catch (err) {
+          analysisRunIdByMonth = {};
+        }
+
         await Promise.all([loadRolling(), loadTrends()]);
 
         const select = document.getElementById('analysisMonth');
@@ -1603,14 +1624,25 @@
       }
 
       async function openCategoryDetail(month, categoryKey, name) {
+        catRunId = analysisRunIdByMonth[month];
+        catViewedKey = categoryKey;
         document.getElementById('catTitle').textContent = `${name} — ${month}`;
-        const body = document.getElementById('catBody');
-        body.innerHTML = '<div class="cat-row"><span class="muted">Loading…</span></div>';
         document.getElementById('catModal').classList.add('open');
         document.getElementById('catModal').setAttribute('aria-hidden', 'false');
+        document.getElementById('catBulkSelect').innerHTML =
+          '<option value="">Apply to selected…</option>'
+          + '<option value="__EXCLUDE__">🚫 Not spend — exclude</option>'
+          + sortedEntryOptions();
+        document.getElementById('catSelectAll').checked = false;
+        await renderCategoryDetail();
+      }
+
+      async function renderCategoryDetail() {
+        const body = document.getElementById('catBody');
+        body.innerHTML = '<div class="cat-row"><span class="muted">Loading…</span></div>';
         let lines;
         try {
-          const url = `/api/analysis/month/${encodeURIComponent(month)}/transactions?category=${encodeURIComponent(categoryKey)}`;
+          const url = `/api/analysis/month/${encodeURIComponent(currentAnalysisMonth)}/transactions?category=${encodeURIComponent(catViewedKey)}`;
           const r = await fetch(url);
           if (!r.ok) throw new Error('HTTP ' + r.status);
           lines = await r.json();
@@ -1619,21 +1651,106 @@
           return;
         }
         if (!lines.length) {
-          body.innerHTML = '<div class="cat-row"><span class="muted">No transactions.</span></div>';
+          body.innerHTML = '<div class="cat-row"><span class="muted">Nothing here now.</span></div>';
+          updateCatSelCount();
           return;
         }
         const total = lines.reduce((sum, l) => sum + Number(l.amount || 0), 0);
+        const curVal = catViewedKey === 'other' ? '' : String(catViewedKey);
         body.innerHTML = lines.map((l) => `
           <div class="cat-row">
+            <input type="checkbox" class="cat-check" data-txn="${l.transactionId}" />
             <div class="cat-desc">
               <div>${escapeHtml(l.description || '')}</div>
               <div class="cat-date">${formatMmDdYy(l.date)}${l.vendor && l.vendor !== l.description ? ' · ' + escapeHtml(l.vendor) : ''}</div>
             </div>
             <div class="cat-amt">${formatCurrency(l.amount)}</div>
+            <select data-txn="${l.transactionId}">${reassignRowOptions(curVal)}</select>
           </div>
         `).join('')
           + `<div class="cat-row"><div class="cat-desc"><strong>Total (${lines.length})</strong></div>`
-          + `<div class="cat-amt">${formatCurrency(total)}</div></div>`;
+          + `<div class="cat-amt">${formatCurrency(total)}</div><div style="width:190px"></div></div>`;
+
+        body.querySelectorAll('select[data-txn]').forEach((sel) => {
+          sel.addEventListener('change', () => reassignMapped(sel));
+        });
+        body.querySelectorAll('.cat-check').forEach((cb) => {
+          cb.addEventListener('change', updateCatSelCount);
+        });
+        document.getElementById('catSelectAll').checked = false;
+        updateCatSelCount();
+      }
+
+      /** Per-row category dropdown, alphabetical, with the transaction's current category preselected. */
+      function reassignRowOptions(curVal) {
+        const entryOpts = [...entries]
+          .sort((a, b) => String(a.title || '').localeCompare(String(b.title || ''), undefined, { sensitivity: 'base' }))
+          .map((e) => `<option value="${e.id}" ${String(e.id) === curVal ? 'selected' : ''}>${escapeHtml(e.title || '')}</option>`)
+          .join('');
+        return `<option value="" ${curVal === '' ? 'selected' : ''}>Other (parked)</option>`
+          + '<option value="__EXCLUDE__">🚫 Not spend — exclude</option>'
+          + entryOpts;
+      }
+
+      function updateCatSelCount() {
+        const n = document.querySelectorAll('.cat-check:checked').length;
+        document.getElementById('catSelCount').textContent = `${n} selected`;
+      }
+
+      function catPayload(value) {
+        if (value === '__EXCLUDE__') return { exclude: true };
+        return { budgetEntryId: value ? Number(value) : null };
+      }
+      function stillInViewedCategory(value) {
+        const newKey = value === '__EXCLUDE__' ? '__excluded__' : (value || 'other');
+        return newKey === String(catViewedKey);
+      }
+
+      async function reassignMapped(select) {
+        select.disabled = true;
+        try {
+          await putJson(`/api/analysis-runs/${catRunId}/mappings/${select.dataset.txn}`, catPayload(select.value));
+          select.closest('.cat-row').style.opacity = stillInViewedCategory(select.value) ? '1' : '0.5';
+          await loadMonth(currentAnalysisMonth); // refresh the table + tiles behind the modal
+        } catch (err) {
+          alert('Could not save that change: ' + err.message);
+        } finally {
+          select.disabled = false;
+        }
+      }
+
+      async function bulkReassignCat() {
+        const bulk = document.getElementById('catBulkSelect');
+        const value = bulk.value;
+        if (!value) return;
+        const checked = [...document.querySelectorAll('.cat-check:checked')];
+        if (!checked.length) {
+          alert('Tick the rows you want first — the checkboxes on the left.');
+          bulk.value = '';
+          return;
+        }
+        const payload = catPayload(value);
+        showBusy(`Updating ${checked.length} transaction${checked.length > 1 ? 's' : ''}…`);
+        try {
+          for (const cb of checked) {
+            await putJson(`/api/analysis-runs/${catRunId}/mappings/${cb.dataset.txn}`, payload);
+          }
+          await loadMonth(currentAnalysisMonth);
+          await renderCategoryDetail(); // moved rows drop off the list
+        } catch (err) {
+          alert('Could not apply to all selected: ' + err.message);
+        } finally {
+          hideBusy();
+          bulk.value = '';
+        }
+      }
+
+      function closeCatModal() {
+        document.getElementById('catModal').classList.remove('open');
+        document.getElementById('catModal').setAttribute('aria-hidden', 'true');
+        // Totals elsewhere (rolling, trend) may have changed while editing.
+        loadRolling();
+        loadTrends();
       }
 
       // Three headline tiles: budget, actual, and variance (green under / red over).
