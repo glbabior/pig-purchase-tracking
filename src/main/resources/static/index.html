@@ -558,39 +558,36 @@
       document.getElementById('cancelSourceBtn').addEventListener('click', closeSourceModal);
       document.getElementById('saveSourceBtn').addEventListener('click', saveSource);
 
-      sourceModal.addEventListener('click', (event) => {
-        if (event.target === sourceModal) closeSourceModal();
-      });
+      // Close a modal on a genuine backdrop click — only when the mouse button also
+      // went DOWN on the backdrop. Otherwise a text drag-select that starts inside an
+      // input and ends on the backdrop registers as a backdrop click and wrongly closes.
+      function backdropClose(modal, closeFn) {
+        let downOnBackdrop = false;
+        modal.addEventListener('mousedown', (event) => { downOnBackdrop = event.target === modal; });
+        modal.addEventListener('click', (event) => {
+          if (downOnBackdrop && event.target === modal) closeFn();
+        });
+      }
+
+      backdropClose(sourceModal, closeSourceModal);
 
       document.getElementById('browseCancelBtn').addEventListener('click', closeBrowseModal);
-      browseModal.addEventListener('click', (event) => {
-        if (event.target === browseModal) closeBrowseModal();
-      });
+      backdropClose(browseModal, closeBrowseModal);
 
       document.getElementById('mapTransactionsBtn').addEventListener('click', openRunModal);
       document.getElementById('cancelRunBtn').addEventListener('click', closeRunModal);
       document.getElementById('saveRunBtn').addEventListener('click', saveRun);
       document.getElementById('showConsumed').addEventListener('change', loadRunSetup);
-      runModal.addEventListener('click', (event) => {
-        if (event.target === runModal) closeRunModal();
-      });
+      backdropClose(runModal, closeRunModal);
 
       document.getElementById('closeParkedBtn').addEventListener('click', closeParkedModal);
-      parkedModal.addEventListener('click', (event) => {
-        if (event.target === parkedModal) closeParkedModal();
-      });
+      backdropClose(parkedModal, closeParkedModal);
       document.getElementById('closeCatBtn').addEventListener('click', closeCatModal);
-      document.getElementById('catModal').addEventListener('click', (event) => {
-        if (event.target.id === 'catModal') closeCatModal();
-      });
+      backdropClose(document.getElementById('catModal'), closeCatModal);
       document.getElementById('closeCatTrendBtn').addEventListener('click', closeCatTrendModal);
-      document.getElementById('catTrendModal').addEventListener('click', (event) => {
-        if (event.target.id === 'catTrendModal') closeCatTrendModal();
-      });
+      backdropClose(document.getElementById('catTrendModal'), closeCatTrendModal);
       document.getElementById('closeReviewAllBtn').addEventListener('click', closeReviewAllModal);
-      document.getElementById('reviewAllModal').addEventListener('click', (event) => {
-        if (event.target.id === 'reviewAllModal') closeReviewAllModal();
-      });
+      backdropClose(document.getElementById('reviewAllModal'), closeReviewAllModal);
       document.getElementById('reviewAllSearch').addEventListener('input', renderReviewAll);
       document.getElementById('reviewAllBulkSelect').addEventListener('change', bulkReviewAll);
       document.getElementById('reviewAllSelectAll').addEventListener('change', (event) => {
@@ -626,9 +623,7 @@
         th.addEventListener('click', () => sortBy(th.dataset.sort));
       });
 
-      itemModal.addEventListener('click', (event) => {
-        if (event.target === itemModal) closeModal();
-      });
+      backdropClose(itemModal, closeModal);
 
       // Initial load.
       loadSettings();
