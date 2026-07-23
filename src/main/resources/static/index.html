@@ -108,7 +108,7 @@
       .history-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.6rem; align-items: center; }
       .modal-body.wide { width: min(640px, 100%); }
       .browse-path { color: #7a6753; font-size: 0.85rem; margin-top: 0.3rem; word-break: break-all; }
-      .browse-list { border: 1px solid #eee; border-radius: 10px; max-height: 340px; overflow: auto; margin-top: 0.6rem; }
+      .browse-list { border: 1px solid #eee; border-radius: 10px; max-height: 340px; overflow: auto; margin-top: 0.6rem; overscroll-behavior: contain; }
       .browse-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.5rem 0.8rem; border-bottom: 1px solid #f3f3f3; }
       .browse-row:last-child { border-bottom: none; }
       .browse-row.dir { cursor: pointer; }
@@ -624,6 +624,28 @@
       });
 
       backdropClose(itemModal, closeModal);
+
+      // When the cursor is over a dialog box, don't let a scroll leak to the page
+      // behind it if nothing inside the box can consume it (short content, or an
+      // inner list already at its edge). Scrolling over the backdrop is left alone.
+      document.querySelectorAll('.modal .modal-body').forEach((box) => {
+        box.addEventListener('wheel', (event) => {
+          let el = event.target;
+          let scroller = null;
+          while (el) {
+            if (el.scrollHeight > el.clientHeight && /(auto|scroll)/.test(getComputedStyle(el).overflowY)) {
+              scroller = el;
+              break;
+            }
+            if (el === box) break;
+            el = el.parentElement;
+          }
+          if (!scroller) { event.preventDefault(); return; }
+          const atTop = scroller.scrollTop <= 0 && event.deltaY < 0;
+          const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1 && event.deltaY > 0;
+          if (atTop || atBottom) event.preventDefault();
+        }, { passive: false });
+      });
 
       // Initial load.
       loadSettings();
