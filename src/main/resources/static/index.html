@@ -213,7 +213,7 @@
           <div class="value" id="summaryMonthly">$0.00</div>
         </div>
         <div class="spacer"></div>
-        <button class="secondary" id="restartBtn" title="Restart the server to pick up code changes">Restart server</button>
+        <button class="secondary" id="restartBtn" title="Rebuild and restart the server to pick up code changes">Rebuild &amp; restart</button>
       </aside>
 
       <main class="content">
@@ -1442,23 +1442,50 @@
 
       async function restartServer() {
         const btn = document.getElementById('restartBtn');
-        if (!confirm('Restart the server? This reloads the app with any code changes.')) return;
+        if (!confirm('Rebuild and restart the server? This recompiles the backend and reloads the app with any code changes.')) return;
+        const label = btn.textContent;
         btn.disabled = true;
-        btn.textContent = 'Restarting…';
+        btn.textContent = 'Rebuilding…';
+
+        // Note the current startup time so we can tell when a genuine restart has
+        // happened (the server stays up during the rebuild itself).
+        let startupBefore = null;
         try {
-          await fetch('/api/restart', { method: 'POST' });
+          const h = await fetch('/api/health', { cache: 'no-store' });
+          if (h.ok) startupBefore = (await h.json()).startup;
+        } catch (err) { /* ignore */ }
+
+        // POST blocks for the whole compile; a failed compile comes back as 500
+        // with the compiler output and the app keeps running the old code.
+        try {
+          const response = await fetch('/api/restart', { method: 'POST' });
+          if (!response.ok) {
+            let detail = '';
+            try { detail = (await response.json()).log || ''; } catch (e) { /* ignore */ }
+            alert('Build failed — the app is still running the previous code.\n\n' +
+              (detail ? detail.slice(-2000) : 'See the terminal for details.'));
+            btn.disabled = false;
+            btn.textContent = label;
+            return;
+          }
         } catch (err) {
           // The connection may drop as the server goes down — that's expected.
         }
-        await waitForServer();
+        btn.textContent = 'Restarting…';
+        await waitForRestart(startupBefore);
         location.reload();
       }
 
-      async function waitForServer() {
+      // Wait until the server is back AND its startup time has changed, so we don't
+      // reload against the old instance that was merely up during the rebuild.
+      async function waitForRestart(startupBefore) {
         for (let i = 0; i < 60; i++) {
           try {
             const response = await fetch('/api/health', { cache: 'no-store' });
-            if (response.ok) return;
+            if (response.ok) {
+              const startupNow = (await response.json()).startup;
+              if (startupBefore == null || startupNow !== startupBefore) return;
+            }
           } catch (err) {
             // still restarting
           }

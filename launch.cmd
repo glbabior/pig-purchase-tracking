@@ -7,4 +7,6 @@ rem
 rem Wait for "Started PigPurchasesApplication", then browse to
 rem http://localhost:8080 yourself. Ctrl+C stops it.
 set SCRIPT_DIR=%~dp0
+rem Free port 8080 first, in case a previous run left an orphaned process behind.
+call "%SCRIPT_DIR%stop.cmd"
 call "%SCRIPT_DIR%mvnw.cmd" -q -DskipTests spring-boot:run

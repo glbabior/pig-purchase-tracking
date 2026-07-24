@@ -16,6 +16,7 @@ import com.pigpurchases.service.MonthlyHistoryEntry;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
@@ -23,9 +24,11 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.File;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.YearMonth;
@@ -60,22 +63,55 @@ public class BudgetController {
     @Autowired
     private BudgetService budgetService;
 
+    @Autowired
+    private ApplicationContext applicationContext;
+
     private static final Long SETTINGS_ID = 1L;
     private static final BigDecimal MONTHS_PER_YEAR = BigDecimal.valueOf(12);
 
     @GetMapping("/health")
-    public Map<String, String> health() {
-        return Map.of("status", "ok");
+    public Map<String, Object> health() {
+        // startup changes when the context is rebuilt, so the browser can tell a
+        // genuine restart from the server merely staying up during a rebuild.
+        return Map.of("status", "ok", "startup", applicationContext.getStartupDate());
     }
 
     /**
-     * Restarts the application so freshly recompiled code is picked up. Uses
-     * Spring Boot DevTools' Restarter (active when launched via spring-boot:run),
-     * which reloads changed classes via the restart classloader. The restart runs
-     * on a separate non-daemon thread so this HTTP response can return first.
+     * Rebuilds and restarts the app so source changes are picked up without a
+     * terminal. It recompiles via the Maven wrapper first, then (only on success)
+     * restarts using Spring Boot DevTools' Restarter — active when launched via
+     * spring-boot:run — which reloads the freshly compiled classes through the
+     * restart classloader.
+     *
+     * <p>If the compile fails the app is left running the old, working code and
+     * the compiler output is returned so the UI can show it. The restart itself
+     * runs on a separate non-daemon thread so this HTTP response returns first.
      */
     @PostMapping("/restart")
-    public Map<String, String> restart() {
+    public ResponseEntity<Map<String, String>> restart() {
+        try {
+            File projectDir = new File(System.getProperty("user.dir"));
+            boolean windows = System.getProperty("os.name", "").toLowerCase().contains("win");
+            List<String> command = windows
+                    ? List.of("cmd.exe", "/c", "mvnw.cmd", "-q", "-DskipTests", "compile")
+                    : List.of("./mvnw", "-q", "-DskipTests", "compile");
+
+            Process process = new ProcessBuilder(command)
+                    .directory(projectDir)
+                    .redirectErrorStream(true)
+                    .start();
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            int exit = process.waitFor();
+            if (exit != 0) {
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
+                        "status", "compile-failed",
+                        "log", output.isBlank() ? "Compile failed (exit " + exit + ")." : output));
+            }
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
+                    "status", "error", "log", "Rebuild error: " + e));
+        }
+
         Thread thread = new Thread(() -> {
             try {
                 Thread.sleep(300);
@@ -87,7 +123,7 @@ public class BudgetController {
         thread.setDaemon(false);
         thread.setName("app-restart");
         thread.start();
-        return Map.of("status", "restarting");
+        return ResponseEntity.ok(Map.of("status", "restarting"));
     }
 
     @GetMapping("/settings")
