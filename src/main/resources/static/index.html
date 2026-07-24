@@ -2227,7 +2227,7 @@
         [0, maxVal / 2, maxVal].forEach((v) => {
           const gy = y(v);
           grid += `<line x1="${leftPad}" y1="${gy.toFixed(1)}" x2="${width - rightPad}" y2="${gy.toFixed(1)}" stroke="${AXIS}" stroke-width="1" opacity="0.5"/>`
-            + `<text x="${leftPad - 6}" y="${(gy + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="${INK}">$${Math.round(v).toLocaleString()}</text>`;
+            + `<text x="${leftPad - 6}" y="${(gy + 3).toFixed(1)}" text-anchor="end" font-size="8" fill="${INK}">$${Math.round(v).toLocaleString()}</text>`;
         });
 
         const actualPath = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(Number(p.actual) || 0).toFixed(1)}`).join(' ');
@@ -2239,7 +2239,7 @@
         const budgetY = y(budgetVal);
         const budgetLine =
           `<line x1="${leftPad}" y1="${budgetY.toFixed(1)}" x2="${(width - rightPad).toFixed(1)}" y2="${budgetY.toFixed(1)}" stroke="${BUDGET}" stroke-width="2" stroke-dasharray="6 4"/>`
-          + `<text x="${(width - rightPad).toFixed(1)}" y="${(budgetY - 4).toFixed(1)}" text-anchor="end" font-size="9" font-weight="bold" fill="${BUDGET}">Budget ${formatCurrency(budgetVal)}</text>`;
+          + `<text x="${(width - rightPad).toFixed(1)}" y="${(budgetY - 4).toFixed(1)}" text-anchor="end" font-size="8" font-weight="bold" fill="${BUDGET}">Budget ${formatCurrency(budgetVal)}</text>`;
 
         let marks = '';
         points.forEach((p, i) => {
@@ -2250,9 +2250,9 @@
           // the series fills in and points crowd together.
           marks += `<line x1="${cx.toFixed(1)}" y1="${cy.toFixed(1)}" x2="${cx.toFixed(1)}" y2="${baseY}" stroke="${AXIS}" stroke-width="1" stroke-dasharray="1 3" opacity="0.4"/>`;
           marks += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3.5" fill="${over ? OVER : LINE}"><title>${escapeHtml(p.month)}: ${formatCurrency(actual)} of ${formatCurrency(budget)}</title></circle>`;
-          if (fewPoints) marks += `<text x="${cx.toFixed(1)}" y="${(cy - 8).toFixed(1)}" text-anchor="middle" font-size="9" fill="${INK}">${formatCurrency(actual)}</text>`;
+          if (fewPoints) marks += `<text x="${cx.toFixed(1)}" y="${(cy - 8).toFixed(1)}" text-anchor="middle" font-size="8" fill="${INK}">${formatCurrency(actual)}</text>`;
           const ly = baseY + 10;
-          marks += `<text class="trend-month" data-month="${escapeHtml(p.month)}" x="${cx.toFixed(1)}" y="${ly.toFixed(1)}" transform="rotate(-50 ${cx.toFixed(1)} ${ly.toFixed(1)})" text-anchor="end" font-size="9" fill="${INK}"><title>View transactions for ${escapeHtml(p.month)}</title>${escapeHtml(p.month)}</text>`;
+          marks += `<text class="trend-month" data-month="${escapeHtml(p.month)}" x="${cx.toFixed(1)}" y="${ly.toFixed(1)}" transform="rotate(-65 ${cx.toFixed(1)} ${ly.toFixed(1)})" text-anchor="end" font-size="8" fill="${INK}"><title>View transactions for ${escapeHtml(p.month)}</title>${escapeHtml(p.month)}</text>`;
         });
 
         const svg = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Category spend over time">
