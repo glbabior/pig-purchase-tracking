@@ -178,6 +178,8 @@
       .trend-chart svg { display: block; max-width: 100%; height: auto; }
       .trend-legend { display: flex; gap: 1.2rem; flex-wrap: wrap; margin-top: 0.4rem; font-size: 0.85rem; color: #7a6753; }
       .trend-legend .swatch { display: inline-block; width: 0.9rem; height: 0.9rem; border-radius: 3px; vertical-align: -1px; margin-right: 0.35rem; }
+      .trend-month { cursor: pointer; }
+      .trend-month:hover { fill: #8a4b00; text-decoration: underline; }
 
       @media (max-width: 760px) {
         .app { flex-direction: column; }
@@ -1300,6 +1302,7 @@
       let analysisRunIdByMonth = {};
       let catRunId = null;
       let catViewedKey = null;
+      let catMonth = null; // the month the category-detail modal is showing
 
       /** Budget-entry <option>s, alphabetical by title, shared by the row and bulk dropdowns. */
       function sortedEntryOptions() {
@@ -1812,6 +1815,7 @@
       async function openCategoryDetail(month, categoryKey, name) {
         catRunId = analysisRunIdByMonth[month];
         catViewedKey = categoryKey;
+        catMonth = month;
         document.getElementById('catTitle').textContent = `${name} — ${month}`;
         document.getElementById('catModal').classList.add('open');
         document.getElementById('catModal').setAttribute('aria-hidden', 'false');
@@ -1828,7 +1832,7 @@
         body.innerHTML = '<div class="cat-row"><span class="muted">Loading…</span></div>';
         let lines;
         try {
-          const url = `/api/analysis/month/${encodeURIComponent(currentAnalysisMonth)}/transactions?category=${encodeURIComponent(catViewedKey)}`;
+          const url = `/api/analysis/month/${encodeURIComponent(catMonth)}/transactions?category=${encodeURIComponent(catViewedKey)}`;
           const r = await fetch(url);
           if (!r.ok) throw new Error('HTTP ' + r.status);
           lines = await r.json();
@@ -2025,7 +2029,7 @@
         try {
           await putJson(`/api/analysis-runs/${catRunId}/mappings/${select.dataset.txn}`, catPayload(select.value));
           select.closest('.cat-row').style.opacity = stillInViewedCategory(select.value) ? '1' : '0.5';
-          await loadMonth(currentAnalysisMonth); // refresh the table + tiles behind the modal
+          await loadMonth(catMonth); // refresh the table + tiles behind the modal
         } catch (err) {
           alert('Could not save that change: ' + err.message);
         } finally {
@@ -2049,7 +2053,7 @@
           for (const cb of checked) {
             await putJson(`/api/analysis-runs/${catRunId}/mappings/${cb.dataset.txn}`, payload);
           }
-          await loadMonth(currentAnalysisMonth);
+          await loadMonth(catMonth);
           await renderCategoryDetail(); // moved rows drop off the list
         } catch (err) {
           alert('Could not apply to all selected: ' + err.message);
@@ -2181,6 +2185,11 @@
           return;
         }
         chart.innerHTML = renderLineChart(points);
+        // Clicking a month label drills into that month's transactions for this
+        // category — the same dialog as clicking a category on the Monthly screen.
+        chart.querySelectorAll('.trend-month').forEach((el) => {
+          el.addEventListener('click', () => openCategoryDetail(el.dataset.month, categoryKey, name));
+        });
         // Size the dialog to the chart's natural width (more months -> wider), but
         // never below a sensible minimum and never past the viewport; the SVG still
         // scales down if it can't fit.
@@ -2243,7 +2252,7 @@
           marks += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3.5" fill="${over ? OVER : LINE}"><title>${escapeHtml(p.month)}: ${formatCurrency(actual)} of ${formatCurrency(budget)}</title></circle>`;
           if (fewPoints) marks += `<text x="${cx.toFixed(1)}" y="${(cy - 8).toFixed(1)}" text-anchor="middle" font-size="9" fill="${INK}">${formatCurrency(actual)}</text>`;
           const ly = baseY + 10;
-          marks += `<text x="${cx.toFixed(1)}" y="${ly.toFixed(1)}" transform="rotate(-50 ${cx.toFixed(1)} ${ly.toFixed(1)})" text-anchor="end" font-size="9" fill="${INK}">${escapeHtml(p.month)}</text>`;
+          marks += `<text class="trend-month" data-month="${escapeHtml(p.month)}" x="${cx.toFixed(1)}" y="${ly.toFixed(1)}" transform="rotate(-50 ${cx.toFixed(1)} ${ly.toFixed(1)})" text-anchor="end" font-size="9" fill="${INK}"><title>View transactions for ${escapeHtml(p.month)}</title>${escapeHtml(p.month)}</text>`;
         });
 
         const svg = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Category spend over time">
