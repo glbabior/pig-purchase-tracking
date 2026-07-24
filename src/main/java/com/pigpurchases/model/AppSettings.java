@@ -25,6 +25,14 @@ public class AppSettings {
     @ColumnDefault("2")
     private int debugLogRetentionDays = 2;
 
+    /**
+     * Day of the month (1–31) to remind about mapping the latest statements;
+     * 0 means no reminder. {@code @ColumnDefault} for the same migration reason
+     * as above.
+     */
+    @ColumnDefault("0")
+    private int notificationDayOfMonth = 0;
+
     public AppSettings() {}
 
     public Long getId() {
@@ -49,5 +57,13 @@ public class AppSettings {
 
     public void setDebugLogRetentionDays(int debugLogRetentionDays) {
         this.debugLogRetentionDays = debugLogRetentionDays;
+    }
+
+    public int getNotificationDayOfMonth() {
+        return notificationDayOfMonth;
+    }
+
+    public void setNotificationDayOfMonth(int notificationDayOfMonth) {
+        this.notificationDayOfMonth = notificationDayOfMonth;
     }
 }

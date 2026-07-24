@@ -26,6 +26,12 @@
       .budget-summary .value:last-child { margin-bottom: 0; }
       .sidebar .spacer { flex: 1; }
 
+      /* Reminder banner + nav badge */
+      .reminder-banner { display: flex; align-items: center; gap: 1rem; background: #fff3d6; border: 1px solid #e9c66a; color: #6b3b00; border-radius: 12px; padding: 0.8rem 1.1rem; margin-bottom: 1rem; }
+      .reminder-banner span { flex: 1; }
+      .reminder-go { background: #8a4b00; color: white; border: none; border-radius: 999px; padding: 0.5rem 0.9rem; cursor: pointer; white-space: nowrap; }
+      .nav-badge { color: #b3261e; font-size: 0.7rem; vertical-align: 0.15em; margin-left: 0.35rem; }
+
       /* Main content */
       .content { flex: 1; padding: 2rem; }
       .content-inner { max-width: 1000px; margin: 0 auto; }
@@ -194,7 +200,7 @@
           <button class="nav-item active" data-view="budget">Budget Entries</button>
           <button class="nav-item" data-view="sources">Statement Sources</button>
           <button class="nav-item" data-view="ingest">Ingest</button>
-          <button class="nav-item" data-view="mapping">Mapping</button>
+          <button class="nav-item" data-view="mapping">Mapping<span id="mappingBadge" class="nav-badge" style="display:none">●</span></button>
           <button class="nav-item" data-view="spend-monthly">Spend: Monthly</button>
           <button class="nav-item" data-view="spend-rolling">Spend: Rolling</button>
           <button class="nav-item" data-view="settings">Settings</button>
@@ -212,6 +218,10 @@
 
       <main class="content">
         <div class="content-inner">
+          <div id="reminderBanner" class="reminder-banner" style="display:none">
+            <span id="reminderText"></span>
+            <button class="reminder-go" id="reminderGoBtn">Go to Mapping</button>
+          </div>
           <div class="card">
             <section id="budgetView">
               <h2 class="view-title">Budget Entries</h2>
@@ -325,6 +335,12 @@
                 <div class="field">
                   <div class="label muted">Monthly allowance (calculated)</div>
                   <div class="value" id="settingsMonthlyPreview" style="font-size:1.2rem;color:#8a4b00;font-weight:bold;">$0.00</div>
+                </div>
+                <div class="field">
+                  <label for="notifyDayInput">Remind me to map on day (of month)</label>
+                  <input id="notifyDayInput" type="number" min="0" max="31" step="1" value="0" />
+                  <div class="hint">On this day each month you get a reminder (in-app and a Windows
+                    notification) if you haven't created a mapping run yet that month. 0 turns it off.</div>
                 </div>
                 <div class="field">
                   <label for="retentionInput">Debug log retention (days)</label>
@@ -554,6 +570,7 @@
       document.getElementById('saveItemBtn').addEventListener('click', saveItem);
       document.getElementById('restartBtn').addEventListener('click', restartServer);
       document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
+      document.getElementById('reminderGoBtn').addEventListener('click', () => showView('mapping'));
       document.getElementById('addSourceBtn').addEventListener('click', openAddSource);
       document.getElementById('cancelSourceBtn').addEventListener('click', closeSourceModal);
       document.getElementById('saveSourceBtn').addEventListener('click', saveSource);
@@ -651,6 +668,7 @@
       loadSettings();
       loadEntries();
       loadSources();
+      checkNotification();
 
       // ---- Settings ----------------------------------------------------------
 
@@ -676,6 +694,9 @@
         if (settings.debugLogRetentionDays != null) {
           document.getElementById('retentionInput').value = settings.debugLogRetentionDays;
         }
+        if (settings.notificationDayOfMonth != null) {
+          document.getElementById('notifyDayInput').value = settings.notificationDayOfMonth;
+        }
         // Remainder depends on the monthly allowance too.
         renderRemainder();
       }
@@ -691,21 +712,71 @@
           alert('Please enter a whole number of days (0 or more) for debug log retention.');
           return;
         }
+        const notifyValue = document.getElementById('notifyDayInput').value.trim() || '0';
+        if (!/^\d+$/.test(notifyValue) || Number(notifyValue) < 0 || Number(notifyValue) > 31) {
+          alert('Reminder day must be a whole number from 0 (off) to 31.');
+          return;
+        }
+        // Requesting notification permission needs a user gesture — this save click is one.
+        if (Number(notifyValue) > 0 && 'Notification' in window && Notification.permission === 'default') {
+          try { Notification.requestPermission(); } catch (err) { /* older API shape; ignore */ }
+        }
         const msg = document.getElementById('settingsMsg');
         try {
           const response = await fetch('/api/settings', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ annualBudget: annual, debugLogRetentionDays: Number(retentionValue) })
+            body: JSON.stringify({ annualBudget: annual, debugLogRetentionDays: Number(retentionValue),
+              notificationDayOfMonth: Number(notifyValue) })
           });
           if (!response.ok) throw new Error('HTTP ' + response.status);
           settings = await response.json();
           renderSettings();
+          checkNotification();
           msg.textContent = 'Saved.';
           setTimeout(() => { msg.textContent = ''; }, 2000);
         } catch (err) {
           alert('Could not save settings. Is the server running?');
           console.error(err);
+        }
+      }
+
+      // ---- Monthly mapping reminder ------------------------------------------
+
+      // Check whether the map-this-month reminder is due; drive the banner, the
+      // Mapping nav badge, and (once a day) a Windows notification. Called on load
+      // and after any run change, so creating a run clears it.
+      async function checkNotification() {
+        let status;
+        try {
+          status = await (await fetch('/api/notification/status')).json();
+        } catch (err) {
+          return;
+        }
+        const banner = document.getElementById('reminderBanner');
+        const badge = document.getElementById('mappingBadge');
+        if (status.due) {
+          document.getElementById('reminderText').textContent = status.message;
+          banner.style.display = 'flex';
+          badge.style.display = 'inline';
+          maybeWindowsNotify(status.message);
+        } else {
+          banner.style.display = 'none';
+          badge.style.display = 'none';
+        }
+      }
+
+      // Fire a Windows notification at most once per day while the reminder is due.
+      function maybeWindowsNotify(message) {
+        if (!('Notification' in window) || Notification.permission !== 'granted') return;
+        const todayKey = new Date().toISOString().slice(0, 10);
+        if (localStorage.getItem('pigLastNotified') === todayKey) return;
+        localStorage.setItem('pigLastNotified', todayKey);
+        try {
+          const n = new Notification('Pig Purchases', { body: message });
+          n.onclick = () => { window.focus(); showView('mapping'); };
+        } catch (err) {
+          // Notification construction can throw on some platforms; ignore.
         }
       }
 
@@ -1054,6 +1125,7 @@
           console.error('Could not load mapping runs', err);
         }
         renderRuns();
+        checkNotification(); // a new run this month clears the reminder
       }
 
       function renderRuns() {

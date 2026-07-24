@@ -103,6 +103,10 @@ public class BudgetController {
             int days = ((Number) payload.get("debugLogRetentionDays")).intValue();
             settings.setDebugLogRetentionDays(Math.max(0, days));
         }
+        if (payload.get("notificationDayOfMonth") != null) {
+            int day = ((Number) payload.get("notificationDayOfMonth")).intValue();
+            settings.setNotificationDayOfMonth(Math.max(0, Math.min(31, day)));
+        }
         return settingsResponse(appSettingsRepository.save(settings));
     }
 
@@ -122,6 +126,7 @@ public class BudgetController {
         response.put("annualBudget", annual.toPlainString());
         response.put("monthlyAllowance", monthly.toPlainString());
         response.put("debugLogRetentionDays", settings.getDebugLogRetentionDays());
+        response.put("notificationDayOfMonth", settings.getNotificationDayOfMonth());
         return response;
     }
 
