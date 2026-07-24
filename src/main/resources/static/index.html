@@ -2082,6 +2082,13 @@
           return;
         }
         chart.innerHTML = renderLineChart(points);
+        // Size the dialog to the chart's natural width (more months -> wider),
+        // capped to the viewport; the SVG still scales down if it can't fit.
+        const svg = chart.querySelector('svg');
+        const box = document.querySelector('#catTrendModal .modal-body');
+        box.style.width = svg
+          ? Math.min(svg.viewBox.baseVal.width + 48, Math.round(window.innerWidth * 0.95)) + 'px'
+          : '';
       }
 
       function closeCatTrendModal() {
@@ -2095,7 +2102,7 @@
           return '<div class="empty">No mapped months to chart yet.</div>';
         }
         const LINE = '#8a4b00', BUDGET = '#c9a66b', OVER = '#b3261e', AXIS = '#cbb89a', INK = '#7a6753';
-        const slot = 74, leftPad = 56, rightPad = 20, topPad = 18, plotH = 180, bottomPad = 30;
+        const slot = 44, leftPad = 44, rightPad = 16, topPad = 14, plotH = 160, bottomPad = 36;
         const width = leftPad + rightPad + slot * Math.max(points.length - 1, 1) + slot;
         const height = topPad + plotH + bottomPad;
         const baseY = topPad + plotH;
@@ -2107,7 +2114,7 @@
         [0, maxVal / 2, maxVal].forEach((v) => {
           const gy = y(v);
           grid += `<line x1="${leftPad}" y1="${gy.toFixed(1)}" x2="${width - rightPad}" y2="${gy.toFixed(1)}" stroke="${AXIS}" stroke-width="1" opacity="0.5"/>`
-            + `<text x="${leftPad - 8}" y="${(gy + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="${INK}">$${Math.round(v).toLocaleString()}</text>`;
+            + `<text x="${leftPad - 6}" y="${(gy + 2.5).toFixed(1)}" text-anchor="end" font-size="7" fill="${INK}">$${Math.round(v).toLocaleString()}</text>`;
         });
 
         const actualPath = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(Number(p.actual) || 0).toFixed(1)}`).join(' ');
@@ -2119,16 +2126,17 @@
         const budgetY = y(budgetVal);
         const budgetLine =
           `<line x1="${leftPad}" y1="${budgetY.toFixed(1)}" x2="${(width - rightPad).toFixed(1)}" y2="${budgetY.toFixed(1)}" stroke="${BUDGET}" stroke-width="2" stroke-dasharray="6 4"/>`
-          + `<text x="${(width - rightPad).toFixed(1)}" y="${(budgetY - 5).toFixed(1)}" text-anchor="end" font-size="8" font-weight="bold" fill="${BUDGET}">Budget ${formatCurrency(budgetVal)}</text>`;
+          + `<text x="${(width - rightPad).toFixed(1)}" y="${(budgetY - 4).toFixed(1)}" text-anchor="end" font-size="7" font-weight="bold" fill="${BUDGET}">Budget ${formatCurrency(budgetVal)}</text>`;
 
         let marks = '';
         points.forEach((p, i) => {
           const actual = Number(p.actual) || 0, budget = Number(p.budget) || 0;
           const over = budget > 0 && actual > budget;
           const cx = x(i), cy = y(actual);
-          marks += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="4" fill="${over ? OVER : LINE}"><title>${escapeHtml(p.month)}: ${formatCurrency(actual)} of ${formatCurrency(budget)}</title></circle>`;
-          if (fewPoints) marks += `<text x="${cx.toFixed(1)}" y="${(cy - 8).toFixed(1)}" text-anchor="middle" font-size="10" fill="${INK}">${formatCurrency(actual)}</text>`;
-          marks += `<text x="${cx.toFixed(1)}" y="${(baseY + 16).toFixed(1)}" text-anchor="middle" font-size="10" fill="${INK}">${escapeHtml(p.month)}</text>`;
+          marks += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3" fill="${over ? OVER : LINE}"><title>${escapeHtml(p.month)}: ${formatCurrency(actual)} of ${formatCurrency(budget)}</title></circle>`;
+          if (fewPoints) marks += `<text x="${cx.toFixed(1)}" y="${(cy - 6).toFixed(1)}" text-anchor="middle" font-size="7" fill="${INK}">${formatCurrency(actual)}</text>`;
+          const ly = baseY + 9;
+          marks += `<text x="${cx.toFixed(1)}" y="${ly.toFixed(1)}" transform="rotate(-35 ${cx.toFixed(1)} ${ly.toFixed(1)})" text-anchor="end" font-size="7" fill="${INK}">${escapeHtml(p.month)}</text>`;
         });
 
         const svg = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Category spend over time">
