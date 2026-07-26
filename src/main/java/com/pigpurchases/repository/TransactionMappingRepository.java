@@ -12,5 +12,7 @@ public interface TransactionMappingRepository extends JpaRepository<TransactionM
     List<TransactionMapping> findByAnalysisRunId(Long analysisRunId);
     List<TransactionMapping> findByAnalysisRunIdAndStatus(Long analysisRunId, TransactionMapping.Status status);
     Optional<TransactionMapping> findByAnalysisRunIdAndTransactionId(Long analysisRunId, Long transactionId);
+    List<TransactionMapping> findByTransactionId(Long transactionId);
     void deleteByAnalysisRunId(Long analysisRunId);
+    void deleteByTransactionId(Long transactionId);
 }

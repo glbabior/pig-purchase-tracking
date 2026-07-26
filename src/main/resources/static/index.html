@@ -296,6 +296,10 @@
             <section id="ingestView" style="display:none">
               <h2 class="view-title">Ingest Statements</h2>
               <p class="hint">Load each source's statement. Click &ldquo;Load statement&hellip;&rdquo;, drill into the folder, and pick the PDF. Loaded statements are listed by date (mm/dd/yy) &mdash; click one to open it in Acrobat, or &#128193; to show it in its folder.</p>
+              <div class="toolbar" style="justify-content:flex-start;margin-bottom:0.8rem;">
+                <button class="secondary" id="addManualBtn">+ Add manual transaction</button>
+              </div>
+              <p class="hint" style="margin-top:0;">Manual entries are for spend that never appears on a statement (e.g. a Venmo balance).</p>
               <div id="ingestSources"></div>
             </section>
 
@@ -509,6 +513,24 @@
       </div>
     </div>
 
+    <div id="manualModal" class="modal" aria-hidden="true">
+      <div class="modal-body">
+        <h2>Add manual transaction</h2>
+        <p class="hint">For spend that never appears on a bank statement (e.g. a Venmo balance).</p>
+        <div class="field"><label for="manualDate">Date</label><input id="manualDate" type="date" /></div>
+        <div class="field"><label for="manualVendor">Vendor</label><input id="manualVendor" type="text" placeholder="e.g. Venmo — Jane" /></div>
+        <div class="field"><label for="manualPrice">Price ($)</label><input id="manualPrice" type="number" step="0.01" min="0" placeholder="0.00" /></div>
+        <div class="field"><label for="manualDesc">Description</label><input id="manualDesc" type="text" /></div>
+        <div class="field"><label for="manualCategory">Category</label><select id="manualCategory"></select></div>
+        <div id="manualDupPanel" class="run-error" style="display:none;background:#fff3d6;border:1px solid #e9c66a;color:#6b3b00;border-radius:8px;padding:0.7rem 0.9rem;"></div>
+        <div class="modal-actions">
+          <button class="primary" id="manualSaveBtn">Save</button>
+          <button class="secondary" id="manualCancelBtn">Cancel</button>
+        </div>
+        <div id="manualMsg" class="hint"></div>
+      </div>
+    </div>
+
     <div id="restoreModal" class="modal" aria-hidden="true">
       <div class="modal-body">
         <h2>Restore a backup</h2>
@@ -688,6 +710,10 @@
       backdropClose(browseModal, closeBrowseModal);
 
       document.getElementById('mapTransactionsBtn').addEventListener('click', openRunModal);
+      document.getElementById('addManualBtn').addEventListener('click', openManualModal);
+      document.getElementById('manualSaveBtn').addEventListener('click', () => saveManual(false));
+      document.getElementById('manualCancelBtn').addEventListener('click', () => hideModalEl('manualModal'));
+      backdropClose(document.getElementById('manualModal'), () => hideModalEl('manualModal'));
       document.getElementById('cancelRunBtn').addEventListener('click', closeRunModal);
       document.getElementById('saveRunBtn').addEventListener('click', saveRun);
       document.getElementById('showConsumed').addEventListener('change', loadRunSetup);
@@ -1559,6 +1585,70 @@
           .sort((a, b) => String(a.title || '').localeCompare(String(b.title || ''), undefined, { sensitivity: 'base' }))
           .map((e) => `<option value="${e.id}">${escapeHtml(e.title || '')}</option>`)
           .join('');
+      }
+
+      // ---- Manual transaction entry ------------------------------------------
+
+      function openManualModal() {
+        document.getElementById('manualDate').value = '';
+        document.getElementById('manualVendor').value = '';
+        document.getElementById('manualPrice').value = '';
+        document.getElementById('manualDesc').value = '';
+        document.getElementById('manualCategory').innerHTML =
+          '<option value="">Other (uncategorized)</option>'
+          + sortedEntryOptions()
+          + '<option value="__EXCLUDE__">🚫 Not spend — exclude</option>';
+        document.getElementById('manualDupPanel').style.display = 'none';
+        document.getElementById('manualMsg').textContent = '';
+        showModalEl('manualModal');
+        document.getElementById('manualDate').focus();
+      }
+
+      async function saveManual(force) {
+        const msg = document.getElementById('manualMsg');
+        const date = document.getElementById('manualDate').value;
+        const vendor = document.getElementById('manualVendor').value.trim();
+        const amount = document.getElementById('manualPrice').value;
+        const description = document.getElementById('manualDesc').value.trim();
+        const cat = document.getElementById('manualCategory').value;
+        if (!date) { msg.textContent = 'Please enter a date.'; return; }
+        if (!(parseFloat(amount) > 0)) { msg.textContent = 'Please enter a price greater than 0.'; return; }
+        const body = { date, vendor, amount: Number(amount), description, force: !!force };
+        if (cat === '__EXCLUDE__') body.excluded = true;
+        else if (cat) body.budgetEntryId = Number(cat);
+        msg.textContent = 'Saving…';
+        try {
+          const r = await fetch('/api/transactions/manual', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+          });
+          if (r.status === 409) {
+            const data = await r.json();
+            showManualDups(data.duplicates || []);
+            msg.textContent = '';
+            return;
+          }
+          if (!r.ok) {
+            let detail = ''; try { detail = (await r.json()).message || ''; } catch (e) { /* ignore */ }
+            msg.textContent = detail || 'Could not save that transaction.';
+            return;
+          }
+          hideModalEl('manualModal');
+        } catch (err) {
+          msg.textContent = 'Could not save: ' + err.message;
+        }
+      }
+
+      function showManualDups(dups) {
+        const panel = document.getElementById('manualDupPanel');
+        panel.style.display = 'block';
+        panel.innerHTML = '<strong>Possible duplicate(s) already recorded for that date &amp; amount:</strong>'
+          + dups.map((d) => `<div style="margin-top:0.25rem;">• ${escapeHtml(d.date || '')} — ${formatCurrency(d.amount)} — `
+              + `${escapeHtml(d.vendor || d.description || '(no description)')} <em>(${escapeHtml(d.source || '')})</em></div>`).join('')
+          + '<div class="modal-actions" style="justify-content:flex-start;margin-top:0.6rem;">'
+          + '<button class="primary" id="manualForceBtn">Add anyway</button>'
+          + '<button class="secondary" id="manualDupCancelBtn">Keep editing</button></div>';
+        document.getElementById('manualForceBtn').addEventListener('click', () => saveManual(true));
+        document.getElementById('manualDupCancelBtn').addEventListener('click', () => { panel.style.display = 'none'; });
       }
 
       async function openParked(run) {

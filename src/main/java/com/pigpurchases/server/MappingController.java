@@ -93,6 +93,9 @@ public class MappingController {
     public List<Map<String, Object>> listRuns() {
         List<Map<String, Object>> result = new ArrayList<>();
         for (AnalysisRun run : runRepository.findAllByOrderByMonthDesc()) {
+            if (com.pigpurchases.service.ManualEntryService.MANUAL_MONTH.equals(run.getMonth())) {
+                continue; // the hidden run that owns manual entries isn't a real mapping run
+            }
             result.add(runResponse(run));
         }
         return result;
