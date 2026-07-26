@@ -79,18 +79,22 @@ public class BudgetController {
     /**
      * Rebuilds and restarts the app so source changes are picked up without a
      * terminal. It recompiles via the Maven wrapper first, then (only on success)
-     * restarts using Spring Boot DevTools' Restarter — active when launched via
-     * spring-boot:run — which reloads the freshly compiled classes through the
-     * restart classloader.
+     * touches the DevTools trigger file to request exactly one restart, which
+     * reloads the freshly compiled classes through the restart classloader.
+     *
+     * <p>Going through the trigger file (rather than calling Restarter directly)
+     * is deliberate: with {@code spring.devtools.restart.trigger-file} set,
+     * DevTools ignores the compile's individual .class writes and restarts only
+     * when this one file changes — so a single, clean restart fires on DevTools'
+     * own watcher thread instead of racing a second auto-restart.
      *
      * <p>If the compile fails the app is left running the old, working code and
-     * the compiler output is returned so the UI can show it. The restart itself
-     * runs on a separate non-daemon thread so this HTTP response returns first.
+     * the compiler output is returned so the UI can show it.
      */
     @PostMapping("/restart")
     public ResponseEntity<Map<String, String>> restart() {
+        File projectDir = new File(System.getProperty("user.dir"));
         try {
-            File projectDir = new File(System.getProperty("user.dir"));
             boolean windows = System.getProperty("os.name", "").toLowerCase().contains("win");
             List<String> command = windows
                     ? List.of("cmd.exe", "/c", "mvnw.cmd", "-q", "-DskipTests", "compile")
@@ -112,17 +116,16 @@ public class BudgetController {
                     "status", "error", "log", "Rebuild error: " + e));
         }
 
-        Thread thread = new Thread(() -> {
-            try {
-                Thread.sleep(300);
-            } catch (InterruptedException ignored) {
-                Thread.currentThread().interrupt();
-            }
-            org.springframework.boot.devtools.restart.Restarter.getInstance().restart();
-        });
-        thread.setDaemon(false);
-        thread.setName("app-restart");
-        thread.start();
+        // Compile is fully finished, so touching the trigger now can't restart
+        // mid-write. A changing timestamp guarantees DevTools sees a modification.
+        try {
+            Path trigger = projectDir.toPath().resolve("target").resolve("classes").resolve(".reloadtrigger");
+            Files.createDirectories(trigger.getParent());
+            Files.writeString(trigger, Long.toString(System.currentTimeMillis()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
+                    "status", "error", "log", "Could not request restart: " + e));
+        }
         return ResponseEntity.ok(Map.of("status", "restarting"));
     }
 
@@ -142,6 +145,10 @@ public class BudgetController {
         if (payload.get("notificationDayOfMonth") != null) {
             int day = ((Number) payload.get("notificationDayOfMonth")).intValue();
             settings.setNotificationDayOfMonth(Math.max(0, Math.min(31, day)));
+        }
+        if (payload.get("backupRetentionCount") != null) {
+            int keep = ((Number) payload.get("backupRetentionCount")).intValue();
+            settings.setBackupRetentionCount(Math.max(1, keep)); // always keep at least one
         }
         return settingsResponse(appSettingsRepository.save(settings));
     }
@@ -163,6 +170,7 @@ public class BudgetController {
         response.put("monthlyAllowance", monthly.toPlainString());
         response.put("debugLogRetentionDays", settings.getDebugLogRetentionDays());
         response.put("notificationDayOfMonth", settings.getNotificationDayOfMonth());
+        response.put("backupRetentionCount", settings.getBackupRetentionCount());
         return response;
     }
 

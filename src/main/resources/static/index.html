@@ -349,10 +349,28 @@
                   <input id="retentionInput" type="number" min="0" step="1" value="2" />
                   <div class="hint">How long Debug-screen entries are kept. 0 keeps them until you clear them by hand.</div>
                 </div>
+                <div class="field">
+                  <label for="backupKeepInput">Database backups to keep (daily files)</label>
+                  <input id="backupKeepInput" type="number" min="1" step="1" value="30" />
+                  <div class="hint">How many dated backup files to retain before the oldest are pruned.</div>
+                </div>
                 <div class="modal-actions" style="justify-content:flex-start;">
                   <button class="primary" id="saveSettingsBtn">Save settings</button>
                 </div>
                 <div id="settingsMsg" class="hint"></div>
+              </div>
+
+              <div class="settings-form" style="margin-top:1.5rem;border-top:1px solid #eadfce;padding-top:1.25rem;">
+                <div class="field">
+                  <div class="label">Database backups</div>
+                  <div class="hint" id="backupInfo">Loading backup status…</div>
+                  <div id="backupWarning" class="run-error" style="display:none;margin:0.4rem 0;"></div>
+                  <div class="modal-actions" style="justify-content:flex-start;">
+                    <button class="secondary" id="backupNowBtn">Back up now</button>
+                    <button class="secondary" id="backupRefreshBtn">Refresh</button>
+                  </div>
+                  <div id="backupList" class="hint" style="margin-top:0.5rem;"></div>
+                </div>
               </div>
             </section>
 
@@ -572,6 +590,8 @@
       document.getElementById('saveItemBtn').addEventListener('click', saveItem);
       document.getElementById('restartBtn').addEventListener('click', restartServer);
       document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
+      document.getElementById('backupNowBtn').addEventListener('click', backupNow);
+      document.getElementById('backupRefreshBtn').addEventListener('click', loadBackupStatus);
       document.getElementById('reminderGoBtn').addEventListener('click', () => showView('mapping'));
       document.getElementById('addSourceBtn').addEventListener('click', openAddSource);
       document.getElementById('cancelSourceBtn').addEventListener('click', closeSourceModal);
@@ -699,6 +719,9 @@
         if (settings.notificationDayOfMonth != null) {
           document.getElementById('notifyDayInput').value = settings.notificationDayOfMonth;
         }
+        if (settings.backupRetentionCount != null) {
+          document.getElementById('backupKeepInput').value = settings.backupRetentionCount;
+        }
         // Remainder depends on the monthly allowance too.
         renderRemainder();
       }
@@ -719,6 +742,11 @@
           alert('Reminder day must be a whole number from 0 (off) to 31.');
           return;
         }
+        const keepValue = document.getElementById('backupKeepInput').value.trim() || '30';
+        if (!/^\d+$/.test(keepValue) || Number(keepValue) < 1) {
+          alert('Backups to keep must be a whole number of 1 or more.');
+          return;
+        }
         // Requesting notification permission needs a user gesture — this save click is one.
         if (Number(notifyValue) > 0 && 'Notification' in window && Notification.permission === 'default') {
           try { Notification.requestPermission(); } catch (err) { /* older API shape; ignore */ }
@@ -729,7 +757,7 @@
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ annualBudget: annual, debugLogRetentionDays: Number(retentionValue),
-              notificationDayOfMonth: Number(notifyValue) })
+              notificationDayOfMonth: Number(notifyValue), backupRetentionCount: Number(keepValue) })
           });
           if (!response.ok) throw new Error('HTTP ' + response.status);
           settings = await response.json();
@@ -740,6 +768,53 @@
         } catch (err) {
           alert('Could not save settings. Is the server running?');
           console.error(err);
+        }
+      }
+
+      // ---- Database backups (Settings panel) ---------------------------------
+
+      async function loadBackupStatus() {
+        const info = document.getElementById('backupInfo');
+        const warn = document.getElementById('backupWarning');
+        const listEl = document.getElementById('backupList');
+        try {
+          const r = await fetch('/api/backup/status', { cache: 'no-store' });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          const s = await r.json();
+          if (!s.enabled) {
+            info.textContent = 'Automatic backups are disabled.';
+          } else {
+            const last = s.lastBackupAt ? new Date(s.lastBackupAt).toLocaleString() : 'none yet this session';
+            info.innerHTML = `Backups are saved to <code>${escapeHtml(s.dir)}</code> (outside OneDrive). `
+              + `Keeping the newest <strong>${s.retention}</strong> daily files. Last backup: <strong>${escapeHtml(last)}</strong>.`;
+          }
+          if (s.warning) { warn.textContent = '⚠ ' + s.warning; warn.style.display = 'block'; }
+          else { warn.style.display = 'none'; }
+          const files = s.files || [];
+          listEl.innerHTML = files.length
+            ? '<strong>' + files.length + ' file(s):</strong> ' + files.slice(0, 12).map((f) =>
+                `${escapeHtml(f.name)}${f.suspect ? ' ⚠' : ''} (${Math.round(f.bytes / 1024)} KB)`).join(' · ')
+            : 'No backup files yet.';
+        } catch (err) {
+          info.textContent = 'Could not load backup status.';
+          listEl.textContent = '';
+        }
+      }
+
+      async function backupNow() {
+        const btn = document.getElementById('backupNowBtn');
+        btn.disabled = true;
+        const label = btn.textContent;
+        btn.textContent = 'Backing up…';
+        try {
+          const r = await fetch('/api/backup/now', { method: 'POST' });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          await loadBackupStatus();
+        } catch (err) {
+          alert('Backup failed: ' + err.message);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = label;
         }
       }
 
@@ -1725,6 +1800,7 @@
         if (viewName === 'debug') loadDebugLog();
         if (viewName === 'spend-monthly') loadSpendMonthly();
         if (viewName === 'spend-rolling') loadSpendRolling();
+        if (viewName === 'settings') loadBackupStatus();
       }
 
       // ---- Analysis ----------------------------------------------------------

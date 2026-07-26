@@ -33,6 +33,13 @@ public class AppSettings {
     @ColumnDefault("0")
     private int notificationDayOfMonth = 0;
 
+    /**
+     * How many daily database backup files to keep before the oldest are pruned.
+     * {@code @ColumnDefault} for the same migration reason as above.
+     */
+    @ColumnDefault("30")
+    private int backupRetentionCount = 30;
+
     public AppSettings() {}
 
     public Long getId() {
@@ -65,5 +72,13 @@ public class AppSettings {
 
     public void setNotificationDayOfMonth(int notificationDayOfMonth) {
         this.notificationDayOfMonth = notificationDayOfMonth;
+    }
+
+    public int getBackupRetentionCount() {
+        return backupRetentionCount;
+    }
+
+    public void setBackupRetentionCount(int backupRetentionCount) {
+        this.backupRetentionCount = backupRetentionCount;
     }
 }

@@ -80,6 +80,40 @@ Pig Purchases is a desktop budget tracking application for managing monthly budg
 - **Auto-initialization**: Database schema created automatically on first run
 - **Data Migration**: Existing flat-file budget data migrated to database on startup
 
+#### Automatic backups
+
+The app backs itself up so a corrupted or reverted live database can always be
+recovered (see `BackupService`).
+
+- **Format**: a consistent SQL dump via H2 `SCRIPT TO` — portable, human-readable,
+  and independent of the live `.mv.db`, so a bad live db can't corrupt the history.
+- **Location**: `${user.home}/pigpurchases-backups/` — deliberately **outside**
+  OneDrive *and* outside the live-db folder, so whatever can revert/corrupt the
+  live db can't reach the backups.
+- **Naming / retention**: one file per calendar day, named for the date
+  (`pigpurchases-YYYY-MM-DD.sql`); a later backup the same day refreshes that
+  file. The newest **N** daily files are kept (N = Settings → "Database backups to
+  keep", default 30); older ones are pruned.
+- **When**: on startup, every 10 minutes while running
+  (`pigpurchases.backup.interval-ms`), on graceful shutdown, and on demand
+  (Settings → "Back up now"). Each run first computes a cheap change signature and
+  **skips writing when nothing changed**.
+- **Anti-clobber guard**: if a snapshot shows real mappings dropping by more than
+  half versus the last good backup (the "reverted to an empty state" failure), it
+  is saved as `pigpurchases-YYYY-MM-DD-HHMMSS.SUSPECT.sql` and a warning is raised
+  (shown in Settings) **instead of overwriting** the good daily backup. `.SUSPECT`
+  files are never auto-pruned.
+- **Status/trigger**: `GET /api/backup/status`, `POST /api/backup/now`; both are
+  surfaced in the Settings "Database backups" panel.
+
+**Restoring a backup** (`restore.db.cmd`, or by hand):
+1. Stop the app.
+2. Run `restore.db.cmd "C:\Users\<you>\pigpurchases-backups\pigpurchases-YYYY-MM-DD.sql"`.
+   It stops anything on port 8080, keeps a safety copy of the current live db
+   (`pig-purchases-db.pre-restore.mv.dbbak`), then loads the chosen dump into a
+   fresh live database.
+3. Start the app (`launch.cmd`) and verify.
+
 #### Database Schema
 
 **budget_entries** table
