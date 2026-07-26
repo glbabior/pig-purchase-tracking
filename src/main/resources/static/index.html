@@ -309,9 +309,19 @@
                 No mapped months yet. Map a month on the Mapping screen, then come back here.
               </div>
               <div id="monthlyBody" style="display:none">
-                <div class="field" style="max-width:220px;">
-                  <label for="analysisMonth">Month (mapped runs only)</label>
-                  <select id="analysisMonth"></select>
+                <div style="display:flex;gap:1rem;align-items:flex-end;flex-wrap:wrap;">
+                  <div class="field" style="max-width:220px;">
+                    <label for="analysisMonth">Month (by actual transaction date)</label>
+                    <select id="analysisMonth"></select>
+                  </div>
+                  <div class="field" style="max-width:340px;">
+                    <div class="label">Month status</div>
+                    <label style="display:flex;gap:0.5rem;align-items:center;cursor:pointer;">
+                      <input type="checkbox" id="monthCompleteToggle" />
+                      <span id="monthCompleteLabel">Complete (include in rolling average)</span>
+                    </label>
+                    <div class="hint" id="monthStatusHint"></div>
+                  </div>
                 </div>
                 <div class="remainder-bar" id="monthStats"></div>
                 <div id="monthTableWrap"></div>
@@ -325,10 +335,12 @@
               </div>
               <div id="rollingBody" style="display:none">
                 <h3 class="section-title" id="rollingTitle">Typical month</h3>
+                <div class="hint" id="rollingNote"></div>
                 <div class="remainder-bar" id="rollingStats"></div>
                 <div id="rollingTableWrap"></div>
 
                 <h3 class="section-title">Trend over time</h3>
+                <div class="hint">Every month with data, including partial ones (which are excluded from the average above).</div>
                 <div id="trendChart" class="trend-chart"></div>
               </div>
             </section>
@@ -1528,8 +1540,7 @@
       }
 
       let parkedRunId = null;
-      let analysisRunIdByMonth = {};
-      let catRunId = null;
+      let monthInfos = []; // [{month, complete, suggested, unmapped}] by actual date, newest first
       let catViewedKey = null;
       let catMonth = null; // the month the category-detail modal is showing
 
@@ -1964,11 +1975,8 @@
       // Returns the months array, or null if the fetch failed.
       async function loadMappedMonths() {
         try {
-          const months = await (await fetch('/api/analysis/months')).json();
-          const runs = await (await fetch('/api/analysis-runs')).json();
-          analysisRunIdByMonth = {};
-          runs.forEach((r) => { analysisRunIdByMonth[r.month] = r.id; });
-          return months;
+          monthInfos = await (await fetch('/api/analysis/months')).json();
+          return monthInfos;
         } catch (err) {
           return null;
         }
@@ -1995,12 +2003,42 @@
         const months = await loadMappedMonths();
         if (!toggleSpendView('monthlyEmpty', 'monthlyBody', months)) return;
         const select = document.getElementById('analysisMonth');
-        select.innerHTML = months.map((m) => `<option value="${m}">${escapeHtml(m)}</option>`).join('');
+        select.innerHTML = months.map((m) => {
+          const tag = m.complete ? ' — complete' : (m.unmapped ? ` — partial, ${m.unmapped} unmapped` : ' — partial');
+          return `<option value="${m.month}">${escapeHtml(m.month + tag)}</option>`;
+        }).join('');
         select.onchange = () => loadMonth(select.value);
+        document.getElementById('monthCompleteToggle').onchange = onMonthCompleteToggle;
         // Keep the chosen month across visits if it's still valid.
-        const month = months.includes(currentAnalysisMonth) ? currentAnalysisMonth : months[0];
+        const monthKeys = months.map((m) => m.month);
+        const month = monthKeys.includes(currentAnalysisMonth) ? currentAnalysisMonth : monthKeys[0];
         select.value = month;
         await loadMonth(month);
+      }
+
+      function renderMonthStatusControls(month) {
+        const info = monthInfos.find((m) => m.month === month) || { complete: false, suggested: false, unmapped: 0 };
+        document.getElementById('monthCompleteToggle').checked = !!info.complete;
+        const bits = [];
+        if (info.complete) bits.push('Counted in the rolling average.');
+        else bits.push('Excluded from the rolling average until marked complete.');
+        if (info.unmapped) bits.push(`${info.unmapped} transaction(s) in this month are ingested but not yet mapped.`);
+        if (!info.complete && info.suggested) bits.push('Looks complete (later months have data) — mark it if this month is fully loaded.');
+        document.getElementById('monthStatusHint').textContent = bits.join(' ');
+      }
+
+      async function onMonthCompleteToggle(e) {
+        const month = currentAnalysisMonth;
+        const complete = e.target.checked;
+        try {
+          await putJson(`/api/analysis/months/${encodeURIComponent(month)}/complete`, { complete });
+          const info = monthInfos.find((m) => m.month === month);
+          if (info) info.complete = complete;
+          renderMonthStatusControls(month);
+        } catch (err) {
+          alert('Could not update month status: ' + err.message);
+          e.target.checked = !complete;
+        }
       }
 
       async function loadSpendRolling() {
@@ -2016,8 +2054,14 @@
 
       async function loadRolling() {
         const data = await (await fetch('/api/analysis/rolling')).json();
-        const label = data.months === 1 ? 'this 1 mapped month' : `${data.months} mapped months`;
+        const label = data.months === 1 ? 'this 1 complete month' : `${data.months} complete months`;
         document.getElementById('rollingTitle').textContent = `Typical month (average across ${label})`;
+        const note = document.getElementById('rollingNote');
+        if (note) {
+          note.textContent = data.months === 0
+            ? 'No months are marked complete yet, so there is nothing to average. On Spend: Monthly, tick "Complete" for any month whose transactions are all loaded.'
+            : 'Averaged over the months you marked complete; partial months are left out so they can’t skew it.';
+        }
         document.getElementById('rollingStats').innerHTML =
           statTiles(data.totalBudget, data.avgActual, data.variance);
         rollingState = {
@@ -2046,10 +2090,10 @@
           onRowClick: (cat, name) => openCategoryDetail(month, cat, name)
         };
         renderAnalysisTable('monthTableWrap', monthState);
+        renderMonthStatusControls(month);
       }
 
       async function openCategoryDetail(month, categoryKey, name) {
-        catRunId = analysisRunIdByMonth[month];
         catViewedKey = categoryKey;
         catMonth = month;
         document.getElementById('catTitle').textContent = `${name} — ${month}`;
@@ -2087,13 +2131,13 @@
           : String(catViewedKey);
         body.innerHTML = lines.map((l) => `
           <div class="cat-row">
-            <input type="checkbox" class="cat-check" data-txn="${l.transactionId}" />
+            <input type="checkbox" class="cat-check" data-txn="${l.transactionId}" data-run="${l.analysisRunId}" />
             <div class="cat-desc">
               <div>${escapeHtml(l.description || '')}</div>
               <div class="cat-date">${formatMmDdYy(l.date)}${l.vendor && l.vendor !== l.description ? ' · ' + escapeHtml(l.vendor) : ''}</div>
             </div>
             <div class="cat-amt">${formatCurrency(l.amount)}</div>
-            <select data-txn="${l.transactionId}">${reassignRowOptions(curVal)}</select>
+            <select data-txn="${l.transactionId}" data-run="${l.analysisRunId}">${reassignRowOptions(curVal)}</select>
           </div>
         `).join('')
           + `<div class="cat-row"><div class="cat-desc"><strong>Total (${lines.length})</strong></div>`
@@ -2265,7 +2309,8 @@
       async function reassignMapped(select) {
         select.disabled = true;
         try {
-          await putJson(`/api/analysis-runs/${catRunId}/mappings/${select.dataset.txn}`, catPayload(select.value));
+          // A calendar month can span several runs, so reassign via each row's own run.
+          await putJson(`/api/analysis-runs/${select.dataset.run}/mappings/${select.dataset.txn}`, catPayload(select.value));
           select.closest('.cat-row').style.opacity = stillInViewedCategory(select.value) ? '1' : '0.5';
           await loadMonth(catMonth); // refresh the table + tiles behind the modal
         } catch (err) {
@@ -2289,7 +2334,7 @@
         showBusy(`Updating ${checked.length} transaction${checked.length > 1 ? 's' : ''}…`);
         try {
           for (const cb of checked) {
-            await putJson(`/api/analysis-runs/${catRunId}/mappings/${cb.dataset.txn}`, payload);
+            await putJson(`/api/analysis-runs/${cb.dataset.run}/mappings/${cb.dataset.txn}`, payload);
           }
           await loadMonth(catMonth);
           await renderCategoryDetail(); // moved rows drop off the list

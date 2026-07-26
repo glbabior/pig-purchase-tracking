@@ -15,10 +15,19 @@ public class AnalysisController {
 
     @Autowired private AnalysisService analysisService;
 
-    /** Months with a completed mapping run, newest first — drives the month picker. */
+    /** Calendar months (by actual transaction date) with mapped data, newest first,
+     *  each with its completeness state — drives the month picker and badges. */
     @GetMapping("/months")
-    public List<String> months() {
-        return analysisService.mappedMonths();
+    public List<AnalysisService.MonthInfo> months() {
+        return analysisService.monthsWithStatus();
+    }
+
+    /** Flag a calendar month complete (or not) so it does/doesn't feed the rolling average. */
+    @PutMapping("/months/{month}/complete")
+    public Map<String, Object> setComplete(@PathVariable String month, @RequestBody Map<String, Object> body) {
+        boolean complete = Boolean.TRUE.equals(body.get("complete"));
+        analysisService.setMonthComplete(month, complete);
+        return Map.of("month", month, "complete", complete);
     }
 
     /** Budget vs actual for one month, total and per category. */

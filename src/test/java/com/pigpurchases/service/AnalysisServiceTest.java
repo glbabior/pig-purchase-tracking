@@ -11,6 +11,7 @@ import com.pigpurchases.repository.AnalysisRunSourceRepository;
 import com.pigpurchases.repository.AppSettingsRepository;
 import com.pigpurchases.repository.BudgetEntryRepository;
 import com.pigpurchases.repository.MerchantCategoryRepository;
+import com.pigpurchases.repository.MonthStatusRepository;
 import com.pigpurchases.repository.StatementImportRepository;
 import com.pigpurchases.repository.StatementSourceRepository;
 import com.pigpurchases.repository.TransactionMappingRepository;
@@ -52,6 +53,7 @@ class AnalysisServiceTest {
     @Autowired private BudgetEntryRepository entryRepo;
     @Autowired private MerchantCategoryRepository merchantRepo;
     @Autowired private AppSettingsRepository settingsRepo;
+    @Autowired private MonthStatusRepository monthStatusRepo;
 
     private Long runId;
 
@@ -68,6 +70,7 @@ class AnalysisServiceTest {
 
         // Monthly allowance = annual / 12 = 100.00 is the top-line budget.
         settingsRepo.deleteAll();
+        monthStatusRepo.deleteAll();
         AppSettings settings = new AppSettings();
         settings.setId(1L);
         settings.setAnnualBudget(new BigDecimal("1200.00"));
@@ -96,9 +99,11 @@ class AnalysisServiceTest {
         mappingService.exclude(runId, payment.getTransactionId());
     }
 
+    // The statement was mapped as a "2026-06" run, but its transactions are dated
+    // in May (05/20-05/24), so by ACTUAL date they belong to 2026-05.
     @Test
     void monthSummaryComputesBudgetVsActualPerCategoryAndTotal() {
-        AnalysisService.MonthSummary ms = analysisService.month("2026-06");
+        AnalysisService.MonthSummary ms = analysisService.month("2026-05");
 
         assertEquals(0, new BigDecimal("100.00").compareTo(ms.totalBudget()), "monthly allowance (1200/12)");
         assertEquals(0, new BigDecimal("4.45").compareTo(ms.totalActual()), "coffee 4.10 + metro 0.35");
@@ -122,7 +127,11 @@ class AnalysisServiceTest {
     }
 
     @Test
-    void rollingOverOneMonthEqualsThatMonth() {
+    void rollingCountsOnlyCompleteMonths() {
+        // A month must be flagged complete to feed the rolling average.
+        assertEquals(0, analysisService.rolling().months(), "no complete months yet");
+
+        analysisService.setMonthComplete("2026-05", true);
         AnalysisService.RollingSummary r = analysisService.rolling();
         assertEquals(1, r.months());
         assertEquals(0, new BigDecimal("4.45").compareTo(r.avgActual()));
@@ -130,16 +139,19 @@ class AnalysisServiceTest {
     }
 
     @Test
-    void trendsHasOnePointForTheMappedMonth() {
+    void trendsHasOnePointForTheActualMonth() {
         List<AnalysisService.TrendPoint> trends = analysisService.trends();
         assertEquals(1, trends.size());
-        assertEquals("2026-06", trends.get(0).month());
+        assertEquals("2026-05", trends.get(0).month());
         assertEquals(0, new BigDecimal("4.45").compareTo(trends.get(0).totalActual()));
     }
 
     @Test
-    void mappedMonthsListsTheRun() {
-        assertEquals(List.of("2026-06"), analysisService.mappedMonths());
+    void monthsWithStatusListsTheActualMonth() {
+        List<AnalysisService.MonthInfo> months = analysisService.monthsWithStatus();
+        assertEquals(1, months.size());
+        assertEquals("2026-05", months.get(0).month());
+        assertTrue(!months.get(0).complete(), "not marked complete yet");
     }
 
     @Test
@@ -147,24 +159,25 @@ class AnalysisServiceTest {
         Long coffeeId = entryRepo.findAll().stream()
                 .filter(e -> "Coffee Shop".equals(e.getName())).findFirst().orElseThrow().getId();
 
-        List<AnalysisService.TxnLine> coffee = analysisService.categoryTransactions("2026-06", coffeeId.toString());
+        List<AnalysisService.TxnLine> coffee = analysisService.categoryTransactions("2026-05", coffeeId.toString());
         assertEquals(1, coffee.size());
         assertTrue(coffee.get(0).description().contains("COFFEE SHOP"));
         assertEquals(0, new BigDecimal("4.10").compareTo(coffee.get(0).amount()));
         assertNotNull(coffee.get(0).transactionId(), "id is needed to reassign the row");
+        assertNotNull(coffee.get(0).analysisRunId(), "run id is needed to reassign the row");
 
         // Payment was excluded, so "other" (parked) is empty.
-        assertEquals(0, analysisService.categoryTransactions("2026-06", "other").size());
+        assertEquals(0, analysisService.categoryTransactions("2026-05", "other").size());
     }
 
     @Test
-    void categoryTrendReturnsAPointPerMappedMonth() {
+    void categoryTrendReturnsAPointPerActualMonth() {
         Long coffeeId = entryRepo.findAll().stream()
                 .filter(e -> "Coffee Shop".equals(e.getName())).findFirst().orElseThrow().getId();
 
         List<AnalysisService.CategoryTrendPoint> trend = analysisService.categoryTrend(coffeeId.toString());
         assertEquals(1, trend.size());
-        assertEquals("2026-06", trend.get(0).month());
+        assertEquals("2026-05", trend.get(0).month());
         assertEquals(0, new BigDecimal("4.10").compareTo(trend.get(0).actual()));
         assertEquals(0, new BigDecimal("50.00").compareTo(trend.get(0).budget()), "constant category allowance");
     }

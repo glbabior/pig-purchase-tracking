@@ -1,15 +1,13 @@
 package com.pigpurchases.service;
 
-import com.pigpurchases.model.AnalysisRun;
-import com.pigpurchases.model.AnalysisRunSource;
 import com.pigpurchases.model.BudgetEntry;
+import com.pigpurchases.model.MonthStatus;
 import com.pigpurchases.model.Transaction;
 import com.pigpurchases.model.TransactionMapping;
 import com.pigpurchases.model.AppSettings;
-import com.pigpurchases.repository.AnalysisRunRepository;
-import com.pigpurchases.repository.AnalysisRunSourceRepository;
 import com.pigpurchases.repository.AppSettingsRepository;
 import com.pigpurchases.repository.BudgetEntryRepository;
+import com.pigpurchases.repository.MonthStatusRepository;
 import com.pigpurchases.repository.TransactionMappingRepository;
 import com.pigpurchases.repository.TransactionRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,40 +16,43 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 
 /**
- * Turns completed mapping runs into budget-vs-actual analysis: one month, a
- * rolling average across months, and a trend series.
+ * Budget-vs-actual analysis, grouped by each transaction's <b>actual date</b>
+ * (not the statement or run it arrived in). A transaction's category comes from
+ * its mapping — matched to a budget entry, PARKED as "Other", or EXCLUDED — so a
+ * statement whose billing cycle straddles two months contributes each transaction
+ * to the calendar month it actually happened in.
  *
- * <p><b>What counts as spend.</b> Each mapped transaction contributes its
- * absolute amount as spend, with direction taken from its type so refunds net
- * out: money-out types (purchases, withdrawals, fees) add, money-in types
- * (payments, credits, deposits) subtract. EXCLUDED transactions — parser
- * transfers and anything the user marked "not spend" — never count.
+ * <p><b>What counts as spend.</b> Money-out types (purchases, withdrawals, fees)
+ * add; money-in types (payments, credits, deposits) subtract, so refunds net out.
+ * PARKED transactions collect as an unbudgeted "Other" line. EXCLUDED (transfers
+ * and anything marked "not spend") are reported separately, never as spend.
  *
- * <p><b>What "budget" means.</b> A category's budget is its monthly allowance;
- * the month's total budget is the sum of all category allowances. Parked
- * transactions are collected as an unbudgeted "Other" line: real spend with no
- * allowance to compare against.
- *
- * <p><b>Rolling</b> is the average of each figure across every mapped month, so
- * it reads as "a typical month." With one month mapped it equals that month.
+ * <p><b>Completeness.</b> A calendar month only feeds the rolling ("typical
+ * month") average once it's flagged complete (see {@link MonthStatus}) — a
+ * billing cycle that closes mid-month leaves the tail of a month in the next
+ * statement, so a month isn't whole until that arrives. The analysis offers a
+ * suggestion, but the flag is the user's to set.
  */
 @Service
 public class AnalysisService {
 
-    @Autowired private AnalysisRunRepository runRepository;
-    @Autowired private AnalysisRunSourceRepository runSourceRepository;
     @Autowired private TransactionMappingRepository mappingRepository;
     @Autowired private TransactionRepository transactionRepository;
     @Autowired private BudgetEntryRepository budgetEntryRepository;
     @Autowired private AppSettingsRepository appSettingsRepository;
+    @Autowired private MonthStatusRepository monthStatusRepository;
 
     private static final BigDecimal MONTHS_PER_YEAR = BigDecimal.valueOf(12);
 
@@ -71,45 +72,71 @@ public class AnalysisService {
     public record CategoryTrendPoint(String month, BigDecimal actual, BigDecimal budget) {}
 
     /** One transaction behind a category's total, for the click-through detail (and reassigning it). */
-    public record TxnLine(Long transactionId, String date, String description, String vendor,
-                          BigDecimal amount, String type) {}
+    public record TxnLine(Long transactionId, Long analysisRunId, String date, String description,
+                          String vendor, BigDecimal amount, String type) {}
 
-    /** Months that have a completed mapping run, newest first. */
+    /** A calendar month that has mapped transactions, with its completeness state. */
+    public record MonthInfo(String month, boolean complete, boolean suggested, int unmapped) {}
+
+    // ---- month list & completeness ----------------------------------------
+
+    /** Calendar months that have mapped transactions, newest first, with completeness. */
     @Transactional(readOnly = true)
-    public List<String> mappedMonths() {
-        List<String> months = new ArrayList<>();
-        for (AnalysisRun run : runRepository.findAllByOrderByMonthDesc()) {
-            if (run.getStatus() == AnalysisRun.Status.MAPPED) {
-                months.add(run.getMonth());
-            }
+    public List<MonthInfo> monthsWithStatus() {
+        Map<String, MonthAgg> byMonth = aggregateByActualMonth();
+        Map<String, Integer> unmappedByMonth = unmappedCountByMonth();
+        Set<String> completeMonths = completeMonths();
+        String suggestThrough = suggestCompleteThrough(); // months strictly before this are "likely complete"
+
+        List<String> months = new ArrayList<>(new TreeSet<>(byMonth.keySet()));
+        months.sort(Comparator.reverseOrder());
+        List<MonthInfo> out = new ArrayList<>();
+        for (String m : months) {
+            boolean complete = completeMonths.contains(m);
+            boolean suggested = suggestThrough != null && m.compareTo(suggestThrough) < 0;
+            out.add(new MonthInfo(m, complete, suggested, unmappedByMonth.getOrDefault(m, 0)));
         }
-        return months;
+        return out;
     }
+
+    @Transactional
+    public void setMonthComplete(String month, boolean complete) {
+        MonthStatus status = monthStatusRepository.findById(month)
+                .orElseGet(() -> new MonthStatus(month, false));
+        status.setComplete(complete);
+        monthStatusRepository.save(status);
+    }
+
+    // ---- per-month & rolling ----------------------------------------------
 
     @Transactional(readOnly = true)
     public MonthSummary month(String month) {
-        AnalysisRun run = runRepository.findByMonth(month)
-                .filter(r -> r.getStatus() == AnalysisRun.Status.MAPPED)
-                .orElseThrow(() -> new IllegalArgumentException("No completed mapping run for " + month));
-        return summarize(run, budgetEntryRepository.findAll());
+        MonthAgg agg = aggregateByActualMonth().getOrDefault(month, new MonthAgg());
+        return summarize(month, agg, budgetEntryRepository.findAll());
     }
 
     @Transactional(readOnly = true)
     public RollingSummary rolling() {
         List<BudgetEntry> entries = budgetEntryRepository.findAll();
-        List<MonthSummary> all = mappedRuns().stream().map(r -> summarize(r, entries)).toList();
-
         BigDecimal totalBudget = monthlyAllowance();
+
+        Map<String, MonthAgg> byMonth = aggregateByActualMonth();
+        Set<String> complete = completeMonths();
+        // Only complete months with data feed the average, so a partial month can't skew it.
+        List<MonthSummary> all = byMonth.entrySet().stream()
+                .filter(e -> complete.contains(e.getKey()))
+                .map(e -> summarize(e.getKey(), e.getValue(), entries))
+                .toList();
+
         if (all.isEmpty()) {
-            return new RollingSummary(0, totalBudget, BigDecimal.ZERO, totalBudget, categoryRows(entries,
-                    new HashMap<>(), BigDecimal.ZERO, 1, totalBudget));
+            return new RollingSummary(0, totalBudget, BigDecimal.ZERO, totalBudget,
+                    categoryRows(entries, new HashMap<>(), BigDecimal.ZERO, 1, totalBudget));
         }
 
         int n = all.size();
         BigDecimal avgActual = all.stream().map(MonthSummary::totalActual)
                 .reduce(BigDecimal.ZERO, BigDecimal::add).divide(BigDecimal.valueOf(n), 2, RoundingMode.HALF_UP);
 
-        // Sum each category's actual across months, then average.
         Map<Long, BigDecimal> summedByEntry = new HashMap<>();
         BigDecimal summedOther = BigDecimal.ZERO;
         for (MonthSummary ms : all) {
@@ -128,12 +155,13 @@ public class AnalysisService {
     @Transactional(readOnly = true)
     public List<TrendPoint> trends() {
         List<BudgetEntry> entries = budgetEntryRepository.findAll();
+        Map<String, MonthAgg> byMonth = aggregateByActualMonth();
+        List<String> months = new ArrayList<>(byMonth.keySet());
+        months.sort(Comparator.naturalOrder()); // oldest first, for a left-to-right timeline
         List<TrendPoint> points = new ArrayList<>();
-        List<AnalysisRun> runs = new ArrayList<>(mappedRuns());
-        runs.sort(Comparator.comparing(AnalysisRun::getMonth)); // oldest first, for a left-to-right timeline
-        for (AnalysisRun run : runs) {
-            MonthSummary ms = summarize(run, entries);
-            points.add(new TrendPoint(run.getMonth(), ms.totalActual(), ms.totalBudget()));
+        for (String m : months) {
+            MonthSummary ms = summarize(m, byMonth.get(m), entries);
+            points.add(new TrendPoint(m, ms.totalActual(), ms.totalBudget()));
         }
         return points;
     }
@@ -145,76 +173,114 @@ public class AnalysisService {
     @Transactional(readOnly = true)
     public List<CategoryTrendPoint> categoryTrend(String categoryKey) {
         boolean other = "other".equalsIgnoreCase(categoryKey);
-        Long entryId = null;
-        if (!other) {
-            try {
-                entryId = Long.valueOf(categoryKey);
-            } catch (NumberFormatException ex) {
-                throw new IllegalArgumentException("Unknown category: " + categoryKey);
-            }
-        }
-        final Long id = entryId;
+        Long entryId = other ? null : parseEntryId(categoryKey);
 
         List<BudgetEntry> entries = budgetEntryRepository.findAll();
-        List<AnalysisRun> runs = new ArrayList<>(mappedRuns());
-        runs.sort(Comparator.comparing(AnalysisRun::getMonth)); // oldest first
-        if (runs.size() > 12) {
-            runs = runs.subList(runs.size() - 12, runs.size()); // most recent 12
+        Map<String, MonthAgg> byMonth = aggregateByActualMonth();
+        List<String> months = new ArrayList<>(byMonth.keySet());
+        months.sort(Comparator.naturalOrder());
+        if (months.size() > 12) {
+            months = months.subList(months.size() - 12, months.size());
         }
 
         List<CategoryTrendPoint> points = new ArrayList<>();
-        for (AnalysisRun run : runs) {
-            CategoryRow row = summarize(run, entries).categories().stream()
+        for (String m : months) {
+            final Long id = entryId;
+            CategoryRow row = summarize(m, byMonth.get(m), entries).categories().stream()
                     .filter(c -> other ? c.entryId() == null : (c.entryId() != null && c.entryId().equals(id)))
                     .findFirst().orElse(null);
             BigDecimal actual = row != null ? row.actual() : BigDecimal.ZERO;
             BigDecimal budget = row != null ? row.budget() : BigDecimal.ZERO;
-            points.add(new CategoryTrendPoint(run.getMonth(), actual, budget));
+            points.add(new CategoryTrendPoint(m, actual, budget));
         }
         return points;
     }
 
-    // ---- internals ---------------------------------------------------------
+    /** The transactions behind one category for a calendar month; key is an entry id, "other", or "__excluded__". */
+    @Transactional(readOnly = true)
+    public List<TxnLine> categoryTransactions(String month, String categoryKey) {
+        boolean excluded = "__excluded__".equalsIgnoreCase(categoryKey);
+        boolean other = "other".equalsIgnoreCase(categoryKey);
+        Long entryId = (other || excluded) ? null : parseEntryId(categoryKey);
 
-    private List<AnalysisRun> mappedRuns() {
-        return runRepository.findAllByOrderByMonthDesc().stream()
-                .filter(r -> r.getStatus() == AnalysisRun.Status.MAPPED).toList();
+        Map<Long, Transaction> txnById = allTransactionsById();
+        List<TxnLine> lines = new ArrayList<>();
+        for (TransactionMapping m : mappingRepository.findAll()) {
+            Transaction txn = txnById.get(m.getTransactionId());
+            if (txn == null || txn.getTransactionDate() == null || !month.equals(yyyymm(txn.getTransactionDate()))) {
+                continue;
+            }
+            boolean isExcluded = m.getStatus() == TransactionMapping.Status.EXCLUDED;
+            if (excluded) {
+                if (!isExcluded) continue;
+            } else {
+                if (isExcluded) continue;
+                boolean isParked = m.getStatus() == TransactionMapping.Status.PARKED || m.getBudgetEntryId() == null;
+                boolean matches = other ? isParked : (!isParked && entryId.equals(m.getBudgetEntryId()));
+                if (!matches) continue;
+            }
+            lines.add(new TxnLine(txn.getId(), m.getAnalysisRunId(),
+                    txn.getTransactionDate().toString(),
+                    txn.getDescription(), txn.getVendor(), round(signedSpend(txn)), txn.getType()));
+        }
+        lines.sort(Comparator.comparing(l -> l.date() == null ? "" : l.date()));
+        return lines;
     }
 
-    /** One run's budget-vs-actual, per category plus the "Other" and excluded totals. */
-    private MonthSummary summarize(AnalysisRun run, List<BudgetEntry> entries) {
-        Map<Long, Transaction> txnById = transactionsForRun(run);
+    // ---- internals ---------------------------------------------------------
 
-        Map<Long, BigDecimal> byEntry = new HashMap<>();
+    /** Per-category / other / excluded spend totals for one calendar month. */
+    private static final class MonthAgg {
+        final Map<Long, BigDecimal> byEntry = new HashMap<>();
         BigDecimal other = BigDecimal.ZERO;
         BigDecimal excluded = BigDecimal.ZERO;
+    }
 
-        for (TransactionMapping m : mappingRepository.findByAnalysisRunId(run.getId())) {
+    /** Group every mapped transaction into its actual-date month. */
+    private Map<String, MonthAgg> aggregateByActualMonth() {
+        Map<Long, Transaction> txnById = allTransactionsById();
+        Map<String, MonthAgg> byMonth = new HashMap<>();
+        for (TransactionMapping m : mappingRepository.findAll()) {
             Transaction txn = txnById.get(m.getTransactionId());
-            if (txn == null) {
+            if (txn == null || txn.getTransactionDate() == null) {
                 continue;
             }
-            if (m.getStatus() == TransactionMapping.Status.EXCLUDED) {
-                // Net (signed) so the tile matches the drill-down dialog and the
-                // rest of the app: money out counts positive, refunds/payments
-                // negative. Summing abs() double-counted credits as if they were spend.
-                excluded = excluded.add(signedSpend(txn));
-                continue;
-            }
+            MonthAgg agg = byMonth.computeIfAbsent(yyyymm(txn.getTransactionDate()), k -> new MonthAgg());
             BigDecimal spend = signedSpend(txn);
-            if (m.getStatus() == TransactionMapping.Status.PARKED || m.getBudgetEntryId() == null) {
-                other = other.add(spend);
+            if (m.getStatus() == TransactionMapping.Status.EXCLUDED) {
+                agg.excluded = agg.excluded.add(spend);
+            } else if (m.getStatus() == TransactionMapping.Status.PARKED || m.getBudgetEntryId() == null) {
+                agg.other = agg.other.add(spend);
             } else {
-                byEntry.merge(m.getBudgetEntryId(), spend, BigDecimal::add);
+                agg.byEntry.merge(m.getBudgetEntryId(), spend, BigDecimal::add);
             }
         }
+        return byMonth;
+    }
 
+    /** Ingested-but-not-yet-mapped transactions per actual month — a signal that a month is incomplete. */
+    private Map<String, Integer> unmappedCountByMonth() {
+        Set<Long> mapped = new HashSet<>();
+        for (TransactionMapping m : mappingRepository.findAll()) {
+            mapped.add(m.getTransactionId());
+        }
+        Map<String, Integer> counts = new HashMap<>();
+        for (Transaction t : transactionRepository.findAll()) {
+            if (t.getTransactionDate() == null || mapped.contains(t.getId())) {
+                continue;
+            }
+            counts.merge(yyyymm(t.getTransactionDate()), 1, Integer::sum);
+        }
+        return counts;
+    }
+
+    private MonthSummary summarize(String month, MonthAgg agg, List<BudgetEntry> entries) {
         BigDecimal totalBudget = monthlyAllowance();
-        List<CategoryRow> categories = categoryRows(entries, byEntry, other, 1, totalBudget);
+        List<CategoryRow> categories = categoryRows(entries, agg.byEntry, agg.other, 1, totalBudget);
         BigDecimal totalActual = categories.stream().map(CategoryRow::actual)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        return new MonthSummary(run.getMonth(), totalBudget, round(totalActual),
-                round(totalBudget.subtract(totalActual)), round(excluded), categories);
+        return new MonthSummary(month, totalBudget, round(totalActual),
+                round(totalBudget.subtract(totalActual)), round(agg.excluded), categories);
     }
 
     /**
@@ -236,9 +302,6 @@ public class AnalysisService {
                     round(budget.subtract(actual))));
         }
         rows.sort(Comparator.comparing(r -> r.name() == null ? "" : r.name().toLowerCase()));
-        // "Other" last. Its budget is the discretionary remainder — whatever of the
-        // monthly allowance isn't allocated to a category — so category budgets plus
-        // Other's budget always sum to the monthly allowance.
         BigDecimal otherBudget = monthlyAllowance.subtract(allocated);
         BigDecimal other = otherTotal.divide(div, 2, RoundingMode.HALF_UP);
         if (otherBudget.signum() != 0 || other.signum() != 0) {
@@ -248,17 +311,44 @@ public class AnalysisService {
         return rows;
     }
 
-    private Map<Long, Transaction> transactionsForRun(AnalysisRun run) {
-        Map<Long, Transaction> byId = new LinkedHashMap<>();
-        for (AnalysisRunSource link : runSourceRepository.findByAnalysisRunId(run.getId())) {
-            for (Transaction txn : transactionRepository.findByStatementImportId(link.getStatementImportId())) {
-                byId.put(txn.getId(), txn);
-            }
+    private Map<Long, Transaction> allTransactionsById() {
+        Map<Long, Transaction> byId = new HashMap<>();
+        for (Transaction t : transactionRepository.findAll()) {
+            byId.put(t.getId(), t);
         }
         return byId;
     }
 
-    /** The month's top-line budget: the annual budget from settings divided by 12. */
+    private Set<String> completeMonths() {
+        Set<String> out = new HashSet<>();
+        for (MonthStatus s : monthStatusRepository.findAll()) {
+            if (s.isComplete()) {
+                out.add(s.getMonth());
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Heuristic suggestion: once a later month has mapped data, an earlier month's
+     * billing cycles have almost certainly all landed, so months strictly before
+     * the newest month with data are "likely complete." It's only a hint — the
+     * user confirms, because a mid-month cycle can still leave a tail.
+     */
+    private String suggestCompleteThrough() {
+        Map<Long, Transaction> txnById = allTransactionsById();
+        String maxMonth = null;
+        for (TransactionMapping m : mappingRepository.findAll()) {
+            Transaction t = txnById.get(m.getTransactionId());
+            if (t == null || t.getTransactionDate() == null) continue;
+            String ym = yyyymm(t.getTransactionDate());
+            if (maxMonth == null || ym.compareTo(maxMonth) > 0) {
+                maxMonth = ym;
+            }
+        }
+        return maxMonth; // months < maxMonth are suggested complete
+    }
+
     private BigDecimal monthlyAllowance() {
         BigDecimal annual = appSettingsRepository.findById(1L)
                 .map(AppSettings::getAnnualBudget).orElse(BigDecimal.ZERO);
@@ -268,51 +358,16 @@ public class AnalysisService {
         return annual.divide(MONTHS_PER_YEAR, 2, RoundingMode.HALF_UP);
     }
 
-    /** The transactions behind one category's total for a month; key is an entry id or "other". */
-    @Transactional(readOnly = true)
-    public List<TxnLine> categoryTransactions(String month, String categoryKey) {
-        AnalysisRun run = runRepository.findByMonth(month)
-                .filter(r -> r.getStatus() == AnalysisRun.Status.MAPPED)
-                .orElseThrow(() -> new IllegalArgumentException("No completed mapping run for " + month));
-        boolean excluded = "__excluded__".equalsIgnoreCase(categoryKey);
-        boolean other = "other".equalsIgnoreCase(categoryKey);
-        Long entryId = null;
-        if (!other && !excluded) {
-            try {
-                entryId = Long.valueOf(categoryKey);
-            } catch (NumberFormatException ex) {
-                throw new IllegalArgumentException("Unknown category: " + categoryKey);
-            }
+    private Long parseEntryId(String categoryKey) {
+        try {
+            return Long.valueOf(categoryKey);
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException("Unknown category: " + categoryKey);
         }
+    }
 
-        Map<Long, Transaction> txnById = transactionsForRun(run);
-        List<TxnLine> lines = new ArrayList<>();
-        for (TransactionMapping m : mappingRepository.findByAnalysisRunId(run.getId())) {
-            boolean isExcluded = m.getStatus() == TransactionMapping.Status.EXCLUDED;
-            if (excluded) {
-                if (!isExcluded) {
-                    continue;
-                }
-            } else {
-                if (isExcluded) {
-                    continue;
-                }
-                boolean isParked = m.getStatus() == TransactionMapping.Status.PARKED || m.getBudgetEntryId() == null;
-                boolean matches = other ? isParked : (!isParked && entryId.equals(m.getBudgetEntryId()));
-                if (!matches) {
-                    continue;
-                }
-            }
-            Transaction txn = txnById.get(m.getTransactionId());
-            if (txn == null) {
-                continue;
-            }
-            lines.add(new TxnLine(txn.getId(),
-                    txn.getTransactionDate() != null ? txn.getTransactionDate().toString() : null,
-                    txn.getDescription(), txn.getVendor(), round(signedSpend(txn)), txn.getType()));
-        }
-        lines.sort(Comparator.comparing(l -> l.date() == null ? "" : l.date()));
-        return lines;
+    private static String yyyymm(LocalDate date) {
+        return YearMonth.from(date).toString(); // e.g. "2026-06"
     }
 
     /** Money out adds to spend; money in (refunds, payments, deposits) subtracts. */
