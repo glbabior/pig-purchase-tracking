@@ -56,9 +56,10 @@ public class AnalysisService {
 
     private static final BigDecimal MONTHS_PER_YEAR = BigDecimal.valueOf(12);
 
-    /** entryId is null for the synthetic "Other" (parked) row, which has no budget. */
+    /** entryId is null for the synthetic "Other" (parked) row, which has no budget.
+     *  count is the number of transactions behind the actual (total across months for rolling). */
     public record CategoryRow(Long entryId, String name, BigDecimal budget,
-                              BigDecimal actual, BigDecimal variance) {}
+                              BigDecimal actual, BigDecimal variance, int count) {}
 
     public record MonthSummary(String month, BigDecimal totalBudget, BigDecimal totalActual,
                                BigDecimal variance, BigDecimal excluded, List<CategoryRow> categories) {}
@@ -130,25 +131,31 @@ public class AnalysisService {
 
         if (all.isEmpty()) {
             return new RollingSummary(0, totalBudget, BigDecimal.ZERO, totalBudget,
-                    categoryRows(entries, new HashMap<>(), BigDecimal.ZERO, 1, totalBudget));
+                    categoryRows(entries, new HashMap<>(), BigDecimal.ZERO, 1, totalBudget, new HashMap<>(), 0));
         }
 
         int n = all.size();
         BigDecimal avgActual = all.stream().map(MonthSummary::totalActual)
                 .reduce(BigDecimal.ZERO, BigDecimal::add).divide(BigDecimal.valueOf(n), 2, RoundingMode.HALF_UP);
 
+        // Actuals average over the months; counts are the total number of transactions.
         Map<Long, BigDecimal> summedByEntry = new HashMap<>();
+        Map<Long, Integer> countByEntry = new HashMap<>();
         BigDecimal summedOther = BigDecimal.ZERO;
+        int otherCount = 0;
         for (MonthSummary ms : all) {
             for (CategoryRow row : ms.categories()) {
                 if (row.entryId() == null) {
                     summedOther = summedOther.add(row.actual());
+                    otherCount += row.count();
                 } else {
                     summedByEntry.merge(row.entryId(), row.actual(), BigDecimal::add);
+                    countByEntry.merge(row.entryId(), row.count(), Integer::sum);
                 }
             }
         }
-        List<CategoryRow> categories = categoryRows(entries, summedByEntry, summedOther, n, totalBudget);
+        List<CategoryRow> categories = categoryRows(entries, summedByEntry, summedOther, n, totalBudget,
+                countByEntry, otherCount);
         return new RollingSummary(n, totalBudget, avgActual, totalBudget.subtract(avgActual), categories);
     }
 
@@ -229,11 +236,13 @@ public class AnalysisService {
 
     // ---- internals ---------------------------------------------------------
 
-    /** Per-category / other / excluded spend totals for one calendar month. */
+    /** Per-category / other / excluded spend totals (and transaction counts) for one calendar month. */
     private static final class MonthAgg {
         final Map<Long, BigDecimal> byEntry = new HashMap<>();
+        final Map<Long, Integer> countByEntry = new HashMap<>();
         BigDecimal other = BigDecimal.ZERO;
         BigDecimal excluded = BigDecimal.ZERO;
+        int otherCount = 0;
     }
 
     /** Group every mapped transaction into its actual-date month. */
@@ -251,8 +260,10 @@ public class AnalysisService {
                 agg.excluded = agg.excluded.add(spend);
             } else if (m.getStatus() == TransactionMapping.Status.PARKED || m.getBudgetEntryId() == null) {
                 agg.other = agg.other.add(spend);
+                agg.otherCount++;
             } else {
                 agg.byEntry.merge(m.getBudgetEntryId(), spend, BigDecimal::add);
+                agg.countByEntry.merge(m.getBudgetEntryId(), 1, Integer::sum);
             }
         }
         return byMonth;
@@ -276,7 +287,8 @@ public class AnalysisService {
 
     private MonthSummary summarize(String month, MonthAgg agg, List<BudgetEntry> entries) {
         BigDecimal totalBudget = monthlyAllowance();
-        List<CategoryRow> categories = categoryRows(entries, agg.byEntry, agg.other, 1, totalBudget);
+        List<CategoryRow> categories = categoryRows(entries, agg.byEntry, agg.other, 1, totalBudget,
+                agg.countByEntry, agg.otherCount);
         BigDecimal totalActual = categories.stream().map(CategoryRow::actual)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         return new MonthSummary(month, totalBudget, round(totalActual),
@@ -289,7 +301,8 @@ public class AnalysisService {
      * and a rolling average (divisor = month count).
      */
     private List<CategoryRow> categoryRows(List<BudgetEntry> entries, Map<Long, BigDecimal> actualByEntry,
-                                           BigDecimal otherTotal, int divisor, BigDecimal monthlyAllowance) {
+                                           BigDecimal otherTotal, int divisor, BigDecimal monthlyAllowance,
+                                           Map<Long, Integer> countByEntry, int otherCount) {
         BigDecimal div = BigDecimal.valueOf(Math.max(divisor, 1));
         List<CategoryRow> rows = new ArrayList<>();
         BigDecimal allocated = BigDecimal.ZERO;
@@ -299,14 +312,14 @@ public class AnalysisService {
             BigDecimal actual = actualByEntry.getOrDefault(entry.getId(), BigDecimal.ZERO)
                     .divide(div, 2, RoundingMode.HALF_UP);
             rows.add(new CategoryRow(entry.getId(), entry.getName(), round(budget), actual,
-                    round(budget.subtract(actual))));
+                    round(budget.subtract(actual)), countByEntry.getOrDefault(entry.getId(), 0)));
         }
         rows.sort(Comparator.comparing(r -> r.name() == null ? "" : r.name().toLowerCase()));
         BigDecimal otherBudget = monthlyAllowance.subtract(allocated);
         BigDecimal other = otherTotal.divide(div, 2, RoundingMode.HALF_UP);
-        if (otherBudget.signum() != 0 || other.signum() != 0) {
+        if (otherBudget.signum() != 0 || other.signum() != 0 || otherCount > 0) {
             rows.add(new CategoryRow(null, "Other (discretionary)", round(otherBudget), other,
-                    round(otherBudget.subtract(other))));
+                    round(otherBudget.subtract(other)), otherCount));
         }
         return rows;
     }

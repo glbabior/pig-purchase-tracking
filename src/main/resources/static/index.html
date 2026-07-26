@@ -2592,6 +2592,7 @@
       function renderAnalysisTable(containerId, state) {
         const cols = [
           { key: 'name', label: 'Category', num: false },
+          { key: 'count', label: 'Txns', num: true },
           { key: 'budget', label: 'Budget', num: true },
           { key: 'actual', label: state.actualHeader, num: true },
           { key: 'variance', label: 'Variance', num: true },
@@ -2621,6 +2622,7 @@
           const rowAttrs = state.onRowClick ? ` class="clickable" data-cat="${cat}" data-name="${escapeHtml(c.name)}"` : '';
           return `<tr${rowAttrs}>
             <td>${escapeHtml(c.name)}</td>
+            <td class="num">${Number(c.count || 0)}</td>
             <td class="num">${formatCurrency(budget)}</td>
             <td class="num">${formatCurrency(actual)}</td>
             <td class="num ${vCls}">${formatCurrency(variance)}</td>
@@ -2629,11 +2631,13 @@
         }).join('');
 
         const totCls = Number(state.totalVariance) < 0 ? 'over' : 'under';
+        const totalCount = sorted.reduce((sum, c) => sum + Number(c.count || 0), 0);
         const container = document.getElementById(containerId);
         container.innerHTML = `<table class="analysis-table">
           <thead><tr>${head}</tr></thead>
           <tbody>${rows}
-            <tr class="total-row"><td>Total</td><td class="num">${formatCurrency(state.totalBudget)}</td>
+            <tr class="total-row"><td>Total</td><td class="num">${totalCount}</td>
+            <td class="num">${formatCurrency(state.totalBudget)}</td>
             <td class="num">${formatCurrency(state.totalActual)}</td>
             <td class="num ${totCls}">${formatCurrency(state.totalVariance)}</td><td></td></tr>
           </tbody></table>`;
