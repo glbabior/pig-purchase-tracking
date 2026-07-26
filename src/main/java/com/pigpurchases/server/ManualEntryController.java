@@ -95,7 +95,8 @@ public class ManualEntryController {
                 : ((Number) body.get("budgetEntryId")).longValue();
         boolean force = Boolean.TRUE.equals(body.get("force"));
 
-        if (!force) {
+        // An excluded ("not spend") entry is already accounted for elsewhere, so skip the dup check for it.
+        if (!force && !excluded) {
             List<Transaction> dups = manualEntryService.findPotentialDuplicates(date, amount);
             if (!dups.isEmpty()) {
                 List<Map<String, Object>> views = new ArrayList<>();
@@ -113,6 +114,20 @@ public class ManualEntryController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
         }
+    }
+
+    /** Flag a duplicate group as NOT a duplicate so it stops being offered. */
+    @PostMapping("/duplicates/dismiss")
+    public Map<String, Object> dismissDuplicate(@RequestBody Map<String, Object> body) {
+        List<Long> ids = new ArrayList<>();
+        Object raw = body.get("transactionIds");
+        if (raw instanceof List<?> list) {
+            for (Object o : list) {
+                if (o instanceof Number n) ids.add(n.longValue());
+            }
+        }
+        manualEntryService.dismissDuplicateGroup(ids);
+        return Map.of("status", "dismissed", "count", ids.size());
     }
 
     /** Delete a transaction and its mapping(s) — used to resolve duplicates and remove mistaken manual entries. */

@@ -5,6 +5,7 @@ import com.pigpurchases.model.Transaction;
 import com.pigpurchases.model.TransactionMapping;
 import com.pigpurchases.repository.AnalysisRunRepository;
 import com.pigpurchases.repository.BudgetEntryRepository;
+import com.pigpurchases.repository.DismissedDuplicateRepository;
 import com.pigpurchases.repository.TransactionMappingRepository;
 import com.pigpurchases.repository.TransactionRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -29,6 +30,7 @@ class ManualEntryServiceTest {
     @Autowired private TransactionMappingRepository mappingRepo;
     @Autowired private AnalysisRunRepository runRepo;
     @Autowired private BudgetEntryRepository entryRepo;
+    @Autowired private DismissedDuplicateRepository dismissedRepo;
 
     private Long entryId;
 
@@ -38,6 +40,7 @@ class ManualEntryServiceTest {
         txnRepo.deleteAll();
         runRepo.deleteAll();
         entryRepo.deleteAll();
+        dismissedRepo.deleteAll();
         entryId = entryRepo.save(new BudgetEntry("Dining", new BigDecimal("100.00"))).getId();
     }
 
@@ -72,6 +75,32 @@ class ManualEntryServiceTest {
         List<List<Transaction>> groups = manualEntryService.findDuplicateGroups();
         assertEquals(1, groups.size());
         assertEquals(2, groups.get(0).size());
+    }
+
+    @Test
+    void duplicateChecksIgnoreExcludedTransactions() {
+        manualEntryService.addManual(LocalDate.of(2026, 6, 15), "Keep",
+                new BigDecimal("42.00"), "counts", entryId, false);
+        manualEntryService.addManual(LocalDate.of(2026, 6, 15), "Transfer",
+                new BigDecimal("42.00"), "not spend", null, true); // excluded
+
+        // The excluded item is ignored, so it's neither a candidate nor part of a group.
+        assertEquals(1, manualEntryService.findPotentialDuplicates(
+                LocalDate.of(2026, 6, 15), new BigDecimal("42.00")).size());
+        assertEquals(0, manualEntryService.findDuplicateGroups().size(),
+                "an excluded transaction is not a spend duplicate");
+    }
+
+    @Test
+    void dismissingAGroupStopsItBeingOffered() {
+        Transaction a = manualEntryService.addManual(LocalDate.of(2026, 6, 15), "One",
+                new BigDecimal("42.00"), "a", entryId, false);
+        Transaction b = manualEntryService.addManual(LocalDate.of(2026, 6, 15), "Two",
+                new BigDecimal("42.00"), "b", null, false);
+        assertEquals(1, manualEntryService.findDuplicateGroups().size());
+
+        manualEntryService.dismissDuplicateGroup(List.of(a.getId(), b.getId()));
+        assertEquals(0, manualEntryService.findDuplicateGroups().size(), "dismissed group is not offered again");
     }
 
     @Test

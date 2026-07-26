@@ -56,7 +56,7 @@
       .control-check { display: flex; gap: 0.5rem; align-items: center; cursor: pointer; }
       .control-check + .hint { margin-top: 0.4rem; }
       .dup-group { border: 1px solid #e6d8bd; border-radius: 8px; padding: 0.5rem 0.8rem; margin-bottom: 0.8rem; }
-      .dup-head { font-weight: bold; color: #6b3b00; margin-bottom: 0.3rem; }
+      .dup-head { font-weight: bold; color: #6b3b00; margin-bottom: 0.3rem; display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
       .stat.clickable { cursor: pointer; }
       .stat.clickable:hover { background: #faf3e8; border-color: #e0cfa4; }
       .stat.clickable .label::after { content: " ›"; color: #b57a2b; }
@@ -1701,7 +1701,10 @@
         }
         body.innerHTML = groups.map((g) => `
           <div class="dup-group">
-            <div class="dup-head">${escapeHtml(g[0].date || '')} &middot; ${formatCurrency(g[0].amount)} &middot; ${g.length} matches</div>
+            <div class="dup-head">
+              <span>${escapeHtml(g[0].date || '')} &middot; ${formatCurrency(g[0].amount)} &middot; ${g.length} matches</span>
+              <button class="secondary" data-dismiss="${g.map((r) => r.id).join(',')}">Not duplicates</button>
+            </div>
             ${g.map((r) => `
               <div class="cat-row">
                 <div class="cat-desc">
@@ -1714,6 +1717,22 @@
           </div>`).join('');
         body.querySelectorAll('[data-del]').forEach((btn) =>
           btn.addEventListener('click', () => deleteDupTxn(btn.dataset.del)));
+        body.querySelectorAll('[data-dismiss]').forEach((btn) =>
+          btn.addEventListener('click', () => dismissDup(btn.dataset.dismiss)));
+      }
+
+      async function dismissDup(idsCsv) {
+        const transactionIds = idsCsv.split(',').map(Number);
+        try {
+          const r = await fetch('/api/transactions/duplicates/dismiss', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ transactionIds })
+          });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          await renderDuplicates();
+        } catch (err) {
+          alert('Could not dismiss: ' + err.message);
+        }
       }
 
       async function deleteDupTxn(id) {
