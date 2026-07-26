@@ -46,6 +46,15 @@
       /* Remainder bar */
       .remainder-bar { display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
       .stat { flex: 1; min-width: 150px; background: #fff8e8; border: 1px solid #f0e2c6; border-radius: 12px; padding: 0.8rem 1rem; }
+      /* Spend: Monthly header controls — each section boxed, spaced off the tiles below. */
+      .month-controls { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.75rem; }
+      .control-box { border: 1px solid #e6d8bd; border-radius: 10px; background: #fffdf7; padding: 0.7rem 0.9rem; }
+      .control-box:first-child { min-width: 240px; }
+      .control-box:last-child { flex: 1; min-width: 300px; }
+      .control-label { display: block; color: #7a6753; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.4rem; }
+      .control-label .control-sub { text-transform: none; letter-spacing: 0; color: #9a8a70; }
+      .control-check { display: flex; gap: 0.5rem; align-items: center; cursor: pointer; }
+      .control-check + .hint { margin-top: 0.4rem; }
       .stat.clickable { cursor: pointer; }
       .stat.clickable:hover { background: #faf3e8; border-color: #e0cfa4; }
       .stat.clickable .label::after { content: " ›"; color: #b57a2b; }
@@ -309,14 +318,14 @@
                 No mapped months yet. Map a month on the Mapping screen, then come back here.
               </div>
               <div id="monthlyBody" style="display:none">
-                <div style="display:flex;gap:1rem;align-items:flex-end;flex-wrap:wrap;">
-                  <div class="field" style="max-width:220px;">
-                    <label for="analysisMonth">Month (by actual transaction date)</label>
+                <div class="month-controls">
+                  <div class="control-box">
+                    <label class="control-label" for="analysisMonth">Month <span class="control-sub">(by actual transaction date)</span></label>
                     <select id="analysisMonth"></select>
                   </div>
-                  <div class="field" style="max-width:340px;">
-                    <div class="label">Month status</div>
-                    <label style="display:flex;gap:0.5rem;align-items:center;cursor:pointer;">
+                  <div class="control-box">
+                    <div class="control-label">Month status</div>
+                    <label class="control-check">
                       <input type="checkbox" id="monthCompleteToggle" />
                       <span id="monthCompleteLabel">Complete (include in rolling average)</span>
                     </label>
