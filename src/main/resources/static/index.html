@@ -503,7 +503,7 @@
         <p class="hint">Every transaction in this run and its current category. Change any of them —
           changes are remembered for future months. Search narrows the list; &ldquo;Apply to
           selected&rdquo; changes many at once.</p>
-        <input id="reviewAllSearch" type="search" class="review-search" placeholder="Search description, vendor, or category…" />
+        <input id="reviewAllSearch" type="search" class="review-search" placeholder="Search description, vendor, category, or date (e.g. 05/22 or 2026-05)…" />
         <div class="parked-toolbar">
           <label class="parked-selall"><input type="checkbox" id="reviewAllSelectAll" /> Select all shown</label>
           <span id="reviewAllSelCount" class="muted">0 selected</span>
@@ -2398,7 +2398,9 @@
       function renderReviewAll() {
         const q = document.getElementById('reviewAllSearch').value.trim().toLowerCase();
         const shown = reviewAllRows.filter((r) => !q
-          || `${r.description || ''} ${r.vendor || ''} ${r.budgetEntryName || ''}`.toLowerCase().includes(q));
+          || `${r.description || ''} ${r.vendor || ''} ${r.budgetEntryName || ''} ${r.date || ''} ${formatMmDdYy(r.date)}`
+              .toLowerCase().includes(q))
+          .sort((a, b) => String(a.date || '').localeCompare(String(b.date || ''))); // chronological
         const body = document.getElementById('reviewAllBody');
         if (!shown.length) {
           body.innerHTML = '<div class="cat-row"><span class="muted">Nothing matches.</span></div>';
