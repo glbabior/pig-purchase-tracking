@@ -46,6 +46,9 @@
       /* Remainder bar */
       .remainder-bar { display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
       .stat { flex: 1; min-width: 150px; background: #fff8e8; border: 1px solid #f0e2c6; border-radius: 12px; padding: 0.8rem 1rem; }
+      .stat.clickable { cursor: pointer; }
+      .stat.clickable:hover { background: #faf3e8; border-color: #e0cfa4; }
+      .stat.clickable .label::after { content: " ›"; color: #b57a2b; }
       .stat .label { color: #7a6753; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; }
       .stat .amt { font-size: 1.3rem; font-weight: bold; color: #8a4b00; margin-top: 0.15rem; }
       .stat .amt.negative { color: #b3261e; }
@@ -1879,7 +1882,13 @@
         const data = await (await fetch(`/api/analysis/month/${encodeURIComponent(month)}`)).json();
         document.getElementById('monthStats').innerHTML =
           statTiles(data.totalBudget, data.totalActual, data.variance)
-          + (Number(data.excluded) ? statTile('Excluded (not spend)', data.excluded, false) : '');
+          + (Number(data.excluded) ? statTile('Excluded (not spend)', data.excluded, false, 'clickable', 'excludedTile') : '');
+        // The Excluded tile drills into the excluded transactions so they can be reassigned.
+        const excludedTile = document.getElementById('excludedTile');
+        if (excludedTile) {
+          excludedTile.title = 'View & reassign the excluded (not-spend) transactions';
+          excludedTile.addEventListener('click', () => openCategoryDetail(month, '__excluded__', 'Excluded (not spend)'));
+        }
         monthState = {
           categories: data.categories, totalBudget: data.totalBudget, totalActual: data.totalActual,
           totalVariance: data.variance, actualHeader: 'Spend', sort: monthState.sort,
@@ -1922,7 +1931,9 @@
           return;
         }
         const total = lines.reduce((sum, l) => sum + Number(l.amount || 0), 0);
-        const curVal = catViewedKey === 'other' ? '' : String(catViewedKey);
+        const curVal = catViewedKey === 'other' ? ''
+          : catViewedKey === '__excluded__' ? '__EXCLUDE__'
+          : String(catViewedKey);
         body.innerHTML = lines.map((l) => `
           <div class="cat-row">
             <input type="checkbox" class="cat-check" data-txn="${l.transactionId}" />
@@ -2153,8 +2164,8 @@
           + statTile('Total spend', actual, false)
           + varianceTile(variance);
       }
-      function statTile(label, amount, highlight) {
-        return `<div class="stat${highlight ? ' highlight' : ''}">
+      function statTile(label, amount, highlight, extraClass, id) {
+        return `<div class="stat${highlight ? ' highlight' : ''}${extraClass ? ' ' + extraClass : ''}"${id ? ` id="${id}"` : ''}>
           <div class="label">${escapeHtml(label)}</div>
           <div class="amt">${formatCurrency(amount)}</div></div>`;
       }

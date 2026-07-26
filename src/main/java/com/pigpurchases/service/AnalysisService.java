@@ -271,9 +271,10 @@ public class AnalysisService {
         AnalysisRun run = runRepository.findByMonth(month)
                 .filter(r -> r.getStatus() == AnalysisRun.Status.MAPPED)
                 .orElseThrow(() -> new IllegalArgumentException("No completed mapping run for " + month));
+        boolean excluded = "__excluded__".equalsIgnoreCase(categoryKey);
         boolean other = "other".equalsIgnoreCase(categoryKey);
         Long entryId = null;
-        if (!other) {
+        if (!other && !excluded) {
             try {
                 entryId = Long.valueOf(categoryKey);
             } catch (NumberFormatException ex) {
@@ -284,13 +285,20 @@ public class AnalysisService {
         Map<Long, Transaction> txnById = transactionsForRun(run);
         List<TxnLine> lines = new ArrayList<>();
         for (TransactionMapping m : mappingRepository.findByAnalysisRunId(run.getId())) {
-            if (m.getStatus() == TransactionMapping.Status.EXCLUDED) {
-                continue;
-            }
-            boolean isParked = m.getStatus() == TransactionMapping.Status.PARKED || m.getBudgetEntryId() == null;
-            boolean matches = other ? isParked : (!isParked && entryId.equals(m.getBudgetEntryId()));
-            if (!matches) {
-                continue;
+            boolean isExcluded = m.getStatus() == TransactionMapping.Status.EXCLUDED;
+            if (excluded) {
+                if (!isExcluded) {
+                    continue;
+                }
+            } else {
+                if (isExcluded) {
+                    continue;
+                }
+                boolean isParked = m.getStatus() == TransactionMapping.Status.PARKED || m.getBudgetEntryId() == null;
+                boolean matches = other ? isParked : (!isParked && entryId.equals(m.getBudgetEntryId()));
+                if (!matches) {
+                    continue;
+                }
             }
             Transaction txn = txnById.get(m.getTransactionId());
             if (txn == null) {
