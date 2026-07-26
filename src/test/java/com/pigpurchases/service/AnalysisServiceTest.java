@@ -103,7 +103,9 @@ class AnalysisServiceTest {
         assertEquals(0, new BigDecimal("100.00").compareTo(ms.totalBudget()), "monthly allowance (1200/12)");
         assertEquals(0, new BigDecimal("4.45").compareTo(ms.totalActual()), "coffee 4.10 + metro 0.35");
         assertEquals(0, new BigDecimal("95.55").compareTo(ms.variance()));
-        assertEquals(0, new BigDecimal("1380.00").compareTo(ms.excluded()), "1230 transfer + 150 payment");
+        // Net (signed), consistent with the drill-down dialog and spend math:
+        // +1230 excluded purchase minus the 150 excluded card payment (money in).
+        assertEquals(0, new BigDecimal("1080.00").compareTo(ms.excluded()), "1230 purchase - 150 payment");
 
         AnalysisService.CategoryRow coffee = ms.categories().stream()
                 .filter(c -> "Coffee Shop".equals(c.name())).findFirst().orElseThrow();

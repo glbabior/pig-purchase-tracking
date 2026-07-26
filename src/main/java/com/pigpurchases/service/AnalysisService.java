@@ -195,7 +195,10 @@ public class AnalysisService {
                 continue;
             }
             if (m.getStatus() == TransactionMapping.Status.EXCLUDED) {
-                excluded = excluded.add(txn.getAmount() != null ? txn.getAmount().abs() : BigDecimal.ZERO);
+                // Net (signed) so the tile matches the drill-down dialog and the
+                // rest of the app: money out counts positive, refunds/payments
+                // negative. Summing abs() double-counted credits as if they were spend.
+                excluded = excluded.add(signedSpend(txn));
                 continue;
             }
             BigDecimal spend = signedSpend(txn);
