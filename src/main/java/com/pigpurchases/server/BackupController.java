@@ -1,30 +1,37 @@
 package com.pigpurchases.server;
 
 import com.pigpurchases.service.BackupService;
+import com.pigpurchases.service.RestoreService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.HashMap;
 import java.util.Map;
 
 /**
  * Lets the Settings screen show the backup state (last backup, folder, retention,
- * recent files, any warning) and trigger an on-demand backup.
+ * recent files, any warning), the restore-preview state, and trigger an on-demand
+ * backup.
  */
 @RestController
 @RequestMapping("/api/backup")
 public class BackupController {
 
     private final BackupService backupService;
+    private final RestoreService restoreService;
 
-    public BackupController(BackupService backupService) {
+    public BackupController(BackupService backupService, RestoreService restoreService) {
         this.backupService = backupService;
+        this.restoreService = restoreService;
     }
 
     @GetMapping("/status")
     public Map<String, Object> status() {
-        return backupService.status();
+        Map<String, Object> m = new HashMap<>(backupService.status());
+        m.put("restore", restoreService.state());
+        return m;
     }
 
     @PostMapping("/now")

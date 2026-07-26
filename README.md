@@ -106,7 +106,27 @@ recovered (see `BackupService`).
 - **Status/trigger**: `GET /api/backup/status`, `POST /api/backup/now`; both are
   surfaced in the Settings "Database backups" panel.
 
-**Restoring a backup** (`restore.db.cmd`, or by hand):
+**Restoring a backup — in the app (preferred), with a preview step.**
+Settings → "Database backups" → **Restore…**:
+1. Pick a backup to **preview**. The app loads it into a *separate* preview
+   database and routes every screen at it (`SwitchableDataSource`), so you can
+   browse the restored data. **Your live database is not touched.** An automated
+   validation report (row counts, mapping distribution, referential-integrity
+   checks, and a diff vs the current live data) appears in the Settings panel, and
+   a banner across the app reminds you a preview is active.
+2. Traverse the app to confirm the data looks right.
+3. Back in Settings, click **Commit restore** (replaces the live db in place, after
+   saving a `restore-rollback-*.sql` snapshot first) or **Cancel** (drops the
+   preview; the live db was never modified). A crash or restart mid-preview is
+   safe — the live db is only changed on commit.
+
+Endpoints: `POST /api/restore/preview` `{file}`, `/commit`, `/cancel`, and
+`GET /api/restore/status`.
+
+> Restores target backups produced by `BackupService` (current schema). Restoring
+> a much older dump whose schema predates a column may need a manual migration.
+
+**Restoring a backup — by hand** (`restore.db.cmd`), when the app can't start:
 1. Stop the app.
 2. Run `restore.db.cmd "C:\Users\<you>\pigpurchases-backups\pigpurchases-YYYY-MM-DD.sql"`.
    It stops anything on port 8080, keeps a safety copy of the current live db

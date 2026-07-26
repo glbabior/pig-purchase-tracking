@@ -227,6 +227,10 @@
             <span id="reminderText"></span>
             <button class="reminder-go" id="reminderGoBtn">Go to Mapping</button>
           </div>
+          <div id="restoreBanner" class="reminder-banner" style="display:none;background:#e7f0ff;border-color:#8fb4e8;color:#274a7a;">
+            <span id="restoreBannerText"></span>
+            <button class="reminder-go" id="restoreBannerGoBtn">Review in Settings</button>
+          </div>
           <div class="card">
             <section id="budgetView">
               <h2 class="view-title">Budget Entries</h2>
@@ -370,9 +374,22 @@
                   <div id="backupWarning" class="run-error" style="display:none;margin:0.4rem 0;"></div>
                   <div class="modal-actions" style="justify-content:flex-start;">
                     <button class="secondary" id="backupNowBtn">Back up now</button>
+                    <button class="secondary" id="restoreBtn">Restore…</button>
                     <button class="secondary" id="backupRefreshBtn">Refresh</button>
                   </div>
                   <div id="backupList" class="hint" style="margin-top:0.5rem;"></div>
+
+                  <div id="restorePanel" style="display:none;margin-top:1rem;background:#eef4fd;border:1px solid #b8cef0;border-radius:8px;padding:0.8rem 1rem;">
+                    <div style="font-weight:bold;color:#274a7a;" id="restorePanelTitle">Previewing a backup</div>
+                    <div class="hint" id="restoreAutoValidation" style="margin-top:0.4rem;white-space:pre-wrap;"></div>
+                    <div id="restoreReviewerComment" class="hint" style="margin-top:0.4rem;white-space:pre-wrap;display:none;"></div>
+                    <div class="hint" style="margin-top:0.4rem;">Browse the app to check the restored data, then choose:</div>
+                    <div class="modal-actions" style="justify-content:flex-start;margin-top:0.5rem;">
+                      <button class="primary" id="restoreCommitBtn">Commit restore</button>
+                      <button class="secondary" id="restoreCancelBtn">Cancel</button>
+                    </div>
+                    <div id="restoreMsg" class="hint" style="margin-top:0.4rem;"></div>
+                  </div>
                 </div>
               </div>
             </section>
@@ -468,6 +485,21 @@
         <div class="modal-actions">
           <button class="secondary" id="closeReviewAllBtn">Close</button>
         </div>
+      </div>
+    </div>
+
+    <div id="restoreModal" class="modal" aria-hidden="true">
+      <div class="modal-body">
+        <h2>Restore a backup</h2>
+        <p class="hint">Pick a backup to <strong>preview</strong>. The app will show that backup's
+          data so you can look around; your live database is not changed unless you then click
+          <strong>Commit restore</strong> in Settings.</p>
+        <div id="restorePickList" class="browse-list" style="max-height:50vh;overflow:auto;"></div>
+        <div class="modal-actions">
+          <button class="primary" id="restorePreviewBtn" disabled>Preview selected</button>
+          <button class="secondary" id="restoreModalCancelBtn">Cancel</button>
+        </div>
+        <div id="restorePickMsg" class="hint"></div>
       </div>
     </div>
 
@@ -595,6 +627,13 @@
       document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
       document.getElementById('backupNowBtn').addEventListener('click', backupNow);
       document.getElementById('backupRefreshBtn').addEventListener('click', loadBackupStatus);
+      document.getElementById('restoreBtn').addEventListener('click', openRestoreModal);
+      document.getElementById('restorePreviewBtn').addEventListener('click', previewSelectedBackup);
+      document.getElementById('restoreModalCancelBtn').addEventListener('click', () => hideModalEl('restoreModal'));
+      document.getElementById('restoreCommitBtn').addEventListener('click', commitRestore);
+      document.getElementById('restoreCancelBtn').addEventListener('click', cancelRestore);
+      document.getElementById('restoreBannerGoBtn').addEventListener('click', () => showView('settings'));
+      backdropClose(document.getElementById('restoreModal'), () => hideModalEl('restoreModal'));
       document.getElementById('reminderGoBtn').addEventListener('click', () => showView('mapping'));
       document.getElementById('addSourceBtn').addEventListener('click', openAddSource);
       document.getElementById('cancelSourceBtn').addEventListener('click', closeSourceModal);
@@ -609,6 +648,17 @@
         modal.addEventListener('click', (event) => {
           if (downOnBackdrop && event.target === modal) closeFn();
         });
+      }
+
+      function showModalEl(id) {
+        const m = document.getElementById(id);
+        m.classList.add('open');
+        m.setAttribute('aria-hidden', 'false');
+      }
+      function hideModalEl(id) {
+        const m = document.getElementById(id);
+        m.classList.remove('open');
+        m.setAttribute('aria-hidden', 'true');
       }
 
       backdropClose(sourceModal, closeSourceModal);
@@ -694,6 +744,7 @@
       loadEntries();
       loadSources();
       checkNotification();
+      loadBackupStatus(); // also surfaces the restore-preview banner if one is active
 
       // ---- Settings ----------------------------------------------------------
 
@@ -798,9 +849,109 @@
             ? '<strong>' + files.length + ' file(s):</strong> ' + files.slice(0, 12).map((f) =>
                 `${escapeHtml(f.name)}${f.suspect ? ' ⚠' : ''} (${Math.round(f.bytes / 1024)} KB)`).join(' · ')
             : 'No backup files yet.';
+          renderRestoreState(s.restore || { active: false }, files);
         } catch (err) {
           info.textContent = 'Could not load backup status.';
           listEl.textContent = '';
+        }
+      }
+
+      // Drives both the in-Settings preview panel and the app-wide preview banner.
+      function renderRestoreState(restore, files) {
+        const panel = document.getElementById('restorePanel');
+        const banner = document.getElementById('restoreBanner');
+        const restoreBtn = document.getElementById('restoreBtn');
+        const backupNowBtn = document.getElementById('backupNowBtn');
+        if (restore && restore.active) {
+          document.getElementById('restorePanelTitle').textContent = 'Previewing backup: ' + (restore.file || '');
+          document.getElementById('restoreAutoValidation').textContent = restore.autoValidation || '';
+          const rc = document.getElementById('restoreReviewerComment');
+          if (restore.reviewerComment) { rc.textContent = 'Reviewer: ' + restore.reviewerComment; rc.style.display = 'block'; }
+          else { rc.style.display = 'none'; }
+          panel.style.display = 'block';
+          // Can't start another restore or take a backup mid-preview.
+          if (restoreBtn) restoreBtn.disabled = true;
+          if (backupNowBtn) backupNowBtn.disabled = true;
+          document.getElementById('restoreBannerText').innerHTML =
+            `<strong>Previewing backup ${escapeHtml(restore.file || '')}</strong> — you're browsing restored data. `
+            + `Nothing is committed yet.`;
+          banner.style.display = 'flex';
+        } else {
+          panel.style.display = 'none';
+          banner.style.display = 'none';
+          if (restoreBtn) restoreBtn.disabled = false;
+          if (backupNowBtn) backupNowBtn.disabled = false;
+        }
+      }
+
+      function openRestoreModal() {
+        const list = document.getElementById('restorePickList');
+        const msg = document.getElementById('restorePickMsg');
+        const previewBtn = document.getElementById('restorePreviewBtn');
+        previewBtn.disabled = true;
+        msg.textContent = '';
+        list.innerHTML = '<div class="hint">Loading backups…</div>';
+        showModalEl('restoreModal');
+        fetch('/api/backup/status', { cache: 'no-store' }).then((r) => r.json()).then((s) => {
+          const files = (s.files || []);
+          if (!files.length) { list.innerHTML = '<div class="hint">No backup files found.</div>'; return; }
+          list.innerHTML = files.map((f, i) => `
+            <label class="browse-row" style="display:flex;gap:0.6rem;align-items:center;cursor:pointer;">
+              <input type="radio" name="restorePick" value="${escapeHtml(f.name)}" />
+              <span>${escapeHtml(f.name)}${f.suspect ? ' ⚠ (flagged)' : ''} — ${Math.round(f.bytes / 1024)} KB</span>
+            </label>`).join('');
+          list.querySelectorAll('input[name="restorePick"]').forEach((rb) =>
+            rb.addEventListener('change', () => { previewBtn.disabled = false; }));
+        }).catch(() => { list.innerHTML = '<div class="run-error">Could not load backups.</div>'; });
+      }
+
+      async function previewSelectedBackup() {
+        const sel = document.querySelector('input[name="restorePick"]:checked');
+        if (!sel) return;
+        const btn = document.getElementById('restorePreviewBtn');
+        const msg = document.getElementById('restorePickMsg');
+        btn.disabled = true; msg.textContent = 'Loading preview…';
+        try {
+          const r = await fetch('/api/restore/preview', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file: sel.value })
+          });
+          const data = await r.json();
+          if (!r.ok) { msg.textContent = data.message || 'Could not preview that backup.'; btn.disabled = false; return; }
+          hideModalEl('restoreModal');
+          await loadBackupStatus();
+          // Land on a data screen so the previewed data is immediately visible.
+          showView('spend-monthly');
+        } catch (err) {
+          msg.textContent = 'Could not preview: ' + err.message; btn.disabled = false;
+        }
+      }
+
+      async function commitRestore() {
+        if (!confirm('Commit this restore? Your current live database will be replaced with the previewed backup (a rollback snapshot is saved first).')) return;
+        const msg = document.getElementById('restoreMsg');
+        msg.textContent = 'Committing…';
+        try {
+          const r = await fetch('/api/restore/commit', { method: 'POST' });
+          const data = await r.json();
+          if (!r.ok) { msg.textContent = data.message || 'Commit failed.'; return; }
+          msg.textContent = 'Restore committed. Reloading…';
+          setTimeout(() => location.reload(), 800);
+        } catch (err) {
+          msg.textContent = 'Commit failed: ' + err.message;
+        }
+      }
+
+      async function cancelRestore() {
+        const msg = document.getElementById('restoreMsg');
+        msg.textContent = 'Cancelling…';
+        try {
+          const r = await fetch('/api/restore/cancel', { method: 'POST' });
+          if (!r.ok) { const d = await r.json(); msg.textContent = d.message || 'Cancel failed.'; return; }
+          msg.textContent = 'Preview cancelled. Reloading…';
+          setTimeout(() => location.reload(), 600);
+        } catch (err) {
+          msg.textContent = 'Cancel failed: ' + err.message;
         }
       }
 

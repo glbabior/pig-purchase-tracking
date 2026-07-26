@@ -112,6 +112,18 @@ public class BackupService {
         return status();
     }
 
+    /**
+     * After a restore commit the live data has intentionally changed (often to an
+     * older, smaller state). Clear the change signature and the anti-clobber
+     * baseline so the next backup records the restored state normally instead of
+     * flagging it as a suspicious drop.
+     */
+    public synchronized void resetBaselineAfterRestore() {
+        lastSignature = null;
+        lastGoodRichness = -1;
+        runBackup("post-restore", true);
+    }
+
     public synchronized Map<String, Object> status() {
         Map<String, Object> m = new java.util.HashMap<>();
         m.put("enabled", enabled);
