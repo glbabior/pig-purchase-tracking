@@ -105,7 +105,9 @@ public class RestoreService {
         this.previewDataSource = preview;
         this.file = fileName;
         this.autoValidation = report;
-        this.reviewerComment = null;
+        // Auto-generated plain-English recommendation, shown as the reviewer note.
+        // A manual note posted via setReviewerComment() overrides this.
+        this.reviewerComment = buildReviewerNote(previewSummary, liveSummary);
         this.startedAt = LocalDateTime.now();
         this.active = true;
         switchableDataSource.startPreview(preview);
@@ -313,5 +315,56 @@ public class RestoreService {
 
     private boolean liveOk(Map<String, Object> live) {
         return Boolean.TRUE.equals(live.get("ok"));
+    }
+
+    /**
+     * A plain-English recommendation about committing this backup, focused on the
+     * decision the user actually faces: is it healthy, and does committing gain or
+     * lose work versus the current live data? All ASCII (compiled string).
+     */
+    private String buildReviewerNote(Map<String, Object> b, Map<String, Object> live) {
+        if (!Boolean.TRUE.equals(b.get("ok"))) {
+            return "Auto-review: this backup could not be read, so it cannot be restored. Do not commit.";
+        }
+        long orphans = (long) b.get("orphanTxn") + (long) b.get("orphanEntry");
+        long tx = (long) b.get("transactions");
+        long entries = (long) b.get("entries");
+        long bMapped = (long) b.get("manual") + (long) b.get("ai") + (long) b.get("hint");
+        long bManual = (long) b.get("manual");
+
+        if (orphans > 0) {
+            return "Auto-review: WARNING - this backup has " + orphans + " mapping(s) pointing at rows that "
+                    + "don't exist, so it is structurally inconsistent. Do not commit without investigating.";
+        }
+        if (tx == 0 || entries == 0) {
+            return "Auto-review: this backup looks empty (" + entries + " budget entries, " + tx
+                    + " transactions). Almost certainly not the state you want - only commit if you deliberately want a blank slate.";
+        }
+        if (!liveOk(live)) {
+            return "Auto-review: structurally sound (" + entries + " entries, " + bManual + " manual mappings, "
+                    + "no integrity problems). Could not compare against the current live data; confirm the figures "
+                    + "look right as you browse before committing.";
+        }
+
+        long liveMapped = (long) live.get("manual") + (long) live.get("ai") + (long) live.get("hint");
+        long liveManual = (long) live.get("manual");
+        long liveEntries = (long) live.get("entries");
+
+        StringBuilder sb = new StringBuilder("Auto-review: structurally sound, no integrity problems. ");
+        if (bMapped > liveMapped || bManual > liveManual || entries > liveEntries) {
+            sb.append("This backup is RICHER than your current live data (").append(bManual).append(" manual vs ")
+              .append(liveManual).append(", ").append(bMapped).append(" total mapped vs ").append(liveMapped)
+              .append(", ").append(entries).append(" entries vs ").append(liveEntries)
+              .append("). It looks like a more complete state - safe to commit if the data matches what you expect as you browse.");
+        } else if (bMapped < liveMapped || bManual < liveManual) {
+            sb.append("CAUTION: this backup has LESS categorization than your current live data (").append(bManual)
+              .append(" manual vs ").append(liveManual).append(", ").append(bMapped).append(" total mapped vs ")
+              .append(liveMapped).append("). Committing would discard the more recent work now in the live db - only "
+              + "proceed if you specifically want to roll back to this older state.");
+        } else {
+            sb.append("It matches your current live data closely (").append(bMapped).append(" mapped, ")
+              .append(entries).append(" entries) - committing would be roughly a no-op.");
+        }
+        return sb.toString();
     }
 }

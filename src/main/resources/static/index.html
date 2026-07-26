@@ -866,7 +866,7 @@
           document.getElementById('restorePanelTitle').textContent = 'Previewing backup: ' + (restore.file || '');
           document.getElementById('restoreAutoValidation').textContent = restore.autoValidation || '';
           const rc = document.getElementById('restoreReviewerComment');
-          if (restore.reviewerComment) { rc.textContent = 'Reviewer: ' + restore.reviewerComment; rc.style.display = 'block'; }
+          if (restore.reviewerComment) { rc.textContent = restore.reviewerComment; rc.style.display = 'block'; }
           else { rc.style.display = 'none'; }
           panel.style.display = 'block';
           // Can't start another restore or take a backup mid-preview.
