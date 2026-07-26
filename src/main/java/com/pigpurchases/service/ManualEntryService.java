@@ -15,7 +15,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Manually-entered transactions — spend that never hits a bank statement (e.g. a
@@ -84,6 +86,31 @@ public class ManualEntryService {
                 : (entryId != null ? TransactionMapping.Status.MAPPED_MANUAL : TransactionMapping.Status.PARKED);
         mappingRepository.save(new TransactionMapping(manualRun.getId(), txn.getId(), entryId, status, "Manual entry"));
         return txn;
+    }
+
+    /**
+     * Groups of transactions that share the same date and the same absolute amount
+     * — potential duplicates (e.g. the same purchase appearing in two overlapping
+     * statements, or a manual entry that also landed on a statement). Only groups
+     * with more than one transaction are returned; each group is date-ordered.
+     */
+    @Transactional(readOnly = true)
+    public List<List<Transaction>> findDuplicateGroups() {
+        Map<String, List<Transaction>> byKey = new LinkedHashMap<>();
+        for (Transaction t : transactionRepository.findAll()) {
+            if (t.getTransactionDate() == null || t.getAmount() == null) {
+                continue;
+            }
+            String key = t.getTransactionDate() + "|" + t.getAmount().abs().toPlainString();
+            byKey.computeIfAbsent(key, k -> new ArrayList<>()).add(t);
+        }
+        List<List<Transaction>> groups = new ArrayList<>();
+        for (List<Transaction> g : byKey.values()) {
+            if (g.size() > 1) {
+                groups.add(g);
+            }
+        }
+        return groups;
     }
 
     /** Remove a transaction and any mapping(s) for it. */

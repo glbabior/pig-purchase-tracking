@@ -55,6 +55,8 @@
       .control-label .control-sub { text-transform: none; letter-spacing: 0; color: #9a8a70; }
       .control-check { display: flex; gap: 0.5rem; align-items: center; cursor: pointer; }
       .control-check + .hint { margin-top: 0.4rem; }
+      .dup-group { border: 1px solid #e6d8bd; border-radius: 8px; padding: 0.5rem 0.8rem; margin-bottom: 0.8rem; }
+      .dup-head { font-weight: bold; color: #6b3b00; margin-bottom: 0.3rem; }
       .stat.clickable { cursor: pointer; }
       .stat.clickable:hover { background: #faf3e8; border-color: #e0cfa4; }
       .stat.clickable .label::after { content: " ›"; color: #b57a2b; }
@@ -311,6 +313,7 @@
                 same one can't be counted twice.</p>
               <div class="toolbar">
                 <button class="primary" id="mapTransactionsBtn">Map Transactions</button>
+                <button class="secondary" id="checkDupsBtn">Check for duplicates</button>
               </div>
               <div id="runsList"></div>
               <div id="runsEmptyState" class="empty">No mapping runs yet. Map transactions to define your first month.</div>
@@ -513,6 +516,18 @@
       </div>
     </div>
 
+    <div id="dupModal" class="modal" aria-hidden="true">
+      <div class="modal-body wide">
+        <h2>Potential duplicates</h2>
+        <p class="hint">Transactions on the same date for the same amount. Review each group and delete any that
+          are truly duplicated &mdash; or leave them if they're genuinely distinct purchases.</p>
+        <div id="dupBody"></div>
+        <div class="modal-actions">
+          <button class="secondary" id="dupCloseBtn">Close</button>
+        </div>
+      </div>
+    </div>
+
     <div id="manualModal" class="modal" aria-hidden="true">
       <div class="modal-body">
         <h2>Add manual transaction</h2>
@@ -711,6 +726,9 @@
 
       document.getElementById('mapTransactionsBtn').addEventListener('click', openRunModal);
       document.getElementById('addManualBtn').addEventListener('click', openManualModal);
+      document.getElementById('checkDupsBtn').addEventListener('click', openDuplicatesModal);
+      document.getElementById('dupCloseBtn').addEventListener('click', () => hideModalEl('dupModal'));
+      backdropClose(document.getElementById('dupModal'), () => hideModalEl('dupModal'));
       document.getElementById('manualSaveBtn').addEventListener('click', () => saveManual(false));
       document.getElementById('manualCancelBtn').addEventListener('click', () => hideModalEl('manualModal'));
       backdropClose(document.getElementById('manualModal'), () => hideModalEl('manualModal'));
@@ -1540,6 +1558,7 @@
           closeRunModal();
           alert(mapSummary(month, mapped.justMapped));
           await refreshRuns();
+          await maybePromptDuplicates();
         } catch (err) {
           error.textContent = err.message;
         } finally {
@@ -1649,6 +1668,63 @@
           + '<button class="secondary" id="manualDupCancelBtn">Keep editing</button></div>';
         document.getElementById('manualForceBtn').addEventListener('click', () => saveManual(true));
         document.getElementById('manualDupCancelBtn').addEventListener('click', () => { panel.style.display = 'none'; });
+      }
+
+      // ---- Duplicate transactions (post-map check + on-demand) ----------------
+
+      // After a mapping run, offer to resolve any potential duplicates it introduced.
+      async function maybePromptDuplicates() {
+        try {
+          const groups = await (await fetch('/api/transactions/duplicates', { cache: 'no-store' })).json();
+          if (groups.length) openDuplicatesModal();
+        } catch (err) { /* non-fatal */ }
+      }
+
+      function openDuplicatesModal() {
+        showModalEl('dupModal');
+        renderDuplicates();
+      }
+
+      async function renderDuplicates() {
+        const body = document.getElementById('dupBody');
+        body.innerHTML = '<div class="hint">Checking…</div>';
+        let groups;
+        try {
+          groups = await (await fetch('/api/transactions/duplicates', { cache: 'no-store' })).json();
+        } catch (err) {
+          body.innerHTML = '<div class="run-error">Could not load duplicates.</div>';
+          return;
+        }
+        if (!groups.length) {
+          body.innerHTML = '<div class="empty">No potential duplicates found.</div>';
+          return;
+        }
+        body.innerHTML = groups.map((g) => `
+          <div class="dup-group">
+            <div class="dup-head">${escapeHtml(g[0].date || '')} &middot; ${formatCurrency(g[0].amount)} &middot; ${g.length} matches</div>
+            ${g.map((r) => `
+              <div class="cat-row">
+                <div class="cat-desc">
+                  <div>${escapeHtml(r.vendor || r.description || '(no description)')}</div>
+                  <div class="cat-date">${escapeHtml(r.source || '')} &middot; ${escapeHtml(r.category || '')}${r.vendor && r.description && r.vendor !== r.description ? ' &middot; ' + escapeHtml(r.description) : ''}</div>
+                </div>
+                <div class="cat-amt">${formatCurrency(r.amount)}</div>
+                <button class="secondary" data-del="${r.id}">Delete</button>
+              </div>`).join('')}
+          </div>`).join('');
+        body.querySelectorAll('[data-del]').forEach((btn) =>
+          btn.addEventListener('click', () => deleteDupTxn(btn.dataset.del)));
+      }
+
+      async function deleteDupTxn(id) {
+        if (!confirm('Delete this transaction? This removes it and its category mapping.')) return;
+        try {
+          const r = await fetch(`/api/transactions/${id}`, { method: 'DELETE' });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          await renderDuplicates();
+        } catch (err) {
+          alert('Could not delete: ' + err.message);
+        }
       }
 
       async function openParked(run) {

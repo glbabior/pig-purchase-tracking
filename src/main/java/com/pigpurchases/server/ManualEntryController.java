@@ -1,8 +1,12 @@
 package com.pigpurchases.server;
 
+import com.pigpurchases.model.BudgetEntry;
 import com.pigpurchases.model.StatementSource;
 import com.pigpurchases.model.Transaction;
+import com.pigpurchases.model.TransactionMapping;
+import com.pigpurchases.repository.BudgetEntryRepository;
 import com.pigpurchases.repository.StatementSourceRepository;
+import com.pigpurchases.repository.TransactionMappingRepository;
 import com.pigpurchases.service.ManualEntryService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -21,11 +25,53 @@ public class ManualEntryController {
 
     private final ManualEntryService manualEntryService;
     private final StatementSourceRepository sourceRepository;
+    private final TransactionMappingRepository mappingRepository;
+    private final BudgetEntryRepository budgetEntryRepository;
 
     public ManualEntryController(ManualEntryService manualEntryService,
-                                 StatementSourceRepository sourceRepository) {
+                                 StatementSourceRepository sourceRepository,
+                                 TransactionMappingRepository mappingRepository,
+                                 BudgetEntryRepository budgetEntryRepository) {
         this.manualEntryService = manualEntryService;
         this.sourceRepository = sourceRepository;
+        this.mappingRepository = mappingRepository;
+        this.budgetEntryRepository = budgetEntryRepository;
+    }
+
+    /** Potential duplicate transactions (same date + same amount), grouped, with category/source for judgment. */
+    @GetMapping("/duplicates")
+    public List<List<Map<String, Object>>> duplicates() {
+        Map<Long, TransactionMapping> mappingByTxn = new java.util.HashMap<>();
+        for (TransactionMapping m : mappingRepository.findAll()) {
+            mappingByTxn.put(m.getTransactionId(), m);
+        }
+        Map<Long, String> entryName = new java.util.HashMap<>();
+        for (BudgetEntry e : budgetEntryRepository.findAll()) {
+            entryName.put(e.getId(), e.getName());
+        }
+        List<List<Map<String, Object>>> out = new ArrayList<>();
+        for (List<Transaction> group : manualEntryService.findDuplicateGroups()) {
+            List<Map<String, Object>> rows = new ArrayList<>();
+            for (Transaction t : group) {
+                Map<String, Object> row = dupView(t);
+                row.put("category", categoryLabel(mappingByTxn.get(t.getId()), entryName));
+                rows.add(row);
+            }
+            out.add(rows);
+        }
+        return out;
+    }
+
+    private String categoryLabel(TransactionMapping m, Map<Long, String> entryName) {
+        if (m == null) {
+            return "Unmapped";
+        }
+        return switch (m.getStatus()) {
+            case EXCLUDED -> "Not spend";
+            case PARKED -> "Other";
+            default -> m.getBudgetEntryId() != null
+                    ? entryName.getOrDefault(m.getBudgetEntryId(), "Other") : "Other";
+        };
     }
 
     /**
