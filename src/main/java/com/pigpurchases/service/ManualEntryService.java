@@ -176,6 +176,12 @@ public class ManualEntryService {
         transactionRepository.deleteById(transactionId);
     }
 
+    /** The hidden manual run's id, or null if no manual entries have been created yet. */
+    @Transactional(readOnly = true)
+    public Long manualRunId() {
+        return runRepository.findByMonth(MANUAL_MONTH).map(AnalysisRun::getId).orElse(null);
+    }
+
     private AnalysisRun getOrCreateManualRun() {
         return runRepository.findByMonth(MANUAL_MONTH).orElseGet(() -> {
             AnalysisRun run = new AnalysisRun(MANUAL_MONTH, LocalDateTime.now());

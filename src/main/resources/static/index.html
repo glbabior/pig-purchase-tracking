@@ -314,6 +314,7 @@
               <div class="toolbar">
                 <button class="primary" id="mapTransactionsBtn">Map Transactions</button>
                 <button class="secondary" id="checkDupsBtn">Check for duplicates</button>
+                <button class="secondary" id="reviewManualBtn">Review manual entries</button>
               </div>
               <div id="runsList"></div>
               <div id="runsEmptyState" class="empty">No mapping runs yet. Map transactions to define your first month.</div>
@@ -727,6 +728,7 @@
       document.getElementById('mapTransactionsBtn').addEventListener('click', openRunModal);
       document.getElementById('addManualBtn').addEventListener('click', openManualModal);
       document.getElementById('checkDupsBtn').addEventListener('click', openDuplicatesModal);
+      document.getElementById('reviewManualBtn').addEventListener('click', openManualReview);
       document.getElementById('dupCloseBtn').addEventListener('click', () => hideModalEl('dupModal'));
       backdropClose(document.getElementById('dupModal'), () => hideModalEl('dupModal'));
       document.getElementById('manualSaveBtn').addEventListener('click', () => saveManual(false));
@@ -2371,6 +2373,16 @@
       function entryName(id) {
         const e = entries.find((x) => x.id === id);
         return e ? e.title : '';
+      }
+
+      async function openManualReview() {
+        try {
+          const d = await (await fetch('/api/transactions/manual/run', { cache: 'no-store' })).json();
+          if (!d.runId) { alert('No manual transactions have been added yet.'); return; }
+          openReviewAll({ id: d.runId, month: 'Manual entries' });
+        } catch (err) {
+          alert('Could not load manual entries: ' + err.message);
+        }
       }
 
       async function openReviewAll(run) {

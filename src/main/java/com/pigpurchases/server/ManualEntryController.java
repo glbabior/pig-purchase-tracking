@@ -116,6 +116,14 @@ public class ManualEntryController {
         }
     }
 
+    /** The hidden run that owns manual entries, so the UI can review them. runId is null if none exist yet. */
+    @GetMapping("/manual/run")
+    public Map<String, Object> manualRun() {
+        Map<String, Object> m = new java.util.HashMap<>();
+        m.put("runId", manualEntryService.manualRunId());
+        return m;
+    }
+
     /** Flag a duplicate group as NOT a duplicate so it stops being offered. */
     @PostMapping("/duplicates/dismiss")
     public Map<String, Object> dismissDuplicate(@RequestBody Map<String, Object> body) {
