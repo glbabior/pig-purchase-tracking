@@ -470,6 +470,10 @@
           Keep it short and distinctive: e.g. <code>HPK</code> for all Harbor Park charges, <code>rivermart</code>
           for Rivermart. The most specific (longest) matching hint wins.</p>
         <div class="field">
+          <div class="label">Full description</div>
+          <div id="hintSampleDesc" class="hint" style="word-break:break-word;font-family:monospace;"></div>
+        </div>
+        <div class="field">
           <label for="hintText">Hint text</label>
           <input id="hintText" type="text" />
         </div>
@@ -1583,6 +1587,7 @@
         if (!entryValue || entryValue === '__EXCLUDE__') return; // only real budget entries
         hintTargetEntryId = entryValue;
         document.getElementById('hintEntryName').textContent = entryTitleById(entryValue);
+        document.getElementById('hintSampleDesc').textContent = sampleDescription || '(no description)';
         document.getElementById('hintText').value = suggestHint(sampleDescription);
         document.getElementById('hintMsg').textContent = '';
         showModalEl('hintModal');
