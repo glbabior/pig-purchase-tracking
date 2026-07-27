@@ -37,6 +37,10 @@
       .content-inner { max-width: 1000px; margin: 0 auto; }
       .card { background: white; border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.08); padding: 1.5rem; }
       .view-title { color: #8a4b00; margin: 0 0 1rem; }
+      /* The selected month, shown large next to the Spend: Monthly title. */
+      .view-title.with-month { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; }
+      .title-month { font-size: 2.2rem; font-weight: 800; line-height: 1; color: #c26a00; letter-spacing: 0.5px; }
+      .title-month:empty { display: none; }
 
       /* Buttons */
       button.primary { background: #8a4b00; color: white; border: none; border-radius: 999px; padding: 0.7rem 1rem; cursor: pointer; }
@@ -326,7 +330,7 @@
             </section>
 
             <section id="spendMonthlyView" style="display:none">
-              <h2 class="view-title">Spend: Monthly</h2>
+              <h2 class="view-title with-month">Spend: Monthly <span id="monthlyTitleMonth" class="title-month"></span></h2>
               <div id="monthlyEmpty" class="empty" style="display:none">
                 No mapped months yet. Map a month on the Mapping screen, then come back here.
               </div>
@@ -2168,8 +2172,19 @@
         renderAnalysisTable('rollingTableWrap', rollingState);
       }
 
+      // "2026-05" -> "May 2026" for the large title label; unknown shapes pass through.
+      function formatMonthLong(month) {
+        const m = /^(\d{4})-(\d{2})$/.exec(month || '');
+        if (!m) return month || '';
+        const names = ['January','February','March','April','May','June',
+                       'July','August','September','October','November','December'];
+        const idx = Number(m[2]) - 1;
+        return names[idx] ? `${names[idx]} ${m[1]}` : month;
+      }
+
       async function loadMonth(month) {
         currentAnalysisMonth = month;
+        document.getElementById('monthlyTitleMonth').textContent = formatMonthLong(month);
         const data = await (await fetch(`/api/analysis/month/${encodeURIComponent(month)}`)).json();
         document.getElementById('monthStats').innerHTML =
           statTiles(data.totalBudget, data.totalActual, data.variance)
