@@ -1,0 +1,474 @@
+# PigPurchases — Architecture
+
+A single-user desktop budgeting app. You point it at folders of bank/credit-card
+statement PDFs; it parses them into transactions, categorizes each transaction
+against your budget, and shows how actual spending tracks to budget per month and
+on a rolling average. It runs entirely on your machine — the only thing that ever
+leaves it is a transaction's *description and vendor text*, sent to the Claude API
+to categorize the handful of transactions the deterministic rules can't place.
+
+- **Stack:** Spring Boot 3.5.16, Java 25, Spring Data JPA / Hibernate, embedded Tomcat on `:8080`.
+- **Database:** H2 file database, one file, `ddl-auto=update` (no migration scripts).
+- **UI:** one hand-written `static/index.html` (vanilla JS, no build step) talking to a REST API.
+- **Shape:** you run `PigPurchasesApplication`, a browser tab is the whole client. No multi-user, no auth, no cloud.
+
+---
+
+## 1. Runtime topology
+
+```mermaid
+flowchart LR
+    subgraph Browser["Browser tab (the entire client)"]
+        UI["static/index.html<br/>vanilla JS + fetch()"]
+    end
+
+    subgraph JVM["Single Spring Boot process — localhost:8080"]
+        direction TB
+        C["@RestController layer<br/>/api/**"]
+        S["@Service layer<br/>business logic"]
+        R["Spring Data JPA repositories"]
+        DS["SwitchableDataSource<br/>(live ⇄ restore-preview)"]
+    end
+
+    H2[("H2 file DB<br/>~/.pigpurchases/")]
+    BK[("SQL backups<br/>~/pigpurchases-backups/")]
+    PDF["Statement PDF folders<br/>(read-only source of truth)"]
+    API["Claude API<br/>(categorization only)"]
+
+    UI -- "JSON over HTTP" --> C
+    C --> S --> R --> DS --> H2
+    S -- "parse PDFs" --> PDF
+    S -- "descriptions + vendors only" --> API
+    S -- "daily consistent dump" --> BK
+    BK -. "restore w/ preview" .-> DS
+```
+
+Two deliberate facts about this picture:
+
+- **The PDFs are the source of truth, not the DB.** Everything in the database can
+  be rebuilt by re-ingesting the folders. That's what makes the data-safety design
+  (below) a convenience rather than a single point of failure.
+- **`SwitchableDataSource` sits between JPA and H2** so a restore can be *previewed*
+  against a backup without touching the live database until you commit.
+
+---
+
+## 2. Package / layer map
+
+| Package | Role | Notable types |
+|---|---|---|
+| `parser` | Turn one issuer's PDF into `ParsedStatement`/`ParsedTransaction`. Strategy pattern. | `StatementParser` (interface), `DepositStatementParser`, `CardStatementParser`, `PropertyStatementParser`, `ExclusionRule` |
+| `model` | JPA entities — the persistent domain. | `Transaction`, `BudgetEntry`, `AnalysisRun`, `TransactionMapping`, `MerchantCategory`, … (14 total) |
+| `repository` | Spring Data JPA interfaces, one per aggregate. | `TransactionRepository`, `AnalysisRunRepository`, … |
+| `service` | All business logic. Ingest, the categorization pipeline, analysis math, AI, backup/restore. | `IngestService`, `MappingService`, `AnalysisService`, `AiCategorizationService`, `HintMatcher`, `BackupService`, `RestoreService` |
+| `server` | `@RestController`s (the `/api` surface) + `DataInitializer`. Thin — they marshal JSON and delegate. | `BudgetController`, `MappingController`, `AnalysisController`, `ManualEntryController`, `BackupController`, `RestoreController` |
+| `config` | The switchable datasource plumbing. | `DataSourceConfig`, `SwitchableDataSource` |
+
+The dependency rule is the usual one: `server` → `service` → `repository` → `model`.
+Controllers hold no logic worth testing; services are where the tests live.
+
+---
+
+## 3. The three core flows
+
+### 3a. Ingest (PDF → transactions)
+
+`IngestService.ingest(source, file)` picks the right `StatementParser` from the
+source's configured rules, parses the PDF into `ParsedTransaction`s, records a
+`StatementImport` (the batch), and persists `Transaction` rows. `ExclusionRule`s
+(per source) mark transfers/payments as `excludeFromSpend` at parse time — they're
+*kept* so every line is accounted for, but never counted as spend.
+
+### 3b. Mapping (transactions → budget categories) — the heart of the app
+
+Mapping is **per statement file**. Each `AnalysisRun` consumes exactly one
+`StatementImport` (via an `AnalysisRunSource` link) and produces one
+`TransactionMapping` per transaction. `MappingService.doMap()` runs three passes,
+cheapest first, so the expensive one only ever sees what's left:
+
+```mermaid
+flowchart TD
+    T["Each transaction in the run"] --> EX{excludeFromSpend?}
+    EX -- yes --> EXCL["EXCLUDED<br/>(parser rule; never counted)"]
+    EX -- no --> P1
+
+    P1["Pass 1 — HintMatcher<br/>deterministic substring match on<br/>entry names + explicit 'match:' hints"] --> P1Q{matched?}
+    P1Q -- yes --> MH["MAPPED_HINT"]
+    P1Q -- no --> P2
+
+    P2["Pass 2 — remembered answers<br/>MerchantCategory cache, keyed by<br/>normalized description"] --> P2Q{cache hit?}
+    P2Q -- yes --> MC["MAPPED_AI / MAPPED_MANUAL / EXCLUDED<br/>(reused for free)"]
+    P2Q -- no --> P3
+
+    P3["Pass 3 — Claude API<br/>classifies the remainder,<br/>writes answers back to the cache"] --> P3Q{confident?}
+    P3Q -- yes --> AI["MAPPED_AI (+ cache write)"]
+    P3Q -- no --> PARK["PARKED — shows as 'Other',<br/>still counts as spend"]
+```
+
+Why this shape matters:
+
+- **Pass 1 is free and deterministic.** `HintMatcher` normalizes both sides to
+  lowercase-alphanumeric, then substring-matches. Hints can be composite
+  (`MP + MAILORDER` — all parts must appear); the longest/most-specific match wins,
+  and a tie between different entries parks rather than guesses.
+- **Pass 2 is why re-runs don't re-pay.** Every answer the AI or the user ever gave
+  is stored in `merchant_categories` keyed on the normalized description. A manual
+  answer beats an AI one. This is the cache that turns one manual fix into a
+  permanent rule.
+- **Pass 3 is the only one that costs money**, and only for genuinely new merchants.
+  With no API credentials it's skipped silently and those transactions stay parked.
+- **Parked ≠ excluded.** Parked transactions still count toward spend (they're real
+  money you just haven't categorized); excluded ones are transfers that never count.
+
+Manual entry (`ManualEntryService`) and duplicate detection (with a persisted
+"not a duplicate" dismissal, `DismissedDuplicate`) feed the same transaction table.
+
+### 3c. Analysis (mappings → budget vs. actual)
+
+`AnalysisService` aggregates `TransactionMapping`s **by each transaction's actual
+`transactionDate`** (not the statement/ingest month), so a complete calendar month
+is assembled regardless of which statement file each charge arrived in. A month is
+only folded into the **rolling average** once you mark it complete (`MonthStatus`),
+so a half-loaded month can't skew the typical-month numbers.
+
+---
+
+## 4. Data safety (learned the hard way)
+
+The live DB once got reverted by OneDrive syncing the H2 file mid-session. The
+current design is built around never repeating that:
+
+- **The live DB lives outside any synced folder** — `~/.pigpurchases/`.
+- **`BackupService`** writes a consistent SQL dump to `~/pigpurchases-backups/`,
+  one file per day named by date, refreshed during the day only when data actually
+  changed, pruned to a configurable retention count. Backups live outside both
+  OneDrive and the live-db folder, so whatever can corrupt the live DB can't reach
+  the history.
+- **`RestoreService` + `SwitchableDataSource`** make restore non-destructive: a
+  chosen backup is loaded into a *preview* datasource and validated; the live DB is
+  only overwritten when you explicitly commit.
+
+---
+
+## 5. UML class diagram
+
+### 5a. Domain / persistence classes
+
+Cardinalities are the logical relationships. Note: only `Transaction → BudgetEntry`
+is a real JPA-managed association (`@ManyToOne` / FK `budget_entry_id`). Every other
+link is a **soft reference** — a plain `Long ...Id` field the application resolves,
+with no database foreign-key constraint (a consequence of `ddl-auto=update` over
+by-id fields). This is called out again in the DB section.
+
+```mermaid
+classDiagram
+    class StatementSource {
+        +Long id
+        +String name
+        +String folderPath
+        +String parserRules
+    }
+    class StatementImport {
+        +Long id
+        +Long statementSourceId
+        +LocalDate statementDate
+        +String fileName
+        +String relativePath
+        +LocalDateTime importedAt
+        +int transactionCount
+    }
+    class Transaction {
+        +Long id
+        +LocalDate transactionDate
+        +String description
+        +String vendor
+        +BigDecimal amount
+        +String month
+        +Long statementImportId
+        +Long statementSourceId
+        +String type
+        +boolean excludeFromSpend
+        +String notes
+    }
+    class BudgetEntry {
+        +Long id
+        +String name
+        +BigDecimal monthlyAllowance
+        +Integer quantity
+        +String hints
+    }
+    class AnalysisRun {
+        +Long id
+        +String month
+        +Status status
+        +LocalDateTime createdAt
+        +LocalDateTime mappedAt
+        +int mappedCount
+        +int parkedCount
+        +int excludedCount
+    }
+    class AnalysisRunSource {
+        +Long id
+        +Long analysisRunId
+        +Long statementSourceId
+        +Long statementImportId
+    }
+    class TransactionMapping {
+        +Long id
+        +Long analysisRunId
+        +Long transactionId
+        +Long budgetEntryId
+        +Status status
+        +String reason
+    }
+    class MerchantCategory {
+        +Long id
+        +String merchantKey
+        +Long budgetEntryId
+        +boolean excluded
+        +Source source
+        +String sampleDescription
+        +String reason
+        +LocalDateTime updatedAt
+    }
+    class MonthStatus {
+        +String month
+        +boolean complete
+    }
+    class DismissedDuplicate {
+        +Long id
+        +String signature
+    }
+    class AppSettings {
+        +Long id
+        +BigDecimal annualBudget
+        +int debugLogRetentionDays
+        +int notificationDayOfMonth
+        +int backupRetentionCount
+    }
+
+    class RunStatus {
+        <<enumeration>>
+        DRAFT
+        MAPPED
+    }
+    class MappingStatus {
+        <<enumeration>>
+        MAPPED_HINT
+        MAPPED_AI
+        MAPPED_MANUAL
+        PARKED
+        EXCLUDED
+    }
+    class MerchantSource {
+        <<enumeration>>
+        AI
+        MANUAL
+    }
+
+    StatementSource "1" --> "*" StatementImport : imports
+    StatementImport "1" --> "*" Transaction : contains
+    Transaction "*" --> "0..1" BudgetEntry : budget_entry_id (real FK)
+    AnalysisRun "1" --> "*" AnalysisRunSource : sources
+    AnalysisRunSource "*" --> "1" StatementImport : consumes
+    AnalysisRun "1" --> "*" TransactionMapping : produces
+    TransactionMapping "*" --> "1" Transaction : maps
+    TransactionMapping "*" --> "0..1" BudgetEntry : assigns
+    MerchantCategory "*" --> "1" BudgetEntry : remembers
+    AnalysisRun --> RunStatus
+    TransactionMapping --> MappingStatus
+    MerchantCategory --> MerchantSource
+```
+
+### 5b. Behavioral classes — parser hierarchy & service dependencies
+
+The only true inheritance hierarchy is the parser strategy; the rest is a
+service/controller dependency graph.
+
+```mermaid
+classDiagram
+    direction LR
+
+    class StatementParser {
+        <<interface>>
+        +parse(Path) ParsedStatement
+    }
+    class DepositStatementParser
+    class CardStatementParser
+    class PropertyStatementParser
+    StatementParser <|.. DepositStatementParser
+    StatementParser <|.. CardStatementParser
+    StatementParser <|.. PropertyStatementParser
+
+    class SwitchableDataSource {
+        +getConnection()
+        +startPreview(DataSource)
+        +endPreview()
+        +isPreviewing()
+    }
+    class AbstractDataSource
+    AbstractDataSource <|-- SwitchableDataSource
+
+    class IngestService
+    class MappingService
+    class HintMatcher
+    class AiCategorizationService
+    class AnalysisService
+    class ManualEntryService
+    class BackupService
+    class RestoreService
+
+    IngestService ..> StatementParser : selects & runs
+    MappingService ..> HintMatcher : pass 1
+    MappingService ..> AiCategorizationService : pass 3
+    AiCategorizationService ..> ClaudeAPI : classify
+    RestoreService ..> SwitchableDataSource : preview / commit
+    RestoreService ..> BackupService : list backups
+```
+
+---
+
+## 6. Database (ER) diagram
+
+H2 file DB, schema managed by Hibernate `ddl-auto=update`. Because most
+inter-table links are plain `Long` id fields (not JPA relationships), Hibernate
+generates **no foreign-key constraints** for them — the relationships below are
+enforced in application code, not by the database. The one real FK is
+`transactions.budget_entry_id`. Reserved-word columns are renamed
+(`run_month`, `txn_month`, `status_month`) because `month` is reserved in H2.
+
+Unique constraints that *are* enforced: `analysis_runs.run_month`,
+`merchant_categories.merchant_key`, `dismissed_duplicates.signature`,
+`analysis_run_sources (analysis_run_id, statement_source_id)`, and
+`transaction_mappings (analysis_run_id, transaction_id)`.
+
+```mermaid
+erDiagram
+    STATEMENT_SOURCES ||--o{ STATEMENT_IMPORTS : "has"
+    STATEMENT_IMPORTS ||--o{ TRANSACTIONS : "contains"
+    STATEMENT_SOURCES ||--o{ TRANSACTIONS : "denormalized"
+    BUDGET_ENTRIES ||--o{ TRANSACTIONS : "categorizes (FK)"
+    ANALYSIS_RUNS ||--o{ ANALYSIS_RUN_SOURCES : "sources"
+    STATEMENT_IMPORTS ||--o{ ANALYSIS_RUN_SOURCES : "consumed by"
+    ANALYSIS_RUNS ||--o{ TRANSACTION_MAPPINGS : "produces"
+    TRANSACTIONS ||--o{ TRANSACTION_MAPPINGS : "mapped in"
+    BUDGET_ENTRIES ||--o{ TRANSACTION_MAPPINGS : "assigned"
+    BUDGET_ENTRIES ||--o{ MERCHANT_CATEGORIES : "remembered as"
+
+    STATEMENT_SOURCES {
+        bigint id PK
+        string name
+        string folder_path
+        string parser_rules
+    }
+    STATEMENT_IMPORTS {
+        bigint id PK
+        bigint statement_source_id "soft ref"
+        date statement_date
+        string file_name
+        string relative_path
+        datetime imported_at
+        int transaction_count
+    }
+    TRANSACTIONS {
+        bigint id PK
+        date transaction_date
+        string description
+        string vendor
+        decimal amount
+        string txn_month
+        bigint statement_import_id "soft ref"
+        bigint statement_source_id "soft ref"
+        string type
+        boolean exclude_from_spend
+        bigint budget_entry_id FK
+        string notes
+    }
+    BUDGET_ENTRIES {
+        bigint id PK
+        string name
+        decimal monthly_allowance
+        int quantity
+        string hints
+    }
+    ANALYSIS_RUNS {
+        bigint id PK
+        string run_month UK "internal token, e.g. import-42"
+        string status "DRAFT | MAPPED"
+        datetime created_at
+        datetime mapped_at
+        int mapped_count
+        int parked_count
+        int excluded_count
+    }
+    ANALYSIS_RUN_SOURCES {
+        bigint id PK
+        bigint analysis_run_id "soft ref, UK w/ source"
+        bigint statement_source_id "UK w/ run"
+        bigint statement_import_id "soft ref"
+    }
+    TRANSACTION_MAPPINGS {
+        bigint id PK
+        bigint analysis_run_id "soft ref, UK w/ txn"
+        bigint transaction_id "UK w/ run"
+        bigint budget_entry_id "null = PARKED/EXCLUDED"
+        string status "MAPPED_HINT|MAPPED_AI|MAPPED_MANUAL|PARKED|EXCLUDED"
+        string reason
+    }
+    MERCHANT_CATEGORIES {
+        bigint id PK
+        string merchant_key UK "normalized description"
+        bigint budget_entry_id "soft ref"
+        boolean excluded
+        string source "AI | MANUAL"
+        string sample_description
+        string reason
+        datetime updated_at
+    }
+    MONTH_STATUS {
+        string status_month PK
+        boolean complete
+    }
+    DISMISSED_DUPLICATES {
+        bigint id PK
+        string signature UK
+    }
+    APP_SETTINGS {
+        bigint id PK "singleton, id=1"
+        decimal annual_budget
+        int debug_log_retention_days
+        int notification_day_of_month
+        int backup_retention_count
+    }
+    APP_LOG_ENTRIES {
+        bigint id PK
+        datetime created_at
+        string level "INFO | WARN | ERROR"
+        string category
+        string message
+    }
+```
+
+---
+
+## 7. Key design decisions & invariants
+
+- **Analysis groups by actual transaction date**, so a calendar month is complete
+  regardless of which statement file each charge came in on. `AnalysisRun.month`
+  is *not* a calendar month — it's an internal unique token (`import-{id}`) left
+  over from the per-file mapping model; the rolling average uses `MonthStatus`.
+- **Mapping is per statement file** — one `AnalysisRun` ⇒ one `StatementImport`.
+  "Map Transactions" maps every unmapped file; "Re-run mapping" re-runs chosen ones.
+- **Merchant answers are remembered, so the AI is only ever paid for once** per
+  merchant; manual answers outrank AI answers in that cache.
+- **Parked still counts as spend.** Uncategorized real money is never hidden from
+  the budget totals — it lands in "Other."
+- **The database is disposable; the PDFs and backups are not.** The DB stays out of
+  synced folders, backups are consistent dumps kept outside the DB folder, and
+  restore is preview-then-commit through `SwitchableDataSource`.
+- **No schema migrations.** `ddl-auto=update` only adds; new non-null columns on
+  populated tables carry `@ColumnDefault` so Hibernate can back-fill them.
+- **Local-first everywhere.** Amounts never leave the machine; only descriptions
+  and vendor strings are sent to Claude, and only for transactions no rule could place.
+```
+
