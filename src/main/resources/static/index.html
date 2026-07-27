@@ -57,6 +57,8 @@
       .control-check + .hint { margin-top: 0.4rem; }
       .dup-group { border: 1px solid #e6d8bd; border-radius: 8px; padding: 0.5rem 0.8rem; margin-bottom: 0.8rem; }
       .dup-head { font-weight: bold; color: #6b3b00; margin-bottom: 0.3rem; display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
+      .help-q { display: inline-flex; align-items: center; justify-content: center; width: 1.3rem; height: 1.3rem; border-radius: 50%; border: 1px solid #c9a66b; background: #fff8e8; color: #8a4b00; font-size: 0.8rem; font-weight: bold; cursor: pointer; vertical-align: middle; padding: 0; line-height: 1; }
+      .help-q:hover { background: #f0e2c6; }
       .stat.clickable { cursor: pointer; }
       .stat.clickable:hover { background: #faf3e8; border-color: #e0cfa4; }
       .stat.clickable .label::after { content: " ›"; color: #b57a2b; }
@@ -147,6 +149,8 @@
       /* Modal */
       .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: none; align-items: center; justify-content: center; padding: 1rem; }
       .modal.open { display: flex; }
+      /* Hint/help dialogs open from within other dialogs, so they must stack above them. */
+      #hintModal, #helpModal { z-index: 1100; }
       .modal-body { background: white; border-radius: 16px; width: min(480px, 100%); padding: 1.3rem; }
       .field { margin-top: 0.9rem; display: flex; flex-direction: column; gap: 0.35rem; }
       input, textarea { border: 1px solid #ddd; padding: 0.7rem; border-radius: 8px; font: inherit; }
@@ -458,9 +462,50 @@
       </div>
     </div>
 
+    <div id="hintModal" class="modal" aria-hidden="true">
+      <div class="modal-body">
+        <h2>Add a matching hint?</h2>
+        <p class="hint">Any <em>future</em> transaction whose description contains this text will map to
+          <strong id="hintEntryName">this category</strong> automatically — including ones you haven't seen yet.
+          Keep it short and distinctive: e.g. <code>HPK</code> for all Harbor Park charges, <code>rivermart</code>
+          for Rivermart. The most specific (longest) matching hint wins.</p>
+        <div class="field">
+          <label for="hintText">Hint text</label>
+          <input id="hintText" type="text" />
+        </div>
+        <div class="modal-actions">
+          <button class="primary" id="hintAddBtn">Add hint</button>
+          <button class="secondary" id="hintSkipBtn">Skip</button>
+        </div>
+        <div id="hintMsg" class="hint"></div>
+      </div>
+    </div>
+
+    <div id="helpModal" class="modal" aria-hidden="true">
+      <div class="modal-body">
+        <h2>How categorization is remembered</h2>
+        <div class="hint" style="line-height:1.5;">
+          <p><strong>Manual categorization is remembered.</strong> When you assign a transaction to a budget
+            entry by hand, that exact merchant description is stored, so an identical charge maps itself next time.</p>
+          <p><strong>But many merchants vary every charge.</strong> Rivermart puts a unique order code in each
+            description (<code>RIVERMART MKTPL*AB1234XY9</code>), and Harbor Park shows a different venue each visit
+            (<code>HPK PARKING</code>, <code>HPK ROSEWOOD TAVERN</code>, …). Those never repeat exactly, so the
+            remembered answer can't recognize the next one and it lands in “Other” again.</p>
+          <p><strong>Hints catch them all.</strong> A hint is any text that appears in the description. A hint
+            <code>rivermart</code> maps every Rivermart charge; <code>HPK</code> maps every Harbor Park charge — including
+            ones you've never seen. When two hints match, the longer (more specific) one wins.</p>
+          <p><strong>So:</strong> when you categorize a parked item, take the offer to add a hint — it turns one
+            fix into a rule. To apply a new hint to items already parked, use “Re-run mapping” on that statement.</p>
+        </div>
+        <div class="modal-actions">
+          <button class="secondary" id="helpCloseBtn">Got it</button>
+        </div>
+      </div>
+    </div>
+
     <div id="reviewAllModal" class="modal" aria-hidden="true">
       <div class="modal-body wide">
-        <h2 id="reviewAllTitle">Review all</h2>
+        <h2 id="reviewAllTitle">Review all <button class="help-q" id="reviewAllHelpBtn" title="How categorization is remembered">?</button></h2>
         <p class="hint">Every transaction in this run and its current category. Change any of them —
           changes are remembered for future months. Search narrows the list; &ldquo;Apply to
           selected&rdquo; changes many at once.</p>
@@ -547,7 +592,7 @@
 
     <div id="catModal" class="modal" aria-hidden="true">
       <div class="modal-body wide">
-        <h2 id="catTitle">Category</h2>
+        <h2 id="catTitle">Category <button class="help-q" id="catHelpBtn" title="How categorization is remembered">?</button></h2>
         <p class="hint">Reassign any that belong elsewhere, or mark one <strong>Not spend</strong>.
           Changes are remembered, so the same merchant follows the new choice on future runs.
           Tick several rows and use &ldquo;Apply to selected&rdquo; to move them together.</p>
@@ -704,6 +749,13 @@
       document.getElementById('addManualBtn').addEventListener('click', openManualModal);
       document.getElementById('checkDupsBtn').addEventListener('click', openDuplicatesModal);
       document.getElementById('reviewManualBtn').addEventListener('click', openManualReview);
+      document.getElementById('hintAddBtn').addEventListener('click', addHintNow);
+      document.getElementById('hintSkipBtn').addEventListener('click', () => hideModalEl('hintModal'));
+      backdropClose(document.getElementById('hintModal'), () => hideModalEl('hintModal'));
+      document.getElementById('catHelpBtn').addEventListener('click', () => showModalEl('helpModal'));
+      document.getElementById('reviewAllHelpBtn').addEventListener('click', () => showModalEl('helpModal'));
+      document.getElementById('helpCloseBtn').addEventListener('click', () => hideModalEl('helpModal'));
+      backdropClose(document.getElementById('helpModal'), () => hideModalEl('helpModal'));
       document.getElementById('dupCloseBtn').addEventListener('click', () => hideModalEl('dupModal'));
       backdropClose(document.getElementById('dupModal'), () => hideModalEl('dupModal'));
       document.getElementById('manualSaveBtn').addEventListener('click', () => saveManual(false));
@@ -1501,6 +1553,57 @@
           .join('');
       }
 
+      // ---- Hints (turn a manual categorization into a reusable rule) ----------
+
+      function entryTitleById(id) {
+        const e = entries.find((x) => String(x.id) === String(id));
+        return e ? (e.title || 'this category') : 'this category';
+      }
+
+      /** Best-effort merchant stem from a description: stop at the first token with a digit or '*'. */
+      function suggestHint(description) {
+        const words = String(description || '').trim().split(/\s+/);
+        const out = [];
+        for (const w of words) {
+          if (/[\d*]/.test(w)) break;
+          out.push(w);
+          if (out.length >= 3) break;
+        }
+        let s = out.join(' ').trim();
+        if (!s) {
+          const m = String(description || '').match(/^[^*\d]+/);
+          s = (m ? m[0] : (words[0] || '')).trim();
+        }
+        return s;
+      }
+
+      let hintTargetEntryId = null;
+      // Offer to remember a rule after categorizing to a real entry (not Other/exclude).
+      function offerHint(entryValue, sampleDescription) {
+        if (!entryValue || entryValue === '__EXCLUDE__') return; // only real budget entries
+        hintTargetEntryId = entryValue;
+        document.getElementById('hintEntryName').textContent = entryTitleById(entryValue);
+        document.getElementById('hintText').value = suggestHint(sampleDescription);
+        document.getElementById('hintMsg').textContent = '';
+        showModalEl('hintModal');
+        document.getElementById('hintText').focus();
+      }
+
+      async function addHintNow() {
+        const hint = document.getElementById('hintText').value.trim();
+        if (!hint) { document.getElementById('hintMsg').textContent = 'Enter some text, or Skip.'; return; }
+        try {
+          const r = await fetch(`/api/entries/${hintTargetEntryId}/hints`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hint })
+          });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          await loadEntries(); // so future maps and the hint list see it
+          hideModalEl('hintModal');
+        } catch (err) {
+          document.getElementById('hintMsg').textContent = 'Could not add hint: ' + err.message;
+        }
+      }
+
       // ---- Manual transaction entry ------------------------------------------
 
       function openManualModal() {
@@ -2111,13 +2214,13 @@
           : String(catViewedKey);
         body.innerHTML = lines.map((l) => `
           <div class="cat-row">
-            <input type="checkbox" class="cat-check" data-txn="${l.transactionId}" data-run="${l.analysisRunId}" />
+            <input type="checkbox" class="cat-check" data-txn="${l.transactionId}" data-run="${l.analysisRunId}" data-desc="${escapeHtml(l.description || '')}" />
             <div class="cat-desc">
               <div>${escapeHtml(l.description || '')}</div>
               <div class="cat-date">${formatMmDdYy(l.date)}${l.vendor && l.vendor !== l.description ? ' · ' + escapeHtml(l.vendor) : ''}</div>
             </div>
             <div class="cat-amt">${formatCurrency(l.amount)}</div>
-            <select data-txn="${l.transactionId}" data-run="${l.analysisRunId}">${reassignRowOptions(curVal)}</select>
+            <select data-txn="${l.transactionId}" data-run="${l.analysisRunId}" data-desc="${escapeHtml(l.description || '')}">${reassignRowOptions(curVal)}</select>
           </div>
         `).join('')
           + `<div class="cat-row"><div class="cat-desc"><strong>Total (${lines.length})</strong></div>`
@@ -2244,6 +2347,7 @@
           await putJson(`/api/analysis-runs/${reviewAllRunId}/mappings/${select.dataset.txn}`, catPayload(select.value));
           if (row) applyRowValue(row, select.value);
           refreshRuns(); // run counts changed
+          offerHint(select.value, row ? row.description : ''); // offer a rule for future ones
         } catch (err) {
           alert('Could not save that change: ' + err.message);
           if (row) select.value = currentCatValue(row);
@@ -2262,6 +2366,7 @@
           bulk.value = '';
           return;
         }
+        const sampleRow = reviewAllRows.find((r) => String(r.transactionId) === checked[0].dataset.txn);
         showBusy(`Updating ${checked.length} transaction${checked.length > 1 ? 's' : ''}…`);
         try {
           for (const cb of checked) {
@@ -2271,6 +2376,7 @@
           }
           refreshRuns();
           renderReviewAll();
+          offerHint(value, sampleRow ? sampleRow.description : ''); // offer one rule for the batch
         } catch (err) {
           alert('Could not apply to all selected: ' + err.message);
         } finally {
@@ -2305,6 +2411,7 @@
           await putJson(`/api/analysis-runs/${select.dataset.run}/mappings/${select.dataset.txn}`, catPayload(select.value));
           select.closest('.cat-row').style.opacity = stillInViewedCategory(select.value) ? '1' : '0.5';
           await loadMonth(catMonth); // refresh the table + tiles behind the modal
+          offerHint(select.value, select.dataset.desc); // offer a rule for future ones
         } catch (err) {
           alert('Could not save that change: ' + err.message);
         } finally {
@@ -2328,8 +2435,10 @@
           for (const cb of checked) {
             await putJson(`/api/analysis-runs/${cb.dataset.run}/mappings/${cb.dataset.txn}`, payload);
           }
+          const sampleDesc = checked[0].dataset.desc;
           await loadMonth(catMonth);
           await renderCategoryDetail(); // moved rows drop off the list
+          offerHint(value, sampleDesc); // offer one rule for the whole batch
         } catch (err) {
           alert('Could not apply to all selected: ' + err.message);
         } finally {

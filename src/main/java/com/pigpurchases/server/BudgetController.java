@@ -532,6 +532,41 @@ public class BudgetController {
         budgetEntryRepository.deleteById(id);
     }
 
+    /**
+     * Append a matching hint to an entry (stored as a "match: <text>" line), so any
+     * future transaction whose description contains that text maps here automatically.
+     * De-duplicates case-insensitively. Turns a one-off manual categorization into a rule.
+     */
+    @PostMapping("/entries/{id}/hints")
+    public Map<String, Object> addHint(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        String hint = body.get("hint") == null ? "" : String.valueOf(body.get("hint")).trim();
+        if (hint.isEmpty()) {
+            throw new IllegalArgumentException("Hint text is required.");
+        }
+        BudgetEntry entry = budgetEntryRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("No such budget entry: " + id));
+        String existing = entry.getHints() != null ? entry.getHints() : "";
+        boolean present = false;
+        for (String line : existing.split("\\R")) {
+            String t = line.trim();
+            if (t.toLowerCase().startsWith("match:")
+                    && t.substring("match:".length()).trim().equalsIgnoreCase(hint)) {
+                present = true;
+                break;
+            }
+        }
+        if (!present) {
+            String joined = existing.isBlank() ? "" : existing.stripTrailing() + "\n";
+            entry.setHints(joined + "match: " + hint);
+            budgetEntryRepository.save(entry);
+        }
+        Map<String, Object> response = new HashMap<>();
+        response.put("id", id);
+        response.put("added", !present);
+        response.put("hints", entry.getHints());
+        return response;
+    }
+
     @PostMapping("/summary")
     public Map<String, Object> summary(@RequestBody Map<String, Object> payload) {
         BudgetService.BudgetState state = new BudgetService.BudgetState();
