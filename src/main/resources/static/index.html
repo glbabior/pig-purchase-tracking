@@ -1922,6 +1922,13 @@
       }
 
       function showView(viewName) {
+        // Leave a clean slate: never carry an open dialog or a stuck busy overlay
+        // across a screen switch (they'd sit on top and swallow clicks).
+        document.querySelectorAll('.modal.open').forEach((m) => {
+          m.classList.remove('open');
+          m.setAttribute('aria-hidden', 'true');
+        });
+        if (typeof hideBusy === 'function') hideBusy();
         document.getElementById('budgetView').style.display = viewName === 'budget' ? 'block' : 'none';
         document.getElementById('sourcesView').style.display = viewName === 'sources' ? 'block' : 'none';
         document.getElementById('ingestView').style.display = viewName === 'ingest' ? 'block' : 'none';
