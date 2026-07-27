@@ -159,6 +159,129 @@ public class MappingService {
         return links.isEmpty() ? Optional.empty() : runRepository.findById(links.get(0).getAnalysisRunId());
     }
 
+    // ---- Per-file mapping (statement-based, month-free) ---------------------
+
+    /** Result of mapping a batch of files. */
+    public record MapBatchResult(int files, int mapped, int parked, int excluded, int aiMapped, int cached) {}
+
+    /** The internal, month-free run label for a single statement's mapping. */
+    private static String fileRunMonth(Long importId) {
+        return "import-" + importId;
+    }
+
+    /** Statement imports that haven't been mapped yet. */
+    @Transactional(readOnly = true)
+    public List<StatementImport> unmappedImports() {
+        Set<Long> consumed = consumedImportIds();
+        List<StatementImport> out = new ArrayList<>();
+        for (StatementImport imp : importRepository.findAll()) {
+            if (!consumed.contains(imp.getId())) {
+                out.add(imp);
+            }
+        }
+        return out;
+    }
+
+    /** Create a mapping run bound to a single statement import. */
+    @Transactional
+    public AnalysisRun createFileRun(Long importId) {
+        StatementImport imp = importRepository.findById(importId)
+                .orElseThrow(() -> new IllegalArgumentException("No such statement import: " + importId));
+        if (!runSourceRepository.findByStatementImportId(importId).isEmpty()) {
+            throw new IllegalArgumentException("Statement " + imp.getFileName() + " is already mapped");
+        }
+        AnalysisRun run = runRepository.save(new AnalysisRun(fileRunMonth(importId), LocalDateTime.now()));
+        runSourceRepository.save(new AnalysisRunSource(run.getId(), imp.getStatementSourceId(), importId));
+        return run;
+    }
+
+    /** Map every statement that hasn't been mapped yet — one run per file. */
+    @Transactional
+    public MapBatchResult mapUnmapped() {
+        return mapFiles(unmappedImports().stream().map(StatementImport::getId).toList());
+    }
+
+    /** Re-map the given statements (creating a run for any that aren't mapped yet). */
+    @Transactional
+    public MapBatchResult remapImports(List<Long> importIds) {
+        return mapFiles(importIds);
+    }
+
+    // Runs within the caller's transaction (mapUnmapped/remapImports are @Transactional);
+    // calls doMap directly rather than the proxied map() so the transaction actually applies.
+    private MapBatchResult mapFiles(List<Long> importIds) {
+        int files = 0, mapped = 0, parked = 0, excluded = 0, ai = 0, cached = 0;
+        for (Long importId : importIds) {
+            AnalysisRun run = consumingRun(importId).orElseGet(() -> createFileRun(importId));
+            MapResult r = doMap(run.getId());
+            files++;
+            mapped += r.mapped();
+            parked += r.parked();
+            excluded += r.excluded();
+            ai += r.aiMapped();
+            cached += r.cached();
+        }
+        return new MapBatchResult(files, mapped, parked, excluded, ai, cached);
+    }
+
+    /**
+     * One-time migration: split any legacy month-run (created before mapping went
+     * per-file) into one run per statement file, re-pointing each existing mapping
+     * to its file's run. Idempotent — runs already per-file ("import-…") or the
+     * hidden "manual" run are left untouched, so re-invoking does nothing.
+     */
+    @Transactional
+    public int migrateToPerFile() {
+        int split = 0;
+        for (AnalysisRun run : runRepository.findAll()) {
+            String m = run.getMonth();
+            if (m == null || "manual".equals(m) || m.startsWith("import-")) {
+                continue;
+            }
+            List<AnalysisRunSource> sources = runSourceRepository.findByAnalysisRunId(run.getId());
+            List<TransactionMapping> runMappings = mappingRepository.findByAnalysisRunId(run.getId());
+            for (AnalysisRunSource src : sources) {
+                Long importId = src.getStatementImportId();
+                Set<Long> importTxnIds = new HashSet<>();
+                for (Transaction t : transactionRepository.findByStatementImportId(importId)) {
+                    importTxnIds.add(t.getId());
+                }
+                AnalysisRun fileRun = new AnalysisRun(fileRunMonth(importId),
+                        run.getCreatedAt() != null ? run.getCreatedAt() : LocalDateTime.now());
+                fileRun.setStatus(AnalysisRun.Status.MAPPED);
+                fileRun.setMappedAt(run.getMappedAt());
+                fileRun = runRepository.save(fileRun);
+                // Reassign the EXISTING source link (statement_import_id is uniquely
+                // indexed, so a second row for the same import isn't allowed).
+                src.setAnalysisRunId(fileRun.getId());
+                runSourceRepository.save(src);
+
+                int mc = 0, pc = 0, ec = 0;
+                for (TransactionMapping tm : runMappings) {
+                    if (importTxnIds.contains(tm.getTransactionId())) {
+                        tm.setAnalysisRunId(fileRun.getId());
+                        mappingRepository.save(tm);
+                        switch (tm.getStatus()) {
+                            case PARKED -> pc++;
+                            case EXCLUDED -> ec++;
+                            default -> mc++;
+                        }
+                    }
+                }
+                fileRun.setMappedCount(mc);
+                fileRun.setParkedCount(pc);
+                fileRun.setExcludedCount(ec);
+                runRepository.save(fileRun);
+            }
+            // Source links were reassigned to the per-file runs; any leftover
+            // mappings (none expected) are cleaned before dropping the old run.
+            mappingRepository.deleteByAnalysisRunId(run.getId());
+            runRepository.deleteById(run.getId());
+            split++;
+        }
+        return split;
+    }
+
     // ---- Mapping -----------------------------------------------------------
 
     /**

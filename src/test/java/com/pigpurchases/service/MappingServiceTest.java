@@ -94,6 +94,24 @@ class MappingServiceTest {
     }
 
     @Test
+    void mapUnmappedMapsEveryIngestedStatementPerFile() {
+        assertEquals(2, mappingService.unmappedImports().size());
+
+        MappingService.MapBatchResult r = mappingService.mapUnmapped();
+        assertEquals(2, r.files(), "both statements mapped");
+        assertTrue(mappingService.unmappedImports().isEmpty(), "nothing left unmapped");
+        // Each statement gets its own run.
+        assertTrue(mappingService.consumingRun(juneImportId).isPresent());
+        assertTrue(mappingService.consumingRun(mayImportId).isPresent());
+        assertFalse(mappingService.consumingRun(juneImportId).get().getId()
+                .equals(mappingService.consumingRun(mayImportId).get().getId()), "distinct per-file runs");
+
+        // Re-running maps only the chosen file.
+        assertEquals(1, mappingService.remapImports(List.of(juneImportId)).files());
+        assertTrue(mappingService.unmappedImports().isEmpty(), "re-map doesn't leave anything unmapped");
+    }
+
+    @Test
     void mapsByEntryNameParksTheRestAndNeverCountsExcludedTransfers() {
         AnalysisRun run = mappingService.createRun("2026-06", select(juneImportId), false);
         MappingService.MapResult result = mappingService.map(run.getId());

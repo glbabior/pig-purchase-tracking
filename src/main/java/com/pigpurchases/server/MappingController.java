@@ -137,6 +137,78 @@ public class MappingController {
         mappingService.deleteRun(id);
     }
 
+    // ---- Per-file mapping (statement-based, month-free) ---------------------
+
+    /** Every ingested statement with its mapping status, for the Mapping screen. */
+    @GetMapping("/mapping/files")
+    public Map<String, Object> mappingFiles() {
+        List<Map<String, Object>> files = new ArrayList<>();
+        for (StatementSource source : sourceRepository.findAll()) {
+            for (StatementImport imp : importRepository.findByStatementSourceIdOrderByStatementDateDesc(source.getId())) {
+                Map<String, Object> f = new HashMap<>();
+                f.put("importId", imp.getId());
+                f.put("sourceId", source.getId());
+                f.put("sourceName", source.getName());
+                f.put("fileName", imp.getFileName());
+                f.put("statementDate", imp.getStatementDate() != null ? imp.getStatementDate().toString() : null);
+                f.put("transactionCount", imp.getTransactionCount());
+                Optional<AnalysisRun> run = mappingService.consumingRun(imp.getId());
+                if (run.isPresent()) {
+                    AnalysisRun r = run.get();
+                    f.put("mapped", true);
+                    f.put("runId", r.getId());
+                    f.put("mappedCount", r.getMappedCount());
+                    f.put("parkedCount", r.getParkedCount());
+                    f.put("excludedCount", r.getExcludedCount());
+                } else {
+                    f.put("mapped", false);
+                }
+                files.add(f);
+            }
+        }
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("files", files);
+        resp.put("unmappedCount", mappingService.unmappedImports().size());
+        resp.put("aiAvailable", aiCategorizationService.isAvailable());
+        return resp;
+    }
+
+    /** Map every statement that hasn't been mapped yet. */
+    @PostMapping("/mapping/map-unmapped")
+    public Map<String, Object> mapUnmapped() {
+        return batchResponse(mappingService.mapUnmapped());
+    }
+
+    /** Re-map the chosen statements. */
+    @PostMapping("/mapping/remap")
+    public Map<String, Object> remap(@RequestBody Map<String, Object> body) {
+        List<Long> ids = new ArrayList<>();
+        Object raw = body.get("importIds");
+        if (raw instanceof List<?> list) {
+            for (Object o : list) {
+                if (o instanceof Number n) ids.add(n.longValue());
+            }
+        }
+        return batchResponse(mappingService.remapImports(ids));
+    }
+
+    /** One-time: split any legacy month-run into per-file runs. Idempotent. */
+    @PostMapping("/mapping/migrate")
+    public Map<String, Object> migrate() {
+        return Map.of("split", mappingService.migrateToPerFile());
+    }
+
+    private Map<String, Object> batchResponse(MappingService.MapBatchResult r) {
+        Map<String, Object> m = new HashMap<>();
+        m.put("files", r.files());
+        m.put("mapped", r.mapped());
+        m.put("parked", r.parked());
+        m.put("excluded", r.excluded());
+        m.put("aiMapped", r.aiMapped());
+        m.put("cached", r.cached());
+        return m;
+    }
+
     /**
      * The run's transactions, newest first. {@code status=PARKED} gives the
      * "Other" bucket that review sessions work through.

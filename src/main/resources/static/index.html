@@ -307,17 +307,18 @@
 
             <section id="mappingView" style="display:none">
               <h2 class="view-title">Mapping</h2>
-              <p class="hint">A mapping run defines a month: pick the month, then choose one loaded
-                statement per source. A statement's own date doesn't matter &mdash; you decide which
-                statement belongs to which month. Statements already used by a run are hidden so the
-                same one can't be counted twice.</p>
+              <p class="hint">Each ingested statement is mapped on its own. &ldquo;Map Transactions&rdquo; categorizes
+                every statement that hasn't been mapped yet; transactions land in the month they actually occurred
+                (Spend screens group by transaction date). Use &ldquo;Re-run mapping&rdquo; to re-map specific files
+                &mdash; e.g. after adding a budget-entry hint.</p>
               <div class="toolbar">
                 <button class="primary" id="mapTransactionsBtn">Map Transactions</button>
+                <button class="secondary" id="reRunMappingBtn">Re-run mapping…</button>
                 <button class="secondary" id="checkDupsBtn">Check for duplicates</button>
                 <button class="secondary" id="reviewManualBtn">Review manual entries</button>
               </div>
               <div id="runsList"></div>
-              <div id="runsEmptyState" class="empty">No mapping runs yet. Map transactions to define your first month.</div>
+              <div id="runsEmptyState" class="empty">No statements ingested yet. Load statements on the Ingest screen, then map them here.</div>
             </section>
 
             <section id="spendMonthlyView" style="display:none">
@@ -517,6 +518,19 @@
       </div>
     </div>
 
+    <div id="remapModal" class="modal" aria-hidden="true">
+      <div class="modal-body">
+        <h2>Re-run mapping</h2>
+        <p class="hint">Pick the statements to re-map (e.g. after adding a budget-entry hint). Only these
+          are re-run; your manual reassignments on other files are untouched.</p>
+        <div id="remapPickBody" class="browse-list" style="max-height:50vh;overflow:auto;"></div>
+        <div class="modal-actions">
+          <button class="primary" id="remapGoBtn">Re-map selected</button>
+          <button class="secondary" id="remapCancelBtn">Cancel</button>
+        </div>
+      </div>
+    </div>
+
     <div id="dupModal" class="modal" aria-hidden="true">
       <div class="modal-body wide">
         <h2>Potential duplicates</h2>
@@ -644,7 +658,7 @@
       let editingSourceId = null;
       let ingestImports = {};
       let browseSourceId = null;
-      let runs = [];
+      let mappingFilesData = { files: [], unmappedCount: 0 };
 
       const budgetTableBody = document.getElementById('budgetTableBody');
       const emptyState = document.getElementById('emptyState');
@@ -725,7 +739,11 @@
       document.getElementById('browseCancelBtn').addEventListener('click', closeBrowseModal);
       backdropClose(browseModal, closeBrowseModal);
 
-      document.getElementById('mapTransactionsBtn').addEventListener('click', openRunModal);
+      document.getElementById('mapTransactionsBtn').addEventListener('click', mapUnmapped);
+      document.getElementById('reRunMappingBtn').addEventListener('click', openRemapPicker);
+      document.getElementById('remapGoBtn').addEventListener('click', doRemapSelected);
+      document.getElementById('remapCancelBtn').addEventListener('click', () => hideModalEl('remapModal'));
+      backdropClose(document.getElementById('remapModal'), () => hideModalEl('remapModal'));
       document.getElementById('addManualBtn').addEventListener('click', openManualModal);
       document.getElementById('checkDupsBtn').addEventListener('click', openDuplicatesModal);
       document.getElementById('reviewManualBtn').addEventListener('click', openManualReview);
@@ -1414,55 +1432,131 @@
           + `Excluded transfers: ${r.excluded}`;
       }
 
+      // Mapping is per statement file now. refreshRuns keeps its name (many callers)
+      // but loads the file list.
       async function refreshRuns() {
         try {
-          const r = await fetch('/api/analysis-runs');
-          runs = r.ok ? await r.json() : [];
+          const r = await fetch('/api/mapping/files', { cache: 'no-store' });
+          mappingFilesData = r.ok ? await r.json() : { files: [], unmappedCount: 0 };
         } catch (err) {
-          runs = [];
-          console.error('Could not load mapping runs', err);
+          mappingFilesData = { files: [], unmappedCount: 0 };
+          console.error('Could not load statements', err);
         }
         renderRuns();
-        checkNotification(); // a new run this month clears the reminder
+        checkNotification();
       }
 
       function renderRuns() {
         const container = document.getElementById('runsList');
         const empty = document.getElementById('runsEmptyState');
-        container.innerHTML = '';
-        empty.style.display = runs.length ? 'none' : 'block';
+        const files = mappingFilesData.files || [];
+        empty.style.display = files.length ? 'none' : 'block';
 
-        runs.forEach((run) => {
-          const statements = (run.sources || [])
-            .map((s) => `${escapeHtml(s.sourceName || '')}: ${formatMmDdYy(s.statementDate)}`)
-            .join(' &middot; ');
-          const parked = run.parkedCount
-            ? `<span class="badge parked">${run.parkedCount} parked</span>`
-            : '<span class="badge mapped">nothing parked</span>';
-          const card = document.createElement('div');
-          card.className = 'run-card';
-          card.innerHTML = `
-            <h3>${escapeHtml(run.month || '')}</h3>
-            <div class="muted">${statements || 'No statements recorded'}</div>
-            <div class="counts">
-              <span class="badge mapped">${run.mappedCount} mapped</span>
-              ${parked}
-              <span class="badge excluded">${run.excludedCount} excluded</span>
-            </div>
-            <div class="actions">
-              <button class="secondary" data-review-all>Review all</button>
-              ${run.parkedCount ? '<button class="secondary" data-parked>Review parked</button>' : ''}
-              <button class="secondary" data-remap>Re-run mapping</button>
-              <button class="secondary" data-delete-run>Delete</button>
-            </div>
-          `;
-          card.querySelector('[data-review-all]').addEventListener('click', () => openReviewAll(run));
-          const parkedBtn = card.querySelector('[data-parked]');
-          if (parkedBtn) parkedBtn.addEventListener('click', () => openParked(run));
-          card.querySelector('[data-remap]').addEventListener('click', () => remapRun(run.id));
-          card.querySelector('[data-delete-run]').addEventListener('click', () => deleteRun(run));
-          container.appendChild(card);
-        });
+        const pending = mappingFilesData.unmappedCount || 0;
+        document.getElementById('mapTransactionsBtn').textContent =
+          pending ? `Map Transactions (${pending} new)` : 'Map Transactions';
+
+        container.innerHTML = files.map((f) => {
+          const label = `${escapeHtml(f.sourceName || '')} · ${formatMmDdYy(f.statementDate)}`;
+          const status = f.mapped
+            ? `<span class="badge mapped">${f.mappedCount} mapped</span>`
+              + (f.parkedCount ? `<span class="badge parked">${f.parkedCount} parked</span>` : '')
+              + `<span class="badge excluded">${f.excludedCount} excluded</span>`
+            : '<span class="badge parked">not mapped yet</span>';
+          const actions = f.mapped
+            ? `<button class="secondary" data-review="${f.runId}" data-label="${label}">Review all</button>
+               <button class="secondary" data-remap-one="${f.importId}">Re-map</button>
+               <button class="secondary" data-del-run="${f.runId}">Delete</button>`
+            : `<button class="secondary" data-map-one="${f.importId}">Map this file</button>`;
+          return `<div class="run-card">
+            <h3>${label}</h3>
+            <div class="muted">${escapeHtml(f.fileName || '')} · ${f.transactionCount} txns</div>
+            <div class="counts">${status}</div>
+            <div class="actions">${actions}</div>
+          </div>`;
+        }).join('');
+
+        container.querySelectorAll('[data-review]').forEach((b) =>
+          b.addEventListener('click', () => openReviewAll({ id: Number(b.dataset.review), month: b.dataset.label })));
+        container.querySelectorAll('[data-remap-one]').forEach((b) =>
+          b.addEventListener('click', () => doRemap([Number(b.dataset.remapOne)])));
+        container.querySelectorAll('[data-map-one]').forEach((b) =>
+          b.addEventListener('click', () => doRemap([Number(b.dataset.mapOne)])));
+        container.querySelectorAll('[data-del-run]').forEach((b) =>
+          b.addEventListener('click', () => deleteRunById(Number(b.dataset.delRun))));
+      }
+
+      async function mapUnmapped() {
+        if (!(mappingFilesData.unmappedCount)) {
+          alert('All statements are already mapped. Load a new statement on the Ingest screen first.');
+          return;
+        }
+        showBusy('Mapping transactions… looking up categories can take a moment.');
+        try {
+          const r = await postJson('/api/mapping/map-unmapped', {});
+          alert(batchSummary(r, 'Mapped'));
+          await refreshRuns();
+          await maybePromptDuplicates();
+        } catch (err) {
+          alert('Could not map: ' + err.message);
+        } finally {
+          hideBusy();
+        }
+      }
+
+      async function doRemap(importIds) {
+        showBusy('Mapping transactions… looking up categories can take a moment.');
+        try {
+          const r = await postJson('/api/mapping/remap', { importIds });
+          alert(batchSummary(r, 'Mapped'));
+          await refreshRuns();
+          await maybePromptDuplicates();
+        } catch (err) {
+          alert('Could not map: ' + err.message);
+        } finally {
+          hideBusy();
+        }
+      }
+
+      function batchSummary(r, verb) {
+        const detail = [];
+        if (r.aiMapped) detail.push(`${r.aiMapped} newly by AI`);
+        if (r.cached) detail.push(`${r.cached} remembered, no API call`);
+        const byline = detail.length ? ` (${detail.join(', ')})` : '';
+        return `${verb} ${r.files} statement${r.files === 1 ? '' : 's'}\n`
+          + `Categorized: ${r.mapped}${byline}\n`
+          + `Parked as "Other": ${r.parked}\n`
+          + `Excluded transfers: ${r.excluded}`;
+      }
+
+      async function deleteRunById(runId) {
+        if (!confirm("Delete this statement's mapping? The statement becomes available to map again.")) return;
+        try {
+          const r = await fetch(`/api/analysis-runs/${runId}`, { method: 'DELETE' });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          await refreshRuns();
+        } catch (err) {
+          alert('Could not delete: ' + err.message);
+        }
+      }
+
+      function openRemapPicker() {
+        const mapped = (mappingFilesData.files || []).filter((f) => f.mapped);
+        if (!mapped.length) { alert('No mapped statements to re-map yet.'); return; }
+        document.getElementById('remapPickBody').innerHTML = mapped.map((f) => `
+          <label class="browse-row" style="display:flex;gap:0.6rem;align-items:center;cursor:pointer;">
+            <input type="checkbox" value="${f.importId}" />
+            <span>${escapeHtml(f.sourceName || '')} · ${formatMmDdYy(f.statementDate)} · ${escapeHtml(f.fileName || '')}
+              (${f.mappedCount} mapped, ${f.parkedCount} parked)</span>
+          </label>`).join('');
+        showModalEl('remapModal');
+      }
+
+      async function doRemapSelected() {
+        const ids = [...document.querySelectorAll('#remapPickBody input:checked')].map((c) => Number(c.value));
+        if (!ids.length) { alert('Tick at least one statement to re-map.'); return; }
+        hideModalEl('remapModal');
+        await doRemap(ids);
       }
 
       async function openRunModal() {
