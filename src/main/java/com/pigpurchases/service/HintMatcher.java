@@ -30,6 +30,17 @@ import java.util.Locale;
  *   match: CRESTLINE AUTO
  * </pre>
  *
+ * <p><b>Composite hints.</b> A single {@code match:} line may require several
+ * substrings at once by joining them with {@code +}; the transaction matches only
+ * when it contains all of them. This lets a short-but-ambiguous token be paired
+ * with a distinctive one, and lets two entries sharing a prefix be told apart:
+ * <pre>
+ *   match: MP + MAILORDER   matches "MP RX00042 MAILORDER80 800-555-0175 CA"
+ *   match: HPK + monthly    matches only the HPK line that is also a monthly payment
+ * </pre>
+ * A part inside a composite may be as short as {@link #MIN_COMPOSITE_PART_LENGTH}
+ * characters, since the AND of the parts is what makes it specific.
+ *
  * <p><b>Safety.</b> Two rules keep this pass conservative, because a wrong
  * automatic answer is worse than parking a transaction for review:
  * <ul>
@@ -44,29 +55,79 @@ import java.util.Locale;
  */
 public class HintMatcher {
 
-    /** Below this many normalized characters a pattern matches too much to trust. */
+    /** Below this many normalized characters an entry-name pattern matches too much to trust. */
     static final int MIN_PATTERN_LENGTH = 4;
+    /** Explicit hints are deliberate, so a shorter part is allowed (e.g. "HPK"). */
+    static final int MIN_HINT_PART_LENGTH = 3;
+    /**
+     * Inside a composite (two or more '+'-joined parts) a shorter discriminator is
+     * safe, because it is the AND of all parts that provides the specificity — e.g.
+     * "KP" alone matches too much, but "MP + MAILORDER" does not.
+     */
+    static final int MIN_COMPOSITE_PART_LENGTH = 2;
 
     private static final String EXPLICIT_HINT_PREFIX = "match:";
 
-    /** One thing to look for, and the entry it points at. */
-    record Pattern(BudgetEntry entry, String normalized, String display) {}
+    /**
+     * One rule pointing at an entry. A rule can require several substrings, all of
+     * which must appear (an AND, written with '+' in a hint: {@code hpk + monthly}).
+     * {@code weight} is the combined specificity used to pick the best match.
+     */
+    record Pattern(BudgetEntry entry, List<String> parts, int weight, String display) {
+        boolean matches(String haystack) {
+            if (parts.isEmpty()) {
+                return false;
+            }
+            for (String part : parts) {
+                if (!haystack.contains(part)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
 
     private final List<Pattern> patterns = new ArrayList<>();
 
     public HintMatcher(List<BudgetEntry> entries) {
         for (BudgetEntry entry : entries) {
-            add(entry, entry.getName());
+            addName(entry, entry.getName());
             for (String hint : explicitHints(entry.getHints())) {
-                add(entry, hint);
+                addHint(entry, hint);
             }
         }
     }
 
-    private void add(BudgetEntry entry, String raw) {
-        String normalized = normalize(raw);
+    /** The entry name as a single-substring pattern (kept at the stricter min length). */
+    private void addName(BudgetEntry entry, String name) {
+        String normalized = normalize(name);
         if (normalized.length() >= MIN_PATTERN_LENGTH) {
-            patterns.add(new Pattern(entry, normalized, raw.trim()));
+            patterns.add(new Pattern(entry, List.of(normalized), normalized.length(),
+                    name == null ? "" : name.trim()));
+        }
+    }
+
+    /** An explicit hint, split on '+' into substrings that must ALL appear. */
+    private void addHint(BudgetEntry entry, String raw) {
+        String[] pieces = raw.split("\\+");
+        int minPart = pieces.length > 1 ? MIN_COMPOSITE_PART_LENGTH : MIN_HINT_PART_LENGTH;
+
+        List<String> parts = new ArrayList<>();
+        int weight = 0;
+        for (String piece : pieces) {
+            String normalized = normalize(piece);
+            if (normalized.length() >= minPart) {
+                parts.add(normalized);
+                weight += normalized.length();
+            }
+        }
+        // A composite that collapsed to a single short part is no safer than a bare
+        // short hint would have been, so hold it to the single-part minimum.
+        if (parts.size() == 1 && parts.get(0).length() < MIN_HINT_PART_LENGTH) {
+            return;
+        }
+        if (!parts.isEmpty()) {
+            patterns.add(new Pattern(entry, parts, weight, raw.trim()));
         }
     }
 
@@ -115,13 +176,13 @@ public class HintMatcher {
         Pattern best = null;
         boolean ambiguous = false;
         for (Pattern p : patterns) {
-            if (!haystack.contains(p.normalized())) {
+            if (!p.matches(haystack)) {
                 continue;
             }
-            if (best == null || p.normalized().length() > best.normalized().length()) {
+            if (best == null || p.weight() > best.weight()) {
                 best = p;
                 ambiguous = false;
-            } else if (p.normalized().length() == best.normalized().length()
+            } else if (p.weight() == best.weight()
                     && !p.entry().getId().equals(best.entry().getId())) {
                 ambiguous = true; // equally specific, different entries -> don't guess
             }

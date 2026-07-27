@@ -84,6 +84,40 @@ class HintMatcherTest {
     }
 
     @Test
+    void shortExplicitHintsAreAllowed() {
+        // "HPK" (3 chars) is too short as an entry NAME but fine as a deliberate hint.
+        HintMatcher matcher = new HintMatcher(List.of(entry(1, "Harbor Park visit", "match: HPK")));
+        assertEquals("Harbor Park visit",
+                matcher.match("HPK ROSEWOOD TAVERN 800-555-0134 CA", "HPK ROSEWOOD TAVERN").orElseThrow().entry().getName());
+    }
+
+    @Test
+    void compositeHintRequiresAllSubstrings() {
+        // "hpk + monthly" targets only the annual-pass line, leaving other HPK charges to the broad hint.
+        HintMatcher matcher = new HintMatcher(List.of(
+                entry(1, "Harbor Park visit", "match: HPK"),
+                entry(2, "Harbor Park Pass", "match: HPK + monthly")));
+
+        // The monthly payment contains both "hpk" and "monthly" -> the composite wins (higher weight).
+        assertEquals("Harbor Park Pass",
+                matcher.match("HPK AP Monthly Payment 800-555-0157 CA", "HPK AP Monthly Payment").orElseThrow().entry().getName());
+        // A regular HPK charge lacks "monthly" -> only the broad hint matches.
+        assertEquals("Harbor Park visit",
+                matcher.match("HPK PARKING RIVERTON CA", "HPK PARKING").orElseThrow().entry().getName());
+    }
+
+    @Test
+    void compositeHintAllowsShortDiscriminatorPairedWithSpecificOne() {
+        // Real case: a mail-order pharmacy copay. "KP" alone is too short to trust,
+        // but "MP + MAILORDER" is safe because both must appear.
+        HintMatcher matcher = new HintMatcher(List.of(entry(1, "Pharmacy", "match: MP + MAILORDER")));
+        assertEquals("Pharmacy",
+                matcher.match("MP RX00042 MAILORDER80 800-555-0175 CA", "MP RX00042").orElseThrow().entry().getName());
+        // The short part on its own must not match — the specific part has to be there too.
+        assertTrue(matcher.match("MP FITNESS CENTER RIVERTON CA", "MP FITNESS").isEmpty());
+    }
+
+    @Test
     void unmatchedTransactionsAreEmpty() {
         HintMatcher matcher = new HintMatcher(List.of(entry(1, "Groceries", null)));
         assertTrue(matcher.match("SOME UNKNOWN VENDOR LLC", "SOME UNKNOWN").isEmpty());

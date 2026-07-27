@@ -476,6 +476,9 @@
         <div class="field">
           <label for="hintText">Hint text</label>
           <input id="hintText" type="text" />
+          <div class="hint" style="margin-top:0.35rem;">Combine parts with <code>+</code> to require <em>all</em> of them —
+            e.g. <code>hpk + monthly</code> matches only HPK charges that also contain “monthly”. A plain hint
+            (no <code>+</code>) is a single substring.</div>
         </div>
         <div class="modal-actions">
           <button class="primary" id="hintAddBtn">Add hint</button>
@@ -498,6 +501,11 @@
           <p><strong>Hints catch them all.</strong> A hint is any text that appears in the description. A hint
             <code>rivermart</code> maps every Rivermart charge; <code>HPK</code> maps every Harbor Park charge — including
             ones you've never seen. When two hints match, the longer (more specific) one wins.</p>
+          <p><strong>A hint can require several parts at once.</strong> Join them with <code>+</code> and a charge
+            matches only when it contains <em>all</em> of them. Use this when one word is too broad on its own:
+            <code>MP + MAILORDER</code> catches a mail-order pharmacy copay (<code>MP RX00042 MAILORDER80 …</code>)
+            without <code>KP</code> grabbing everything else, and <code>HPK + monthly</code> singles out the
+            monthly annual-pass charge while a plain <code>HPK</code> still catches the rest.</p>
           <p><strong>So:</strong> when you categorize a parked item, take the offer to add a hint — it turns one
             fix into a rule. To apply a new hint to items already parked, use “Re-run mapping” on that statement.</p>
         </div>
