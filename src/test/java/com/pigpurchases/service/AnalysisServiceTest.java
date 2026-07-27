@@ -171,9 +171,16 @@ class AnalysisServiceTest {
     }
 
     @Test
-    void categoryTrendReturnsAPointPerActualMonth() {
+    void categoryTrendPlotsOnlyCompleteMonths() {
         Long coffeeId = entryRepo.findAll().stream()
                 .filter(e -> "Coffee Shop".equals(e.getName())).findFirst().orElseThrow().getId();
+
+        // The Rolling screen (where this dialog is opened) is defined by complete
+        // months, so a month that isn't marked complete must not appear.
+        assertTrue(analysisService.categoryTrend(coffeeId.toString()).isEmpty(),
+                "no month is complete yet, so there is nothing to plot");
+
+        analysisService.setMonthComplete("2026-05", true);
 
         List<AnalysisService.CategoryTrendPoint> trend = analysisService.categoryTrend(coffeeId.toString());
         assertEquals(1, trend.size());

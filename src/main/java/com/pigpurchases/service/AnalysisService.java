@@ -176,6 +176,12 @@ public class AnalysisService {
     /**
      * One category's actual spend month by month (most recent 12), for a line
      * chart. Budget is the category's current allowance, constant across months.
+     *
+     * <p>This is reached from the Rolling screen, which is defined by the months
+     * the user marked complete, so only complete months are plotted — a partial
+     * month would misrepresent the category's spend the same way it would skew the
+     * rolling average. (The separate "Trend over time" chart deliberately shows
+     * partial months; this per-category view does not.)
      */
     @Transactional(readOnly = true)
     public List<CategoryTrendPoint> categoryTrend(String categoryKey) {
@@ -184,7 +190,9 @@ public class AnalysisService {
 
         List<BudgetEntry> entries = budgetEntryRepository.findAll();
         Map<String, MonthAgg> byMonth = aggregateByActualMonth();
+        Set<String> complete = completeMonths();
         List<String> months = new ArrayList<>(byMonth.keySet());
+        months.removeIf(m -> !complete.contains(m));
         months.sort(Comparator.naturalOrder());
         if (months.size() > 12) {
             months = months.subList(months.size() - 12, months.size());
