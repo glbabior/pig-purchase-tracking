@@ -57,28 +57,63 @@ Return your findings as text. You do not have `Write` and must not save a file �
 this is deliberate, so an auditor cannot edit what it audits. The caller persists
 your report to `.claude/reports/doc-drift.md`, overwriting the previous run.
 
-Plain text. For each finding:
+Write the report to be **read top to bottom**, not used as a reference table.
 
-```
-FINDING <n>: <one-line summary>
-  DOC:      <file>:<line> — quote the exact inaccurate text
-  CODE:     <file>:<line> — the evidence that contradicts it
-  FIX:      <the specific corrected text, or "add: ..." / "remove: ...">
-```
+### Shape of a finding
 
-**Every finding MUST carry both a DOC `file:line` and a CODE `file:line`.** If you
-cannot cite code evidence, do not report it. This rule exists so a reader can
-verify any claim without re-reading the implementation — respect it strictly.
+Number each finding. Give it a heading that states the problem as a full sentence.
+Then, in this order:
 
-Order findings most-significant first: a claim that would actively mislead a
-reader beats one that is merely incomplete.
+1. Which lines to change.
+2. What the docs say now, and the code that contradicts it.
+3. What to say instead.
+4. Why it matters — only when that is not already obvious.
 
-End with a `VERIFIED CLEAN:` section listing what you checked and found accurate,
-so the reader knows the coverage rather than guessing.
+Like this:
 
-If you notice a genuine **code** problem while auditing, report it at the very end
-under `NOTE (code issue, not doc drift):` — separately, so it is not mistaken for
-a documentation finding.
+    ### 1. The docs say there are no schema migrations. There is one.
+
+    Change `ARCHITECTURE.md:480`, `ARCHITECTURE.md:11`, and `README.md:240`.
+
+    All three say `ddl-auto=update` does every schema change. But
+    `EnumColumnMigration.java:94` runs `ALTER TABLE ... SET DATA TYPE VARCHAR`
+    at every startup.
+
+    Say instead: there are no migration *scripts*, and one programmatic migration.
+
+    **Why it matters:** as written, the docs tell the next reader there is no
+    migration mechanism. That is how the same trap gets walked into twice.
+
+### How to write it
+
+- One idea per sentence. Keep sentences short.
+- Active voice, present tense.
+- Use the same word for the same thing every time. Never vary wording for style —
+  if it is "drift" once, it is "drift" everywhere.
+- Put a `file:line` at the end of the clause it supports, not mid-sentence.
+- No `DOC` / `CODE` / `FIX` labels. No tier or severity names.
+- One finding per heading. If the same error appears in three places, that is one
+  finding with three lines to change, not three findings.
+
+These are the portable parts of ASD-STE100. Do not attempt the standard itself —
+its controlled vocabulary is built for aircraft maintenance procedures and does not
+cover software terms.
+
+### Rules that hold regardless of style
+
+**Every finding must cite the documentation `file:line` AND the code `file:line`.**
+If you cannot cite code evidence, do not report it. A reader must be able to check
+any claim without re-reading the implementation.
+
+Order findings most-significant first. A claim that would actively mislead a reader
+beats one that is merely incomplete.
+
+End with a section titled **What I checked and found correct**, listing your
+coverage, so the reader knows what was verified instead of guessing.
+
+If you find a genuine **code** problem while auditing, put it last under a section
+titled **Code issue, not documentation drift**, so it is never mistaken for a
+documentation finding.
 
 ## Calibration
 
