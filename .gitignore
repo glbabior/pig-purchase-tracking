@@ -22,3 +22,7 @@ budget-import.json
 
 # Recovered DB candidates and any local db working folder — never commit financial data
 /db/
+
+# JVM crash dumps (native OOM etc.) — noise, never source
+hs_err_pid*.log
+replay_pid*.log
