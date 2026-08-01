@@ -8,7 +8,7 @@ leaves it is a transaction's *description and vendor text*, sent to the Claude A
 to categorize the handful of transactions the deterministic rules can't place.
 
 - **Stack:** Spring Boot 3.5.16, Java 25, Spring Data JPA / Hibernate, embedded Tomcat on `:8080`.
-- **Database:** H2 file database, one file, `ddl-auto=update` (no migration scripts).
+- **Database:** H2 file database, one file, `ddl-auto=update` (no migration scripts; one programmatic column-type fix in `EnumColumnMigration` — see §7).
 - **UI:** one hand-written `static/index.html` (vanilla JS, no build step) talking to a REST API.
 - **Shape:** you run `PigPurchasesApplication`, a browser tab is the whole client. No multi-user, no auth, no cloud.
 
@@ -58,11 +58,11 @@ Two deliberate facts about this picture:
 | Package | Role | Notable types |
 |---|---|---|
 | `parser` | Turn one issuer's PDF into `ParsedStatement`/`ParsedTransaction`. Strategy pattern. | `StatementParser` (interface), `DepositStatementParser`, `CardStatementParser`, `PropertyStatementParser`, `ExclusionRule` |
-| `model` | JPA entities — the persistent domain. | `Transaction`, `BudgetEntry`, `AnalysisRun`, `TransactionMapping`, `MerchantCategory`, … (14 total) |
+| `model` | JPA entities — the persistent domain. | `Transaction`, `BudgetEntry`, `AnalysisRun`, `TransactionMapping`, `MerchantCategory`, … (12 total) |
 | `repository` | Spring Data JPA interfaces, one per aggregate. | `TransactionRepository`, `AnalysisRunRepository`, … |
 | `service` | All business logic. Ingest, the categorization pipeline, analysis math, AI, backup/restore. | `IngestService`, `MappingService`, `AnalysisService`, `AiCategorizationService`, `HintMatcher`, `BackupService`, `RestoreService` |
 | `server` | `@RestController`s (the `/api` surface) + `DataInitializer`. Thin — they marshal JSON and delegate. | `BudgetController`, `MappingController`, `AnalysisController`, `ManualEntryController`, `BackupController`, `RestoreController` |
-| `config` | The switchable datasource plumbing. | `DataSourceConfig`, `SwitchableDataSource` |
+| `config` | Switchable-datasource plumbing, plus startup schema fixes. | `DataSourceConfig`, `SwitchableDataSource`, `EnumColumnMigration` |
 
 The dependency rule is the usual one: `server` → `service` → `repository` → `model`.
 Controllers hold no logic worth testing; services are where the tests live.
@@ -156,7 +156,10 @@ current design is built around never repeating that:
   the history.
 - **`RestoreService` + `SwitchableDataSource`** make restore non-destructive: a
   chosen backup is loaded into a *preview* datasource and validated; the live DB is
-  only overwritten when you explicitly commit.
+  only overwritten when you explicitly commit. Both paths re-run
+  `EnumColumnMigration` afterwards, because a dump rebuilds the schema exactly as
+  that backup was written — so restoring one older than a status would otherwise
+  quietly reintroduce the `ENUM` constraint it was created without.
 
 ---
 
@@ -333,15 +336,18 @@ classDiagram
     MappingService ..> HintMatcher : pass 1
     MappingService ..> AiCategorizationService : pass 3
     AiCategorizationService ..> ClaudeAPI : classify
+    class EnumColumnMigration
     RestoreService ..> SwitchableDataSource : preview / commit
     RestoreService ..> BackupService : list backups
+    RestoreService ..> EnumColumnMigration : re-run after preview / commit
 ```
 
 ---
 
 ## 6. Database (ER) diagram
 
-H2 file DB, schema managed by Hibernate `ddl-auto=update`. Because most
+H2 file DB, schema managed by Hibernate `ddl-auto=update`, with the one
+programmatic exception noted in §7 (`EnumColumnMigration`). Because most
 inter-table links are plain `Long` id fields (not JPA relationships), Hibernate
 generates **no foreign-key constraints** for them — the relationships below are
 enforced in application code, not by the database. The one real FK is
@@ -477,8 +483,20 @@ erDiagram
 - **The database is disposable; the PDFs and backups are not.** The DB stays out of
   synced folders, backups are consistent dumps kept outside the DB folder, and
   restore is preview-then-commit through `SwitchableDataSource`.
-- **No schema migrations.** `ddl-auto=update` only adds; new non-null columns on
-  populated tables carry `@ColumnDefault` so Hibernate can back-fill them.
+- **One programmatic migration, no migration scripts.** `ddl-auto=update` only
+  adds, so new non-null columns on populated tables carry `@ColumnDefault` for
+  Hibernate to back-fill. The one thing it cannot do is *widen* an existing column,
+  which is why `EnumColumnMigration` converts the `@Enumerated(STRING)` columns
+  from H2's native `ENUM(...)` to `VARCHAR` at startup — idempotent, best-effort,
+  logged rather than thrown. That is what lets a new constant such as
+  `EXCLUDED_ONCE` be stored on a database created before it existed. Its column
+  list is verified against the entities by test, because a missing column is
+  invisible until the day someone adds a constant to it.
+- **A one-off exclusion survives a re-map.** `EXCLUDED_ONCE` deliberately writes no
+  `merchant_categories` rule, so it is the one manual decision `doMap` cannot
+  rebuild from the cache; it snapshots those rows before deleting and re-applies
+  them ahead of every pass. `TransactionMapping.countsAsSpend()` is the single test
+  for "is this spend" — callers never compare statuses themselves.
 - **Local-first everywhere.** Amounts never leave the machine; only descriptions
   and vendor strings are sent to Claude, and only for transactions no rule could place.
 ```

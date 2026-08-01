@@ -238,7 +238,10 @@ rebuilt by re-ingesting the statement folders.
 project directory under OneDrive, which synced the live file and once restored an
 older version over it, losing a session's work. Never point the datasource at a
 OneDrive / Dropbox / iCloud path. Schema is created and evolved by Hibernate
-`ddl-auto=update`; there are no migration scripts.
+`ddl-auto=update`; there are no migration scripts. The one exception is
+`EnumColumnMigration`, which runs at startup and converts the STRING-enum columns
+from H2's native `ENUM(...)` type to `VARCHAR`, so a newly added enum constant can
+be stored on a database created before it existed.
 
 **Backups**: `${user.home}/pigpurchases-backups/` — outside OneDrive *and* outside
 the live-db folder, so whatever can revert or corrupt the live db can't reach the
@@ -313,7 +316,7 @@ unresolved transactions stay in "Other".
 
 ## Current status
 
-_Code-verified 2026-07-29. Runtime behavior against real statements was last
+_Code-verified 2026-08-01. Runtime behavior against real statements was last
 checked 2026-07-22._
 
 ### Working
@@ -383,7 +386,7 @@ checked 2026-07-22._
 
 ## API reference
 
-Served by five controllers on `localhost:8080`.
+Served by eight controllers on `localhost:8080`.
 
 **Budget entries** — `GET|POST /api/entries`, `PUT|DELETE /api/entries/{id}`,
 `POST /api/entries/{id}/hints` (append a `match:` line, idempotent)
@@ -444,7 +447,8 @@ PigPurchases/
 ├── src/main/java/com/pigpurchases/
 │   ├── PigPurchasesApplication.java   Spring Boot entry (root package, so
 │   │                                  component/entity/repository scan works)
-│   ├── config/     SwitchableDataSource + DataSourceConfig (restore preview)
+│   ├── config/     SwitchableDataSource + DataSourceConfig (restore preview),
+│   │               EnumColumnMigration (ENUM → VARCHAR at startup)
 │   ├── model/      JPA entities: BudgetEntry, Transaction, StatementSource,
 │   │               StatementImport, AnalysisRun, AnalysisRunSource,
 │   │               TransactionMapping, MerchantCategory, MonthStatus,
@@ -463,6 +467,7 @@ PigPurchases/
 │   └── application.properties     H2, backups, DevTools, AI settings
 ├── src/test/java/com/pigpurchases/
 │   ├── TestPdfs.java              generates PDFs so tests need no real statements
+│   ├── config/                    EnumColumnMigration (ENUM → VARCHAR) tests
 │   ├── parser/                    portable parser tests + *ValidationTest
 │   ├── service/                   mapping, analysis, ingest, AI, manual entry
 │   └── server/                    controller tests
