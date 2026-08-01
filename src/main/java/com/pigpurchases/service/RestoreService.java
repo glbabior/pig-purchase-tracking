@@ -1,5 +1,6 @@
 package com.pigpurchases.service;
 
+import com.pigpurchases.config.EnumColumnMigration;
 import com.pigpurchases.config.SwitchableDataSource;
 import com.zaxxer.hikari.HikariDataSource;
 import org.slf4j.Logger;
@@ -41,6 +42,7 @@ public class RestoreService {
 
     private final SwitchableDataSource switchableDataSource;
     private final BackupService backupService;
+    private final EnumColumnMigration enumColumnMigration;
 
     @Value("${pigpurchases.backup.dir:${user.home}/pigpurchases-backups}")
     private String backupDir;
@@ -57,9 +59,11 @@ public class RestoreService {
     private volatile LocalDateTime startedAt;
     private volatile HikariDataSource previewDataSource;
 
-    public RestoreService(SwitchableDataSource switchableDataSource, BackupService backupService) {
+    public RestoreService(SwitchableDataSource switchableDataSource, BackupService backupService,
+                          EnumColumnMigration enumColumnMigration) {
         this.switchableDataSource = switchableDataSource;
         this.backupService = backupService;
+        this.enumColumnMigration = enumColumnMigration;
     }
 
     public synchronized Map<String, Object> state() {
@@ -93,6 +97,12 @@ public class RestoreService {
             try (Connection c = preview.getConnection(); Statement st = c.createStatement()) {
                 st.execute("RUNSCRIPT FROM '" + sqlPath(backup) + "'");
             }
+            // The dump rebuilt the schema exactly as that backup was written, so an old
+            // enough one brings back an ENUM column that can't hold a newer status. The
+            // preview is meant to be traversed, and every screen is writable while it is
+            // active, so widen here too — this database is by definition the one with the
+            // oldest schema in play.
+            enumColumnMigration.migrate(preview);
         } catch (Exception e) {
             if (preview != null) preview.close();
             throw new IllegalStateException("Could not load backup '" + fileName + "': " + e.getMessage(), e);
@@ -148,6 +158,11 @@ public class RestoreService {
             clearPreview();
             throw new IllegalStateException("Restore commit failed; live database was rolled back. Details: " + e.getMessage(), e);
         }
+
+        // The dump just recreated the schema as it was when that backup was taken, so
+        // a backup predating a status would bring back the ENUM column that can't hold
+        // it. Re-widen before anything writes.
+        enumColumnMigration.migrate(live);
 
         String restored = file;
         clearPreview();
@@ -251,7 +266,8 @@ public class RestoreService {
             m.put("ai", scalar(c, "SELECT COUNT(*) FROM transaction_mappings WHERE status='MAPPED_AI'"));
             m.put("hint", scalar(c, "SELECT COUNT(*) FROM transaction_mappings WHERE status='MAPPED_HINT'"));
             m.put("parked", scalar(c, "SELECT COUNT(*) FROM transaction_mappings WHERE status='PARKED'"));
-            m.put("excluded", scalar(c, "SELECT COUNT(*) FROM transaction_mappings WHERE status='EXCLUDED'"));
+            m.put("excluded", scalar(c,
+                    "SELECT COUNT(*) FROM transaction_mappings WHERE status IN ('EXCLUDED','EXCLUDED_ONCE')"));
             // Referential integrity: mappings pointing at rows that don't exist.
             m.put("orphanTxn", scalar(c,
                     "SELECT COUNT(*) FROM transaction_mappings m WHERE NOT EXISTS "
