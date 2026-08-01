@@ -26,3 +26,7 @@ budget-import.json
 # JVM crash dumps (native OOM etc.) — noise, never source
 hs_err_pid*.log
 replay_pid*.log
+
+# Subagent reports — overwritten each run, superseded by the next one.
+# The agent DEFINITIONS in .claude/agents/ are project config and DO get committed.
+.claude/reports/
