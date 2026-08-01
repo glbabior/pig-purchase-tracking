@@ -46,12 +46,21 @@ public class EnumColumnMigration implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(EnumColumnMigration.class);
 
     /** table, column, width — every STRING-enum column in the schema. */
-    private record EnumColumn(String table, String column, int width) {}
+    record EnumColumn(String table, String column, int width) {}
 
-    private static final List<EnumColumn> COLUMNS = List.of(
+    /**
+     * Every {@code @Enumerated(EnumType.STRING)} column. This list must stay
+     * complete: a column missing from it keeps H2's native {@code ENUM} type and
+     * so still carries the failure this class exists to remove. {@code
+     * EnumColumnMigrationTest} reflects over the model package and fails if a
+     * STRING-enum field has no entry here, because the omission is invisible
+     * until the day someone adds a constant.
+     */
+    static final List<EnumColumn> COLUMNS = List.of(
             new EnumColumn("TRANSACTION_MAPPINGS", "STATUS", 32),
             new EnumColumn("ANALYSIS_RUNS", "STATUS", 32),
-            new EnumColumn("MERCHANT_CATEGORIES", "SOURCE", 32));
+            new EnumColumn("MERCHANT_CATEGORIES", "SOURCE", 32),
+            new EnumColumn("APP_LOG_ENTRIES", "LEVEL", 32));
 
     private final DataSource dataSource;
 

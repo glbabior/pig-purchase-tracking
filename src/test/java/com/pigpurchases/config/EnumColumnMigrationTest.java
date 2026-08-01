@@ -1,14 +1,24 @@
 package com.pigpurchases.config;
 
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Table;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.boot.DefaultApplicationArguments;
+import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
+import org.springframework.core.type.filter.AnnotationTypeFilter;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 import javax.sql.DataSource;
+import java.lang.reflect.Field;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -91,9 +101,62 @@ class EnumColumnMigrationTest {
 
         EnumColumnMigration migration = new EnumColumnMigration(ds);
         migration.run(new DefaultApplicationArguments());
-        // The other two tables don't exist here at all, and the first is already done:
+        // The other tables don't exist here at all, and the first is already done:
         // a second pass must be a no-op rather than an error.
         assertDoesNotThrow(() -> migration.run(new DefaultApplicationArguments()));
         assertTrue(typeOf(ds, "TRANSACTION_MAPPINGS", "STATUS").toUpperCase().contains("CHAR"));
+    }
+
+    /**
+     * The COLUMNS list is a hand-maintained copy of something the entities already
+     * know, so it drifts silently: a STRING enum added to a new entity keeps H2's
+     * native ENUM type, and nothing complains until someone adds a constant to it
+     * months later. That is not hypothetical — {@code AppLogEntry.level} was missed
+     * when this class was written.
+     *
+     * <p>So derive the truth from the entities instead of trusting the comment.
+     */
+    @Test
+    void everyStringEnumColumnInTheModelIsListed() throws Exception {
+        ClassPathScanningCandidateComponentProvider scanner =
+                new ClassPathScanningCandidateComponentProvider(false);
+        scanner.addIncludeFilter(new AnnotationTypeFilter(Entity.class));
+
+        List<String> missing = new ArrayList<>();
+        int checked = 0;
+        for (BeanDefinition bean : scanner.findCandidateComponents("com.pigpurchases.model")) {
+            Class<?> entity = Class.forName(bean.getBeanClassName());
+            Table table = entity.getAnnotation(Table.class);
+            String tableName = table != null && !table.name().isEmpty()
+                    ? table.name() : entity.getSimpleName();
+
+            for (Field field : entity.getDeclaredFields()) {
+                Enumerated enumerated = field.getAnnotation(Enumerated.class);
+                if (enumerated == null || enumerated.value() != EnumType.STRING) {
+                    continue;
+                }
+                checked++;
+                String columnName = toSnakeCase(field.getName());
+                boolean listed = EnumColumnMigration.COLUMNS.stream()
+                        .anyMatch(c -> c.table().equalsIgnoreCase(tableName)
+                                && c.column().equalsIgnoreCase(columnName));
+                if (!listed) {
+                    missing.add(tableName.toUpperCase() + "." + columnName.toUpperCase()
+                            + "  (" + entity.getSimpleName() + "." + field.getName() + ")");
+                }
+            }
+        }
+
+        assertTrue(checked > 0, "found no STRING enum columns at all — the scan is broken, "
+                + "so this test would pass no matter what");
+        assertTrue(missing.isEmpty(),
+                "EnumColumnMigration.COLUMNS is missing " + missing.size() + " STRING enum column(s): "
+                        + missing + ". Each one keeps H2's native ENUM type, so adding a constant "
+                        + "to that enum will fail on an existing database.");
+    }
+
+    /** {@code notesLevel} -> {@code notes_level}, matching Hibernate's implicit naming. */
+    private static String toSnakeCase(String fieldName) {
+        return fieldName.replaceAll("([a-z0-9])([A-Z])", "$1_$2").toLowerCase();
     }
 }
