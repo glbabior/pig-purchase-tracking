@@ -16,11 +16,30 @@ public class TransactionMapping {
 
     /**
      * MAPPED_HINT/AI/MANUAL carry a budget entry. PARKED means categorization
-     * failed — it shows as "Other" and still counts as spend. EXCLUDED means the
-     * source's parser rules flagged it as a transfer: recorded for completeness,
-     * never counted, never categorized.
+     * failed — it shows as "Other" and still counts as spend.
+     *
+     * <p>Two statuses mean "not spend", and the difference is whether a rule was
+     * created:
+     * <ul>
+     *   <li>{@code EXCLUDED} — a <b>standing</b> exclusion. Either the source's
+     *       parser rules flagged it as a transfer, or the user excluded the
+     *       merchant and that decision was remembered in {@code merchant_categories},
+     *       so every future charge from that merchant is excluded too.</li>
+     *   <li>{@code EXCLUDED_ONCE} — a <b>one-off</b> exclusion of this single
+     *       transaction, deliberately creating no rule. For spend that is genuinely
+     *       a one-time exception (a trip paid for with gift money) where the same
+     *       merchant should still count normally next month.</li>
+     * </ul>
+     * Both are recorded for completeness and neither counts toward spend.
      */
-    public enum Status { MAPPED_HINT, MAPPED_AI, MAPPED_MANUAL, PARKED, EXCLUDED }
+    public enum Status {
+        MAPPED_HINT, MAPPED_AI, MAPPED_MANUAL, PARKED, EXCLUDED, EXCLUDED_ONCE;
+
+        /** True for both flavours of "not spend", standing and one-off. */
+        public boolean isExcluded() {
+            return this == EXCLUDED || this == EXCLUDED_ONCE;
+        }
+    }
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -28,7 +47,7 @@ public class TransactionMapping {
 
     private Long analysisRunId;
     private Long transactionId;
-    private Long budgetEntryId; // null for PARKED and EXCLUDED
+    private Long budgetEntryId; // null for PARKED and both EXCLUDED flavours
 
     @Enumerated(EnumType.STRING)
     private Status status;
@@ -48,9 +67,17 @@ public class TransactionMapping {
         this.reason = reason;
     }
 
-    /** True when this row represents money that counts toward the month's spend. */
+    /**
+     * True when this row represents money that counts toward the month's spend.
+     *
+     * <p>This is the one place the question is answered, so callers ask it here
+     * rather than testing the status themselves. A null status — which application
+     * code never writes, but a hand-edited or truncated database could hold —
+     * counts as spend, on the principle that unattributed money is still real money
+     * and should never silently vanish from a total.
+     */
     public boolean countsAsSpend() {
-        return status != Status.EXCLUDED;
+        return status == null || !status.isExcluded();
     }
 
     public Long getId() { return id; }

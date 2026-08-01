@@ -72,9 +72,11 @@ public class AnalysisService {
     /** One month's actual (and constant budget) for a single category, for its trend line. */
     public record CategoryTrendPoint(String month, BigDecimal actual, BigDecimal budget) {}
 
-    /** One transaction behind a category's total, for the click-through detail (and reassigning it). */
+    /** One transaction behind a category's total, for the click-through detail (and reassigning it).
+     *  {@code status} is the mapping status, so the detail list can tell a standing
+     *  exclusion apart from a one-off one rather than showing both the same way. */
     public record TxnLine(Long transactionId, Long analysisRunId, String date, String description,
-                          String vendor, BigDecimal amount, String type) {}
+                          String vendor, BigDecimal amount, String type, String status) {}
 
     /** A calendar month that has mapped transactions, with its completeness state. */
     public record MonthInfo(String month, boolean complete, boolean suggested, int unmapped) {}
@@ -225,7 +227,7 @@ public class AnalysisService {
             if (txn == null || txn.getTransactionDate() == null || !month.equals(yyyymm(txn.getTransactionDate()))) {
                 continue;
             }
-            boolean isExcluded = m.getStatus() == TransactionMapping.Status.EXCLUDED;
+            boolean isExcluded = !m.countsAsSpend();
             if (excluded) {
                 if (!isExcluded) continue;
             } else {
@@ -236,7 +238,8 @@ public class AnalysisService {
             }
             lines.add(new TxnLine(txn.getId(), m.getAnalysisRunId(),
                     txn.getTransactionDate().toString(),
-                    txn.getDescription(), txn.getVendor(), round(signedSpend(txn)), txn.getType()));
+                    txn.getDescription(), txn.getVendor(), round(signedSpend(txn)), txn.getType(),
+                    m.getStatus().name()));
         }
         lines.sort(Comparator.comparing(l -> l.date() == null ? "" : l.date()));
         return lines;
@@ -264,7 +267,7 @@ public class AnalysisService {
             }
             MonthAgg agg = byMonth.computeIfAbsent(yyyymm(txn.getTransactionDate()), k -> new MonthAgg());
             BigDecimal spend = signedSpend(txn);
-            if (m.getStatus() == TransactionMapping.Status.EXCLUDED) {
+            if (!m.countsAsSpend()) {
                 agg.excluded = agg.excluded.add(spend);
             } else if (m.getStatus() == TransactionMapping.Status.PARKED || m.getBudgetEntryId() == null) {
                 agg.other = agg.other.add(spend);

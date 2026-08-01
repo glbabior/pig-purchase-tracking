@@ -212,7 +212,8 @@ public class BackupService {
                 "SELECT COALESCE(SUM(transaction_id),0)+COALESCE(SUM(budget_entry_id),0) FROM transaction_mappings")).append(';');
         sb.append("mapped=").append(mappedCount(c)).append(';');
         sb.append("parked=").append(scalar(c, "SELECT COUNT(*) FROM transaction_mappings WHERE status='PARKED'")).append(';');
-        sb.append("excluded=").append(scalar(c, "SELECT COUNT(*) FROM transaction_mappings WHERE status='EXCLUDED'")).append(';');
+        sb.append("excluded=").append(scalar(c,
+                "SELECT COUNT(*) FROM transaction_mappings WHERE status IN ('EXCLUDED','EXCLUDED_ONCE')")).append(';');
         sb.append("exflag=").append(scalar(c, "SELECT COUNT(*) FROM transactions WHERE exclude_from_spend=TRUE")).append(';');
         sb.append("budget=").append(scalar(c, "SELECT COALESCE(SUM(annual_budget),0) FROM app_settings")).append(';');
         return sb.toString();

@@ -81,7 +81,7 @@ public class ManualEntryService {
     private Set<Long> excludedTransactionIds() {
         Set<Long> ids = new HashSet<>();
         for (TransactionMapping m : mappingRepository.findAll()) {
-            if (m.getStatus() == TransactionMapping.Status.EXCLUDED) {
+            if (!m.countsAsSpend()) {
                 ids.add(m.getTransactionId());
             }
         }

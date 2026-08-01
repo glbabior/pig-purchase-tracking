@@ -88,7 +88,9 @@ cheapest first, so the expensive one only ever sees what's left:
 
 ```mermaid
 flowchart TD
-    T["Each transaction in the run"] --> EX{excludeFromSpend?}
+    T["Each transaction in the run"] --> P0{"excluded once<br/>on a previous pass?"}
+    P0 -- yes --> EXCL1["EXCLUDED_ONCE<br/>(carried over; no rule exists)"]
+    P0 -- no --> EX{excludeFromSpend?}
     EX -- yes --> EXCL["EXCLUDED<br/>(parser rule; never counted)"]
     EX -- no --> P1
 
@@ -119,6 +121,14 @@ Why this shape matters:
   With no API credentials it's skipped silently and those transactions stay parked.
 - **Parked ≠ excluded.** Parked transactions still count toward spend (they're real
   money you just haven't categorized); excluded ones are transfers that never count.
+- **Excluding has a standing and a one-off form.** `EXCLUDED` writes a rule to
+  `merchant_categories`, so the merchant is excluded forever after; `EXCLUDED_ONCE`
+  writes nothing and applies to that transaction alone (spend covered by a gift, a
+  reimbursed purchase). Because a one-off has no rule to be rebuilt from, it is the
+  one decision `doMap` must carry across a re-map itself — it snapshots those rows
+  before deleting and re-applies them ahead of every other pass. Both are excluded
+  from spend identically; `TransactionMapping.countsAsSpend()` is the single test
+  for that, and callers ask it rather than comparing statuses themselves.
 
 Manual entry (`ManualEntryService`) and duplicate detection (with a persisted
 "not a duplicate" dismissal, `DismissedDuplicate`) feed the same transaction table.
@@ -259,6 +269,7 @@ classDiagram
         MAPPED_MANUAL
         PARKED
         EXCLUDED
+        EXCLUDED_ONCE
     }
     class MerchantSource {
         <<enumeration>>
@@ -411,8 +422,8 @@ erDiagram
         bigint id PK
         bigint analysis_run_id "soft ref, UK w/ txn"
         bigint transaction_id "UK w/ run"
-        bigint budget_entry_id "null = PARKED/EXCLUDED"
-        string status "MAPPED_HINT|MAPPED_AI|MAPPED_MANUAL|PARKED|EXCLUDED"
+        bigint budget_entry_id "null = PARKED/EXCLUDED*"
+        string status "MAPPED_HINT|MAPPED_AI|MAPPED_MANUAL|PARKED|EXCLUDED|EXCLUDED_ONCE"
         string reason
     }
     MERCHANT_CATEGORIES {

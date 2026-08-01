@@ -1,470 +1,116 @@
-# Pig Purchases - Budget Tracking Application
-
-## Overview
-
-Pig Purchases is a desktop budget tracking application for managing monthly budgets and analyzing spending patterns. All monetary data stays local on your PC—no cloud processing of transaction amounts or sensitive financial data.
-
-## Core Requirements
-
-### 1. Budget Management
-- **Budget Entry Configuration**: Define budget categories with monthly allowance amounts
-- **Quantity Support**: Budget items can have quantities (e.g., "Pharm copays: qty 6 × $10 = $60/month")
-- **Budget Hints**: Optional hints field to assist with automatic transaction categorization
-- **One-Time Import**: Ability to bulk-import budget entries from spreadsheets
-
-### 2. Monthly Statement Processing & Transaction Tracking
-- **Statement File Uploads**: Import credit card and bank statements (CSV, PDF, OFX formats)
-- **Statement Source Management**: Maintain a list of file types and account names to track which statements have been imported
-- **Automatic Categorization**: Parse transaction descriptions and vendors from statements, then auto-categorize against defined budget entries
-- **Privacy-First Categorization**: Send only transaction descriptions and vendor names to AI for categorization—all dollar amounts remain local
-- **Transaction Storage**: Store hundreds of transactions per month with:
-  - Transaction date
-  - Description
-  - Vendor name
-  - Amount (stored locally, never sent out for categorization)
-  - Categorization (which budget entry it maps to)
-  - Month (YYYY-MM format for grouping)
-  - User notes/edits
-- **Category Refinement**: Iteratively improve categorization by refining budget entry hints based on user feedback
-
-### 3. Monthly Mapping Runs
-- **User-Asserted Months**: An analysis month is defined by explicitly choosing one
-  ingested statement per source. Nothing is inferred from dates — a statement dated
-  July can be the right statement for the June run
-- **Complete Coverage**: Every statement source must contribute a statement to a run
-- **No Double-Counting**: Statements consumed by a run aren't offered to later runs
-  unless explicitly requested
-- **Hint-Driven Categorization**: Map transactions to budget entries using entry hints
-  first, AI only for the remainder
-- **Parked Items**: Anything uncategorized is grouped as "Other" and still counted as
-  spend, pending a review session that produces new hints
-- See [Transaction Mapping — Analysis Runs](#transaction-mapping--analysis-runs)
-
-### 4. Spend Analysis & Reporting
-- **Summary Reporting**: Total budget vs. total actual spend for the month, with variance and percent used
-- **Rolling Averages**: Track rolling average budget and spend across months
-- **Per-Item Breakdown**: View spend by budget entry category
-- **Monthly Comparison**: Compare spend trends across months
-- **Graph/Chart Visualization**: Display spending patterns visually
-- **Export Functionality**: Download reports in standard formats
-
-### 5. UI/UX
-- **Budget Entries Tab**: Table view with add/edit/delete operations
-- **Statement Sources Tab**: Manage the accounts and their statement folders
-- **Ingest Tab**: Browse a source's folder and load statements; open them in Acrobat
-- **Mapping Tab**: "Map Transactions" button plus the status of every previous run
-- **Analysis Tab**: View spend calculations and reports
-- **Debug Tab**: A durable log of what the app did behind the scenes — every outbound
-  Claude API call with its result or error — with a configurable retention window
-- **Modal Dialogs**: Inline add/edit forms for budget entries and transactions
-- **Edit Buttons**: Per-row edit buttons to modify transaction details and categorization
-
-## Technical Architecture
-
-### Technology Stack
-- **Backend**: Spring Boot 3.5.16 (Java 25)
-- **Database**: H2 (embedded, file-based, no separate server needed)
-- **Frontend**: Vanilla JavaScript + HTML/CSS (not a heavy framework)
-- **ORM**: Spring Data JPA with Hibernate
-- **PDF text extraction**: Apache PDFBox 3.0.3
-- **Build**: Maven via the bundled wrapper (`mvnw`)
-
-### Data Storage Strategy
-
-#### Database (H2)
-- **Location**: `${user.home}/.pigpurchases/pig-purchases-db` (file-based, local).
-  **Deliberately outside any cloud-synced folder.** An earlier build kept the DB
-  in the project directory under OneDrive, which synced the live file and once
-  restored an older version over it, losing a session's work. Never point the
-  datasource at a OneDrive/Dropbox/iCloud path.
-- **Auto-initialization**: Database schema created automatically on first run
-- **Data Migration**: Existing flat-file budget data migrated to database on startup
-
-#### Automatic backups
-
-The app backs itself up so a corrupted or reverted live database can always be
-recovered (see `BackupService`).
-
-- **Format**: a consistent SQL dump via H2 `SCRIPT TO` — portable, human-readable,
-  and independent of the live `.mv.db`, so a bad live db can't corrupt the history.
-- **Location**: `${user.home}/pigpurchases-backups/` — deliberately **outside**
-  OneDrive *and* outside the live-db folder, so whatever can revert/corrupt the
-  live db can't reach the backups.
-- **Naming / retention**: one file per calendar day, named for the date
-  (`pigpurchases-YYYY-MM-DD.sql`); a later backup the same day refreshes that
-  file. The newest **N** daily files are kept (N = Settings → "Database backups to
-  keep", default 30); older ones are pruned.
-- **When**: on startup, every 10 minutes while running
-  (`pigpurchases.backup.interval-ms`), on graceful shutdown, and on demand
-  (Settings → "Back up now"). Each run first computes a cheap change signature and
-  **skips writing when nothing changed**.
-- **Anti-clobber guard**: if a snapshot shows real mappings dropping by more than
-  half versus the last good backup (the "reverted to an empty state" failure), it
-  is saved as `pigpurchases-YYYY-MM-DD-HHMMSS.SUSPECT.sql` and a warning is raised
-  (shown in Settings) **instead of overwriting** the good daily backup. `.SUSPECT`
-  files are never auto-pruned.
-- **Status/trigger**: `GET /api/backup/status`, `POST /api/backup/now`; both are
-  surfaced in the Settings "Database backups" panel.
-
-**Restoring a backup — in the app (preferred), with a preview step.**
-Settings → "Database backups" → **Restore…**:
-1. Pick a backup to **preview**. The app loads it into a *separate* preview
-   database and routes every screen at it (`SwitchableDataSource`), so you can
-   browse the restored data. **Your live database is not touched.** An automated
-   validation report (row counts, mapping distribution, referential-integrity
-   checks, and a diff vs the current live data) appears in the Settings panel, and
-   a banner across the app reminds you a preview is active.
-2. Traverse the app to confirm the data looks right.
-3. Back in Settings, click **Commit restore** (replaces the live db in place, after
-   saving a `restore-rollback-*.sql` snapshot first) or **Cancel** (drops the
-   preview; the live db was never modified). A crash or restart mid-preview is
-   safe — the live db is only changed on commit.
-
-Endpoints: `POST /api/restore/preview` `{file}`, `/commit`, `/cancel`, and
-`GET /api/restore/status`.
-
-> Restores target backups produced by `BackupService` (current schema). Restoring
-> a much older dump whose schema predates a column may need a manual migration.
-
-**Restoring a backup — by hand** (`restore.db.cmd`), when the app can't start:
-1. Stop the app.
-2. Run `restore.db.cmd "C:\Users\<you>\pigpurchases-backups\pigpurchases-YYYY-MM-DD.sql"`.
-   It stops anything on port 8080, keeps a safety copy of the current live db
-   (`pig-purchases-db.pre-restore.mv.dbbak`), then loads the chosen dump into a
-   fresh live database.
-3. Start the app (`launch.cmd`) and verify.
-
-#### Database Schema
-
-**budget_entries** table
-```sql
-id (Long, auto-increment)
-name (String)
-monthly_allowance (BigDecimal)
-quantity (Integer, default 1)
-hints (String, up to 1024 chars)
-```
-
-**transactions** table
-```sql
-id (Long, auto-increment)
-transaction_date (LocalDate)
-description (String)
-vendor (String)
-amount (BigDecimal, signed as the statement prints it)
-txn_month (String, YYYY-MM; "month" is reserved in H2)
-statement_import_id (Long)   -- the ingest batch this row came from
-statement_source_id (Long)   -- denormalized for convenient querying
-type (String)                -- PURCHASE, PAYMENT, CREDIT, DEPOSIT, WITHDRAWAL, ...
-exclude_from_spend (boolean) -- transfers etc.: kept, but not counted as spend
-budget_entry_id (Long, foreign key to budget_entries)  -- not populated yet
-notes (String, up to 1024 chars)
-```
-
-**statement_sources** table
-```sql
-id (Long, auto-increment)
-name (String)
-folder_path (String, absolute path to this account's statement folder)
-parser_rules (CLOB, JSON: which parser to use + spend exclusions)
-```
-
-**statement_imports** table
-```sql
-id (Long, auto-increment)
-statement_source_id (Long)
-statement_date (LocalDate)
-file_name (String)
-relative_path (String, path under the source folder)
-imported_at (LocalDateTime)
-transaction_count (int)
-```
-
-**app_settings** table — a single row (id=1) holding `annual_budget` and
-`debug_log_retention_days` (default 2).
-
-**app_log_entries** table — the in-app debug log: `created_at`, `level`,
-`category`, `message`. Pruned past the retention window; backs the Debug screen.
-
-Schema is created and evolved by Hibernate `ddl-auto=update`; there are no
-migration scripts.
-
-### API Endpoints
-
-All live endpoints are served by `BudgetController` under `/api`.
-
-#### Budget Management
-- `GET /api/entries` — List all budget entries
-- `POST /api/entries` — Create new budget entry
-- `PUT /api/entries/{id}` — Update budget entry
-- `DELETE /api/entries/{id}` — Delete budget entry
-
-#### Settings
-- `GET /api/settings` — Annual budget, calculated monthly allowance, debug-log retention days
-- `PUT /api/settings` — Set the annual budget and/or debug-log retention days
-
-#### Debug log
-- `GET /api/debug-log` — Recent log entries, newest first (most usefully, every
-  outbound Claude API call and its outcome)
-- `DELETE /api/debug-log` — Clear the log
-
-#### Statement Sources
-- `GET /api/statement-sources` — List sources (with their spend exclusions)
-- `POST /api/statement-sources` — Create a source
-- `PUT /api/statement-sources/{id}` — Update name / folder path (parser rules preserved)
-- `DELETE /api/statement-sources/{id}` — Delete a source
-- `GET|PUT /api/statement-sources/{id}/parser-rules` — Read/write the parser-rules
-  JSON. **Not surfaced in the UI** — see the note under Ingest below.
-
-#### Ingest
-- `GET /api/statement-sources/{id}/files?relPath=` — Browse folders/PDFs under the
-  source folder (paths that escape the folder are rejected)
-- `POST /api/statement-sources/{id}/ingest` — Parse a PDF and store its transactions
-- `GET /api/statement-sources/{id}/imports` — Import history for a source
-- `GET /api/imports/{id}/file` — Stream the original PDF (range-request capable, so
-  it renders in a browser tab)
-- `POST /api/imports/{id}/open` — Open the PDF in the desktop PDF app (Acrobat)
-- `POST /api/imports/{id}/reveal` — Show the PDF in its folder
-
-#### Transactions
-- `GET /api/transactions?sourceId=&month=` — List stored transactions
-- `GET /api/transactions/{id}/source` — Trace a transaction to its import + source file
-
-#### Analysis
-- `GET /api/analysis/months` — months with a completed mapping run (drives the picker)
-- `GET /api/analysis/month/{month}` — budget vs actual for one month, total + per category
-- `GET /api/analysis/rolling` — rolling average across every mapped month
-- `GET /api/analysis/trends` — per-month totals for the trend chart
-- `POST /api/summary` — legacy placeholder, superseded by the above and no longer used by the UI
-
-#### Housekeeping
-- `GET /api/health` — Liveness check used by the restart flow
-- `POST /api/restart` — Restart via DevTools to pick up recompiled classes
-
-### Privacy & Security
-
-**What Stays Local**
-- All transaction amounts (never sent to any service)
-- All spending history
-- All budget definitions
-- All account information
-
-**What Gets Sent Out (Optional)**
-- Only when user initiates categorization:
-  - Transaction description (e.g., "Fresh Market")
-  - Vendor name
-  - Available budget entry hints
-- Sent to the Claude API for categorization only; nothing is stored there
-
-**No External Dependencies**
-- No cloud database
-- No analytics tracking
-- No data sharing with third parties
-
-> Status: the boundary above is enforced in code and asserted by a test. With no
-> API key configured, **nothing at all leaves the machine** — the AI pass is
-> skipped and unresolved transactions stay in "Other".
-
-## Current Implementation Status
-
-_Last verified: 2026-07-22 (end-to-end against a running server, real statements)._
-
-### ✅ Completed & verified working
-- Spring Boot + Maven scaffolding; embedded Tomcat; H2 as the single source of truth
-- JPA entities and repositories for budget entries, transactions, statement
-  sources, statement imports, and app settings
-- Budget entry CRUD end-to-end (add / edit / delete), with per-unit currency and
-  quantity fields; the stored `monthlyBudget` is the **total** (per-unit × quantity)
-- Annual budget setting, with monthly allowance derived as annual ÷ 12, and a
-  "remaining for open spend" readout
-- One-time migration from the legacy flat file (`pig-purchases-data.txt`) on first startup
-- **Statement sources**: named account folders with add / edit / delete, plus
-  per-source spend exclusions surfaced in the UI
-- **PDF statement parsers** for three real formats — Crestline credit card,
-  Bayside deposit accounts (consumer + business), and Ridgeline
-  Properties rent/utility statements
-- **Ingest**: in-app folder browser, parse-and-store, import history, and
-  idempotent re-ingest (re-loading the same source + statement date replaces the
-  prior import rather than duplicating it)
-- **Traceability**: every stored transaction points back to its import and source
-  file; a loaded statement can be viewed in a browser tab, opened in the desktop
-  PDF app (Acrobat), or revealed in its folder
-- **Reconciliation tests** that verify each parser's output against the control
-  totals printed on the statement (see Development & Testing)
-- **Mapping runs**: the Mapping screen, run setup with consumed-statement
-  hiding, deterministic categorization, the parked "Other" bucket with manual
-  assignment, re-running, and deletion — everything in
-  [Transaction Mapping — Analysis Runs](#transaction-mapping--analysis-runs),
-  including the Claude-API categorization pass for what the matcher can't resolve
-- **Analyze Spend**: budget vs. actual for a chosen month and as a rolling average,
-  per category and in total, plus an over-time trend chart — all driven by the
-  mapping runs (`AnalysisService`). The month total budget is the monthly allowance
-  (annual ÷ 12); category budgets are the entry allowances; the unallocated
-  remainder is the budget for "Other" (discretionary spend). Clicking a category
-  lists the transactions behind its total.
-
-### 🧱 Known gaps in what's built
-- **Parser rules are not editable in the UI.** Which parser runs is decided by the
-  source's `parserRules` JSON, but the source form only edits name and folder path.
-  A source created through the UI therefore has no parser, and ingest fails with
-  `No parser configured for id: ''`. Rules must be set via
-  `PUT /api/statement-sources/{id}/parser-rules` until this is surfaced.
-- **The AI pass has not yet produced a successful run against real data.** It is
-  implemented and unit-tested, and the deterministic matcher alone maps 9 of the
-  181 June transactions (every match correct; recall is low because 29 of 32
-  budget entries have no hints and names like `FRESHMARKET WHSE` don't resemble
-  `Groceries`). With a key + credits configured, a re-run should categorize most
-  of the rest. The Debug screen shows each call's outcome if it doesn't.
-- **Spend semantics are type-based, not yet reconciled to statement totals.**
-  Spend nets by transaction type (purchases add, refunds/payments/deposits
-  subtract) and drops EXCLUDED transfers, but there's no check that a month's
-  computed spend ties back to the statements' own totals.
-- Only PDF is supported. CSV and OFX are not implemented.
-
-### ⚠️ Planned
-- **Transaction Management UI**: view, edit, and recategorize stored transactions
-- **Parser rules UI**: pick a parser and edit exclusions when creating a source
-- **Export Functionality**: generate and download reports
-
-## Transaction Mapping — Analysis Runs
-
-_Implemented, apart from the AI pass — see "How mapping decides" below._
-
-Analysis is **monthly**, and a month is defined by an explicit **mapping run**: a
-named month bound to exactly one ingested statement per statement source.
-
-Four principles govern the whole exercise:
-
-1. **Privacy-First**: statements are parsed server-side; only descriptions and
-   vendor names ever leave the machine, and only when hint matching has failed
-2. **Amounts Never Leave**: dollar amounts, balances, and account details are
-   never included in a categorization request
-3. **Iterative Learning**: the budget entries' `hints` field is the knowledge base,
-   and it is what gets better over time
-4. **User Feedback Loop**: corrections made during review become new hints, so the
-   same transaction maps itself next month
-
-### Why runs exist
-
-Statement periods don't line up with calendar months. A Crestline statement closing
-06/11 covers roughly 05/12–06/11, so its transactions carry May *and* June dates.
-Rather than infer a month from transaction dates, **the user asserts which
-statements constitute a month** — that knowledge lives with the person, not the
-data.
-
-Consequently the run's month label is **authoritative**, and it is the *only*
-thing that assigns a transaction to a month. None of the dates already in the
-data are used for that purpose — not a transaction's own `transaction_date`, not
-the `txn_month` recorded at ingest, and **not the statement's own statement
-date**.
-
-### Setting up a run
-
-On the **Mapping** screen, **Map Transactions** prompts for:
-
-1. The month the run represents (YYYY-MM).
-2. Exactly one ingested statement per statement source.
-
-**A statement's date has nothing to do with which run it belongs to.** Billing
-cycles differ per account, and the user knows how each one maps to a month. For
-example, the Ridgeline statement *dated July* carries June's utility charges,
-so it is the statement selected for the **June** run. This is exactly why the
-statements are chosen by hand rather than matched automatically.
-
-It follows that the per-source picker must offer every ingested statement for that
-source, in date order, and must never filter by the run's month.
-
-**Every source must contribute a statement.** A run cannot be created until all
-of them have exactly one selected, which guarantees each month's totals are
-complete and comparable month over month.
-
-### Consumed statements
-
-A statement used by a mapping run is **consumed**, and is not offered again when
-setting up a later run. Since statement dates carry no meaning here, this is the
-safeguard that stops the same Crestline statement being counted into both the May and
-the June run — an error that would otherwise be silent and would corrupt both
-months.
-
-- Consumed statements are **hidden from the picker by default**.
-- They can be brought back with an explicit *"show already-used statements"*
-  toggle, which marks each one with the run that consumed it. Choosing one is
-  allowed but deliberate.
-- The statement already selected by the run being edited is always shown — it is
-  consumed by that run, not by another.
-- Deleting a run releases its statements back to the pool. Re-running a run's
-  mapping does not change what it consumes.
-
-Consumption is **derived** from the run/statement links rather than stored as a
-flag on the statement, so it cannot drift out of step with the runs themselves.
-
-### How mapping decides
-
-Every transaction in the selected statements is carried into the run, then
-resolved in this order:
-
-1. **Excluded transfers pass through untouched.** Transactions already flagged
-   `excludeFromSpend` by their source's parser rules (Crestline card payments made
-   from Bayside, Ridgeline rent covered by insurance) are recorded against the run
-   but never counted as spend and never categorized — that is what stops
-   double-counting.
-2. **Deterministic matching runs first** (`HintMatcher`, implemented). Each
-   remaining transaction is matched against the budget entries. This is cheap,
-   repeatable, and keeps the entries the real knowledge base.
-3. **Only the leftovers go to the Claude API** (`AiCategorizationService`).
-   Descriptions and vendor names that matching could not resolve are sent for
-   categorization, along with the budget entry names and their hints. **Amounts,
-   balances, dates, and account identifiers are never included** — the request is
-   built in one method (`promptFor`) so that guarantee is checkable in one place,
-   and `AiCategorizationServiceTest` asserts it.
-
-   Repeated merchants are collapsed first: five Fresh Market visits become one line in
-   the request and all five resolve identically. The model is told to answer
-   `null` rather than guess when nothing fits or two categories fit equally well,
-   so a wrong answer is preferred over a review item only when the model is
-   confident.
-4. **Anything still unresolved is parked** — see below.
-
-The AI pass is skipped entirely when no credentials are configured, and any API
-failure leaves those transactions parked rather than failing the run. Rejected
-credentials switch it off for the rest of the session instead of re-failing once
-per batch.
-
-#### Remembered answers (the cost control)
-
-Between hint matching and the AI pass sits a **merchant cache**
-(`merchant_categories`). Once a merchant has been categorized — by the AI, or by
-you correcting it during review — the answer is stored keyed by the normalized
-merchant text, and every later run reuses it **without another API call**. So a
-given merchant is paid for at most once, ever; re-running a month after tweaking
-hints costs only whatever genuinely new merchants appeared. The run summary
-breaks this out: *"12 newly by AI, 137 remembered, no API call"*.
-
-The cache is a feedback loop, not just a ledger:
-
-- A **manual correction always wins** over a remembered AI answer, and is itself
-  remembered — fix "FRESHMARKET" once and every future Fresh Market line maps itself.
-- Deliberately **un-categorizing** a transaction (parking it by hand) forgets the
-  remembered answer, so a wrong guess doesn't keep coming back.
-- A remembered answer whose budget entry has since been **deleted** is purged on
-  the next run rather than applied.
-
-#### Model choice
-
-The default is **Haiku 4.5** (`pigpurchases.ai.model`), because merchant →
-category is a simple classification and Haiku is roughly 5× cheaper than Opus.
-Switch to `claude-opus-4-8` if accuracy on your statements needs it. Because of
-the cache, the model cost is a one-time charge per merchant regardless.
-
-Hints live on **budget entries**, not on statement sources. The source a
-transaction came from is supplied to the mapper as context, but the knowledge base
-being refined over time is the per-entry hints.
-
-#### Writing hints that the matcher can use
+# Pig Purchases — Budget Tracking
+
+A desktop budget tracker for managing a monthly budget and analyzing spending.
+You point it at folders of bank and credit-card statement PDFs; it parses them
+into transactions, categorizes each one against your budget, and shows how actual
+spending tracks to budget per month and on a rolling average.
+
+Everything runs on your machine. The only thing that ever leaves it is a
+transaction's *description and vendor text*, sent to the Claude API to categorize
+the handful of transactions the deterministic rules can't place. **Dollar amounts
+never leave the machine** — see [Privacy](#privacy).
+
+> **Design documentation lives in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** —
+> runtime topology, the layer map, UML and ER diagrams, and the reasoning behind
+> the key invariants. This file covers what the app does, how to run it, and where
+> it currently stands.
+
+---
+
+## How you use it
+
+The UI is a single browser tab with eight screens, worked roughly left to right.
+
+**Budget Entries** — define categories with a per-unit amount and a quantity
+(e.g. "Pharm copays: 6 × $10"); the stored monthly budget is the total. Each entry
+carries an optional free-text **hints** field, which is the knowledge base that
+categorization gets better from. See [Writing hints](#writing-hints).
+
+**Statement Sources** — the named accounts, each with the folder its statements
+live in. Add / edit / delete, with per-source spend exclusions shown inline.
+
+**Ingest** — browse a source's folder, load a statement, and see the import
+history as date chips. Clicking a date opens the PDF in Acrobat; 📁 reveals it in
+its folder. Re-loading the same source + statement date **replaces** the prior
+import rather than duplicating it. This screen is also where you add a **manual
+transaction** — spend that never hits a statement (a Venmo balance, cash) — with a
+same-day duplicate check.
+
+**Mapping** — the categorization screen. Every ingested statement is listed with
+its mapped / parked / excluded counts. **Map Transactions** maps everything not
+yet mapped; **Re-run mapping** re-does chosen statements. From here you also
+review the parked "Other" bucket, review all transactions in a run with search,
+review manual entries, and work through **potential duplicates** (same date + same
+amount across statements), which you can dismiss permanently as "not duplicates".
+
+**Spend: Monthly** — budget vs. actual for one calendar month: total, variance,
+and a per-category breakdown. Click a category to list the transactions behind it
+and reassign them in bulk. Each month can be flagged **complete**.
+
+**Spend: Rolling** — the typical-month view: rolling average actual vs. budget
+across the months you marked complete, per category and in total, plus a trend
+chart and a per-category spend-over-time line chart.
+
+**Settings** — annual budget (the monthly allowance is derived as ÷ 12), debug-log
+retention, mapping-reminder day of month, database backup retention, back up now,
+and restore.
+
+**Debug** — a durable log of what the app did behind the scenes: every outbound
+Claude API call with its result or error. This is where you look when a mapping
+run categorizes nothing.
+
+**Help is built in.** The sidebar **? Help** button opens a usage guide — an
+overview plus a section per screen — and every screen's own **? Help** button opens
+that same guide at its section, so the two can't drift apart.
+
+### How a transaction gets categorized
+
+Three passes, cheapest first, so the expensive one only sees what's left:
+
+1. **Excluded transfers pass straight through.** Anything the source's parser rules
+   flagged (a Crestline card payment made from Bayside) is recorded but never counted as
+   spend and never categorized. This is what prevents double-counting.
+2. **Deterministic matching** (`HintMatcher`) — free and repeatable. Matches the
+   transaction against budget entry names and explicit `match:` hints.
+3. **Remembered answers** (`merchant_categories`) — once a merchant has been
+   categorized, by the AI or by you, that answer is reused on every later run with
+   **no API call**. A merchant is paid for at most once, ever.
+4. **The Claude API** on whatever is left, then anything still unresolved is
+   **parked**.
+
+Parked transactions show as **"Other"** and **still count as spend** — real money
+that simply hasn't been attributed yet, so a month's total is correct from the
+moment mapping finishes. Correcting one during review teaches the merchant cache,
+so it maps itself next time.
+
+The AI pass is skipped entirely with no credentials configured, and any API failure
+leaves those transactions parked rather than failing the run.
+
+### The two kinds of "not spend"
+
+Excluding something from spend comes in a standing flavour and a one-off flavour,
+and the difference is whether a rule is created:
+
+| | **🚫 Not spend — exclude** | **📌 Not spend — just this one** |
+|---|---|---|
+| Mapping status | `EXCLUDED` | `EXCLUDED_ONCE` |
+| Creates a merchant rule | Yes — every future charge from that merchant is excluded too | **No** — nothing is remembered |
+| Use for | Transfers, card payments, deposits | One-time exceptions: a trip paid out of gift money, a purchase you were reimbursed for |
+
+Both are recorded against the run and neither counts toward spend, in the monthly
+totals or the rolling average.
+
+A one-off exclusion is attached to that exact transaction rather than to the
+merchant, so — unlike every other manual decision, which is rebuilt from the
+merchant cache — it has no rule to be restored from. Mapping therefore carries it
+across a re-run explicitly, so re-mapping a statement can't silently turn a
+deliberately-excluded charge back into spend. Reverse either kind by setting the
+row back to a category or to "Other (parked)".
+
+### Writing hints
 
 Both sides are lowercased and stripped of everything that isn't a letter or digit
-before comparing, because statement text carries punctuation the budget entry name
-doesn't:
+before comparing, because statement text carries punctuation the entry name doesn't:
 
 ```
 "City Power" -> citypower   matches  "CITYPOWER 800-555-0142 CA"
@@ -472,10 +118,10 @@ doesn't:
 "Daily Grind"   -> dailygrind    matches  "DAILYGRIND*COFFEE"
 ```
 
-The entry's **name** is always used as a pattern. Hints are otherwise prose
-written for the AI pass to read, which cannot be substring-matched — so a hint
-line may declare an explicit literal with a `match:` prefix, and **only those
-lines take part in the deterministic pass**:
+The entry's **name** is always used as a pattern. Hints are otherwise prose written
+for the AI pass to read, which can't be substring-matched — so a hint line declares
+an explicit literal with a `match:` prefix, and **only those lines take part in the
+deterministic pass**:
 
 ```
 This is my auto loan payment
@@ -483,281 +129,350 @@ match: MERIDIAN MOTORS
 match: CRESTLINE AUTO
 ```
 
+A `match:` line can require several substrings at once by joining them with `+`;
+all of them must appear. This pairs a short, ambiguous token with a distinctive
+one, and tells apart two entries that share a prefix:
+
+```
+match: MP + MAILORDER    matches "MP RX00042 MAILORDER80 800-555-0175 CA"
+match: HPK + monthly     matches only the HPK line that is also a monthly payment
+```
+
 Two rules keep this pass conservative, because a wrong automatic answer is worse
 than parking a transaction for review:
 
 - Patterns shorter than 4 normalized characters are ignored — the entry "Gas"
-  would otherwise match "CITYPOWER" and "POWELL ST GARAGE".
+  would otherwise match "CITYPOWER" and "POWELL ST GARAGE". (A part inside a `+` composite
+  may be shorter, since the AND is what makes it specific.)
 - When several entries match, the longest pattern wins as the most specific
   ("Harbor Park Pass" over "Harbor Park"). If the longest is a tie between different
   entries, the transaction is parked rather than guessed at.
 
-### Parked transactions ("Other")
+You don't have to write these by hand: when you categorize a parked transaction
+during review, the app offers to save the matching hint for you.
 
-A run that finishes with unmapped transactions is still **complete and usable** —
-analysis reports on it immediately rather than blocking.
+---
 
-- Parked transactions are grouped under **"Other"**.
-- **Their cost still counts toward the month's total actual spend.** "Other" is
-  real money that has simply not been attributed yet, so it appears as actual
-  spend with no budgeted counterpart. A month's total is therefore correct from
-  the moment the run completes, even before every line is attributed.
-- The Mapping screen surfaces the parked count (e.g. *"June 2026 — 517 mapped, 12
-  parked"*) and prompts a review session, where those transactions are identified
-  together and the resulting hints are added to the relevant budget entries.
-- Re-running the month's mapping afterwards reclassifies them out of "Other".
-
-### Re-running
-
-Re-running mapping for a month **replaces that month's prior mapping results**,
-mirroring idempotent ingest. Ingested transactions themselves are never touched —
-mapping is a separate layer over them, so a re-run is always safe.
-
-### The Mapping screen
-
-Lists every run and its status: the month, which statement was chosen for each
-source, when it was mapped, and the mapped-vs-parked counts. This is also where
-the review prompt for parked transactions lives.
-
-### What analysis then shows
-
-Because every transaction in a month is attributed to a run, the analysis screen
-can report on a month directly:
-
-- **Total actual spend vs. total budget for the month**, with variance — including
-  parked spend under "Other"
-- Per-budget-entry breakdown of actual vs. allowance
-- Month-over-month comparison and rolling averages across completed runs
-
-### Data model
-
-Mapping results are kept **out of** the `transactions` table so re-running is
-clean and prior runs stay intact:
-
-```sql
-analysis_runs          id, run_month (YYYY-MM, unique), created_at, mapped_at,
-                       status (DRAFT | MAPPED), mapped_count, parked_count, excluded_count
-analysis_run_sources   id, analysis_run_id, statement_source_id, statement_import_id
-                       unique (analysis_run_id, statement_source_id)
-transaction_mappings   id, analysis_run_id, transaction_id,
-                       budget_entry_id (null => PARKED or EXCLUDED),
-                       status (MAPPED_HINT | MAPPED_AI | MAPPED_MANUAL | PARKED | EXCLUDED),
-                       reason
-                       unique (analysis_run_id, transaction_id)
-merchant_categories    id, merchant_key (unique), budget_entry_id,
-                       source (AI | MANUAL), sample_description, reason, updated_at
-```
-
-`merchant_categories` is the cross-run merchant cache: it is what stops the AI
-pass re-charging for a merchant it (or you) already categorized. It is keyed by
-normalized merchant text, not by run, because a merchant maps to the same
-category regardless of month.
-
-`status` distinguishes PARKED (real spend, not yet attributed) from EXCLUDED
-(a transfer that must never count) — both have a null `budget_entry_id`, so the
-distinction cannot be inferred from that column alone.
-
-Statement reuse across runs is deliberately **not** a database constraint: it is
-hidden by default but permitted when explicitly requested, so it is enforced in
-the service, not the schema.
-
-The unused `transactions.budget_entry_id` column is superseded by
-`transaction_mappings` and can be dropped.
-
-### Endpoints
-
-- `GET /api/mapping/setup?includeConsumed=` — everything the dialog needs: each
-  source with its selectable statements. Consumed ones are omitted unless asked
-  for, in which case each carries the month that consumed it.
-- `GET /api/analysis-runs` — every run with its statements, status and counts
-- `POST /api/analysis-runs` — create a run (month + one import per source; rejects
-  an incomplete source set, a duplicate month, or a consumed statement unless
-  `allowConsumed` is set)
-- `POST /api/analysis-runs/{id}/map` — execute or re-execute mapping
-- `GET /api/analysis-runs/{id}/mappings?status=PARKED` — the "Other" bucket, for
-  review sessions
-- `PUT /api/analysis-runs/{id}/mappings/{transactionId}` — manual categorization;
-  a null `budgetEntryId` parks it again
-- `DELETE /api/analysis-runs/{id}` — delete a run, releasing its statements
-
-## Data Privacy Summary
-
-| Data Type | Location | Sent Out? |
-|-----------|----------|-----------|
-| Budget entries | Local database | ❌ No |
-| Transaction amounts | Local database | ❌ No |
-| Transaction descriptions | Local database | ✓ Only for categorization |
-| Vendor names | Local database | ✓ Only for categorization |
-| Spending history | Local database | ❌ No |
-| Account credentials | Not stored | ❌ No |
-
-## Development & Testing
+## Running it
 
 The Maven wrapper is committed, so no Maven install is needed — just a JDK 25 on
-`PATH`. Use `./mvnw` (Git Bash) or `.\mvnw.cmd` (PowerShell / cmd).
+`PATH`. Use `.\mvnw.cmd` (PowerShell / cmd) or `./mvnw` (Git Bash).
 
-### Run
 ```powershell
-.\launch.cmd
+.\launch.cmd                      # or: .\mvnw.cmd -DskipTests spring-boot:run
+.\mvnw.cmd clean package          # build
+.\mvnw.cmd test                   # test
 ```
-or equivalently `.\mvnw.cmd -DskipTests spring-boot:run`.
 
 Wait for the log line `Started PigPurchasesApplication` (about 6 seconds), then
-open <http://localhost:8080> in your browser — the server does not open it for
-you. Stop with `Ctrl+C`.
+open <http://localhost:8080> — the server does not open it for you. Stop with
+`Ctrl+C`, or `.\stop.cmd`.
 
-Start it from your **own terminal**: that puts the server in your desktop
-session, which is what makes "open in Acrobat" work (see below).
+Start it from your **own terminal**. That puts the server in your desktop session,
+which is what makes "open in Acrobat" work. A server started from a service or a
+different Windows session can't hand a file to your running Acrobat, and Acrobat
+reports *"A running instance of Acrobat has caused an error."* Also use a real
+browser, not VS Code's Simple Browser — its embedded viewer was the cause of an
+earlier blank-PDF render that got misdiagnosed as a launch failure.
 
-### Build
-```powershell
-.\mvnw.cmd clean package
-```
-
-### Test
-```powershell
-.\mvnw.cmd test
-```
+**After code changes**, click **Restart server** in the sidebar rather than killing
+the terminal. It recompiles, then touches `target/classes/.reloadtrigger` so
+DevTools fires exactly one restart; the page polls `/api/health` and refreshes
+itself once the server is back.
 
 ### Enabling AI categorization
 
-The AI pass needs Anthropic credentials. Set the key once, for your user account,
-then restart the app:
+Set the key once for your user account, then restart the app:
 
 ```powershell
 [Environment]::SetEnvironmentVariable('ANTHROPIC_API_KEY', 'sk-ant-...', 'User')
 ```
 
 Open a new terminal afterwards so the variable is picked up (an `ant auth login`
-profile works too — the SDK finds either). The Mapping dialog says which mode it
-is in before you start a run, and the run summary reports how many transactions
-the AI categorized.
-
-Relevant settings in `application.properties`:
+profile works too — the SDK finds either). The Mapping screen shows which mode it's
+in before you start, and the run summary reports how many transactions the AI
+categorized versus how many came from remembered answers.
 
 | Property | Default | Purpose |
 |---|---|---|
-| `pigpurchases.ai.enabled` | `true` | Set `false` to skip the AI pass entirely |
-| `pigpurchases.ai.model` | `claude-haiku-4-5` | Model used for categorization (Opus 4.8 for higher accuracy) |
+| `pigpurchases.ai.enabled` | `true` | `false` skips the AI pass entirely |
+| `pigpurchases.ai.model` | `claude-haiku-4-5` | Merchant → category is simple classification and Haiku is far cheaper; switch to a larger model if accuracy needs it |
 | `pigpurchases.ai.batch-size` | `40` | Transactions per request |
+| `pigpurchases.ai.max-tokens` | `16000` | Response cap — code default only; add it to `application.properties` to change it |
 
-Every merchant is charged for at most once — answers are cached across runs (see
-Remembered answers above), so leaving the AI on is cheap after the first month.
+The first three are set in `application.properties`.
 
-**If a run categorizes nothing**, open the **Debug** screen: every outbound Claude
-call is logged there with its result or error (e.g. a rejected key, or no credits),
-so you never have to dig through the console to find out why.
+Because every merchant is charged for at most once, leaving the AI on is cheap
+after the first month. Tests set `pigpurchases.ai.enabled=false`, so the suite
+never calls the API even if your shell has a key exported.
 
-Tests set `pigpurchases.ai.enabled=false`, so the suite never calls the API even
-if your shell has a key exported.
+**If a run categorizes nothing**, open the **Debug** screen — every outbound call
+is logged there with its result or error (a rejected key, no credits), so you never
+have to dig through the console.
 
-### Restarting after code changes
-Click **Restart server** in the sidebar. Spring Boot DevTools reloads the
-recompiled classes; the page polls `/api/health` and refreshes itself once the
-server is back. This is preferable to killing and relaunching the terminal.
-
-### Opening statements in Acrobat
-
-Loaded statements appear on the Ingest screen as date chips. Clicking the date
-hands the PDF to the desktop default handler (Acrobat) via
-`POST /api/imports/{id}/open`; the 📁 button next to it reveals the file in its
-folder. If the desktop launch fails, the UI silently falls back to opening the
-PDF in a browser tab.
-
-Two things matter for this to work:
-
-- **The server must run in your own interactive desktop session** — i.e. you
-  started it from your terminal, as above. A server started from a service, a
-  different Windows session, or at a different integrity level cannot hand the
-  file to your already-running Acrobat, and Acrobat reports *"A running instance
-  of Acrobat has caused an error."*
-- **Use a real browser, not VS Code's Simple Browser.** The embedded viewer was
-  the cause of an earlier blank-PDF render that was misdiagnosed as a launch
-  failure.
-
-### Test layout
+### Testing
 
 Tests come in two flavours, deliberately separated:
 
-- **Portable tests** run anywhere, including CI. The parser tests build their own
-  PDFs through the `TestPdfs` helper, and `IngestServiceIntegrationTest` drives a
-  full ingest against an in-memory H2 (`application-test.properties`), covering
-  parser dispatch, storage, exclusions, and idempotent re-ingest.
+- **Portable tests** run anywhere, including CI. Parser tests build their own PDFs
+  through the `TestPdfs` helper, and `IngestServiceIntegrationTest` drives a full
+  ingest against an in-memory H2 (`application-test.properties`), covering parser
+  dispatch, storage, exclusions, and idempotent re-ingest.
 - **Validation tests** (`*ValidationTest`) reconcile each parser against the real
   statements on this machine — for Bayside, the sum of all signed transactions must
-  equal ending minus beginning balance; for Crestline, the printed purchases and
-  credits totals must match. Those PDFs are personal data and are never
-  committed, so these tests `assumeTrue` the folder exists and **skip silently**
-  elsewhere. A green CI run does not mean the parsers still reconcile; run the
-  suite locally after touching a parser.
+  equal ending minus beginning balance; for Crestline, the printed purchases and credits
+  totals must match. Those PDFs are personal data and are never committed, so these
+  tests `assumeTrue` the folder exists and **skip silently** elsewhere. A green CI
+  run does not mean the parsers still reconcile — run the suite locally after
+  touching a parser.
 
-## File Structure
+---
+
+## Where your data lives
+
+**The database is disposable; the PDFs are not.** Everything in the database can be
+rebuilt by re-ingesting the statement folders.
+
+**Live database**: `${user.home}/.pigpurchases/pig-purchases-db` (H2, file-based).
+**Deliberately outside any cloud-synced folder.** An earlier build kept it in the
+project directory under OneDrive, which synced the live file and once restored an
+older version over it, losing a session's work. Never point the datasource at a
+OneDrive / Dropbox / iCloud path. Schema is created and evolved by Hibernate
+`ddl-auto=update`; there are no migration scripts.
+
+**Backups**: `${user.home}/pigpurchases-backups/` — outside OneDrive *and* outside
+the live-db folder, so whatever can revert or corrupt the live db can't reach the
+history. Each is a consistent SQL dump (H2 `SCRIPT TO`): portable, readable, and
+independent of the live `.mv.db`.
+
+- One file per calendar day, `pigpurchases-YYYY-MM-DD.sql`; a later backup the same
+  day refreshes it. The newest N are kept (Settings → "Database backups to keep",
+  default 30).
+- Written on startup, every 10 minutes (`pigpurchases.backup.interval-ms`), on
+  graceful shutdown, and on demand. Each run computes a cheap change signature and
+  **skips writing when nothing changed**.
+- **Anti-clobber guard**: if a snapshot shows real mappings dropping by more than
+  half versus the last good backup — the "reverted to an empty state" failure — it
+  is saved as `pigpurchases-YYYY-MM-DD-HHMMSS.SUSPECT.sql` with a warning in
+  Settings **instead of overwriting** the good daily backup. `.SUSPECT` files are
+  never auto-pruned.
+
+### Restoring
+
+**In the app (preferred)** — Settings → Database backups → **Restore…**
+
+1. Pick a backup to **preview**. It loads into a *separate* preview database and
+   every screen is routed at it (`SwitchableDataSource`), so you can browse the
+   restored data. **Your live database is not touched.** A validation report (row
+   counts, mapping distribution, referential-integrity checks, and a diff against
+   current live data) appears in Settings, and a banner reminds you a preview is
+   active.
+2. Traverse the app and confirm the data looks right.
+3. **Commit restore** (replaces the live db, after saving a `restore-rollback-*.sql`
+   snapshot first) or **Cancel** (drops the preview; the live db was never
+   modified). A crash or restart mid-preview is safe.
+
+> Restores target backups from the current schema. Restoring a much older dump whose
+> schema predates a column may need a manual migration.
+
+**By hand**, when the app can't start:
+
+1. Stop the app.
+2. `restore.db.cmd "C:\Users\<you>\pigpurchases-backups\pigpurchases-YYYY-MM-DD.sql"`
+   — stops anything on port 8080, keeps a safety copy of the current live db
+   (`pig-purchases-db.pre-restore.mv.dbbak`), then loads the dump into a fresh live
+   database.
+3. `launch.cmd` and verify.
+
+---
+
+## Privacy
+
+| Data | Location | Sent out? |
+|---|---|---|
+| Transaction amounts | Local database | ❌ Never |
+| Spending history | Local database | ❌ Never |
+| Budget definitions | Local database | ❌ Never |
+| Account information | Local database | ❌ Never |
+| Statement PDFs | Local disk | ❌ Never |
+| Transaction descriptions | Local database | ✓ Only for categorization |
+| Vendor names | Local database | ✓ Only for categorization |
+| Account credentials | Not stored | ❌ Never |
+
+Categorization requests carry only transaction descriptions, vendor names, and your
+budget entry names and hints. Amounts, balances, dates, and account identifiers are
+never included. The request body is built in a single method
+(`AiCategorizationService.promptFor`) so the guarantee is checkable in one place,
+and `AiCategorizationServiceTest` asserts it.
+
+No cloud database, no analytics, no third-party sharing. **With no API key
+configured, nothing at all leaves the machine** — the AI pass is skipped and
+unresolved transactions stay in "Other".
+
+---
+
+## Current status
+
+_Code-verified 2026-07-29. Runtime behavior against real statements was last
+checked 2026-07-22._
+
+### Working
+
+- Budget entry CRUD with per-unit amount × quantity; annual budget with derived
+  monthly allowance and a "remaining for open spend" readout
+- Statement sources with add / edit / delete and per-source spend exclusions
+- **PDF parsers** for three real formats: Crestline credit card, Bank of
+  America deposit accounts (consumer + business), and Ridgeline Properties
+  rent/utility statements — each covered by a reconciliation test against the
+  control totals printed on the statement
+- **Ingest**: in-app folder browser, parse-and-store, import history, idempotent
+  re-ingest, and full traceability from any transaction back to its source file
+  (view in a tab, open in Acrobat, reveal in folder)
+- **Manual transactions** for spend that never hits a statement, with a same-day
+  duplicate check
+- **Duplicate detection** across statements, with permanent "not duplicates"
+  dismissals
+- **Mapping**: per-statement runs, the three-pass pipeline above, the parked
+  "Other" bucket with manual assignment and bulk reassignment, hint-save prompts
+  during review, re-running, and deletion
+- **Merchant cache** so a merchant is only ever paid for once; manual corrections
+  outrank AI answers, and deliberately un-categorizing something forgets the
+  remembered answer
+- **One-off exclusions** that keep a single transaction out of spend without
+  teaching the app a merchant rule, and that survive a re-map
+- **Built-in help**: a usage guide reachable from the sidebar and from a per-screen
+  help button on every screen
+- **Spend analysis**: monthly and rolling budget-vs-actual, per category and total,
+  transaction-count columns, click-through to the transactions behind any figure,
+  a trend chart, and a per-category spend-over-time chart. Months are grouped by
+  each transaction's **actual date**, and only months flagged complete feed the
+  rolling average
+- **Data safety**: automated daily SQL backups with the anti-clobber guard, and
+  preview-then-commit restore
+- **Debug log** with configurable retention, and a mapping reminder on a chosen day
+  of the month
+
+### Known gaps
+
+- **Parser rules are not editable in the UI.** Which parser runs comes from the
+  source's `parserRules` JSON, but the source form only edits name and folder path.
+  A source created through the UI therefore has no parser and ingest fails with
+  `No parser configured for id: ''`. Set them via
+  `PUT /api/statement-sources/{id}/parser-rules` until this is surfaced.
+- **Spend semantics are type-based, not reconciled to statement totals.** Spend nets
+  by transaction type (purchases add; refunds, payments, and deposits subtract) and
+  drops excluded transfers, but nothing checks that a month's computed spend ties
+  back to the statements' own totals.
+- **Only PDF is supported.** CSV and OFX are not implemented.
+- **No transaction-management screen.** Stored transactions can be recategorized
+  from the Mapping and Spend screens, but there's no general view/edit surface.
+- **No export.** Reports can't be downloaded.
+- **Dead code**: `MappingService.createRun` / `map(runId)` are the pre-per-file
+  month-run path. No controller reaches them; only the tests do. `POST /api/summary`
+  is likewise a legacy placeholder the UI no longer calls.
+
+### Planned
+
+1. Surface parser selection and exclusions in the statement-source UI, so a source
+   created in the app can actually be ingested.
+2. Transaction management screen: view / edit / recategorize.
+3. Export and reporting.
+4. Additional statement formats (CSV, OFX) as needed.
+
+---
+
+## API reference
+
+Served by five controllers on `localhost:8080`.
+
+**Budget entries** — `GET|POST /api/entries`, `PUT|DELETE /api/entries/{id}`,
+`POST /api/entries/{id}/hints` (append a `match:` line, idempotent)
+
+**Settings** — `GET|PUT /api/settings` (annual budget, debug-log retention,
+notification day, backup retention)
+
+**Statement sources** — `GET|POST /api/statement-sources`,
+`PUT|DELETE /api/statement-sources/{id}`,
+`GET|PUT /api/statement-sources/{id}/parser-rules` *(not surfaced in the UI — see
+Known gaps)*
+
+**Ingest** — `GET /api/statement-sources/{id}/files?relPath=` (browse; paths that
+escape the source folder are rejected), `POST /api/statement-sources/{id}/ingest`,
+`GET /api/statement-sources/{id}/imports`, `GET /api/imports/{id}/file`
+(range-capable, renders in a tab), `POST /api/imports/{id}/open`,
+`POST /api/imports/{id}/reveal`
+
+**Transactions** — `GET /api/transactions?sourceId=&month=`,
+`GET /api/transactions/{id}/source`, `POST /api/transactions/manual`,
+`GET /api/transactions/manual/run`, `DELETE /api/transactions/{id}`,
+`GET /api/transactions/duplicates`, `POST /api/transactions/duplicates/dismiss`
+
+**Mapping** — `GET /api/mapping/files` (every statement with its mapped state and
+counts, plus `aiAvailable`), `POST /api/mapping/map-unmapped`,
+`POST /api/mapping/remap` `{importIds}`, `POST /api/mapping/migrate` (one-time,
+idempotent: splits legacy month-runs into per-file runs),
+`GET /api/analysis-runs/{id}/mappings?status=PARKED`,
+`PUT /api/analysis-runs/{id}/mappings/{transactionId}` (assign; null
+`budgetEntryId` parks it, `exclude:true` marks it not-spend and remembers the
+merchant, `exclude:true, once:true` excludes only that transaction and creates no
+rule),
+`DELETE /api/analysis-runs/{id}`
+
+**Analysis** — `GET /api/analysis/months` (calendar months with data, plus
+completeness and unmapped counts), `PUT /api/analysis/months/{month}/complete`,
+`GET /api/analysis/month/{month}`,
+`GET /api/analysis/month/{month}/transactions?category=` (an entry id, `other`, or
+`__excluded__`), `GET /api/analysis/rolling`, `GET /api/analysis/trends`,
+`GET /api/analysis/category-trend?category=`
+
+**Backup / restore** — `GET /api/backup/status`, `POST /api/backup/now`,
+`GET /api/restore/status`, `POST /api/restore/preview` `{file}`,
+`POST /api/restore/commit`, `POST /api/restore/cancel`, `POST /api/restore/comment`
+
+**Debug log** — `GET /api/debug-log` (newest first), `DELETE /api/debug-log`
+
+**Housekeeping** — `GET /api/health` (liveness, used by the restart flow),
+`POST /api/restart` (recompile + DevTools reload),
+`GET /api/notification/status` (is a mapping reminder due?)
+
+---
+
+## Project layout
+
 ```
 PigPurchases/
 ├── src/main/java/com/pigpurchases/
-│   ├── PigPurchasesApplication.java (Spring Boot entry — root package so
-│   │                                 component/entity/repository scan works)
-│   ├── model/
-│   │   ├── BudgetEntry.java, Transaction.java, AppSettings.java
-│   │   ├── StatementSource.java  (account folder + parser rules)
-│   │   ├── StatementImport.java  (one ingested statement file)
-│   │   ├── MerchantCategory.java (cross-run merchant→category cache)
-│   │   ├── AppLogEntry.java      (one debug-log line)
-│   │   ├── AnalysisRun.java      (a month + its chosen statements)
-│   │   ├── AnalysisRunSource.java(one source's statement in a run)
-│   │   └── TransactionMapping.java (how one txn resolved in one run)
-│   ├── parser/
-│   │   ├── StatementParser.java  (interface: Path -> ParsedStatement)
-│   │   ├── CardStatementParser.java, DepositStatementParser.java,
-│   │   │   PropertyStatementParser.java
-│   │   ├── ParsedStatement.java  (transactions + printed control totals)
-│   │   ├── ParsedTransaction.java, ExclusionRule.java
-│   ├── repository/               (one Spring Data repo per entity)
-│   ├── service/
-│   │   ├── IngestService.java    (parse -> exclude -> store, idempotent)
-│   │   ├── MappingService.java   (run setup, validation, mapping execution)
-│   │   ├── HintMatcher.java      (pure matching logic, heavily unit-tested)
-│   │   ├── AiCategorizationService.java (Claude API pass; the privacy boundary)
-│   │   ├── DebugLogService.java  (durable in-app log + retention pruning)
-│   │   ├── AnalysisService.java  (budget-vs-actual: month, rolling, trends)
-│   │   ├── BudgetService.java    (pure calculation logic, @Service bean)
-│   │   └── MonthlyHistoryEntry.java
-│   └── server/
-│       ├── BudgetController.java  (entries, settings, sources, ingest)
-│       ├── MappingController.java (mapping runs and review)
-│       ├── AnalysisController.java (budget-vs-actual endpoints)
-│       └── DataInitializer.java   (one-time flat-file → DB migration)
+│   ├── PigPurchasesApplication.java   Spring Boot entry (root package, so
+│   │                                  component/entity/repository scan works)
+│   ├── config/     SwitchableDataSource + DataSourceConfig (restore preview)
+│   ├── model/      JPA entities: BudgetEntry, Transaction, StatementSource,
+│   │               StatementImport, AnalysisRun, AnalysisRunSource,
+│   │               TransactionMapping, MerchantCategory, MonthStatus,
+│   │               DismissedDuplicate, AppSettings, AppLogEntry
+│   ├── parser/     StatementParser (interface) + Crestline / Bayside / Ridgeline,
+│   │               ParsedStatement, ParsedTransaction, ExclusionRule
+│   ├── repository/ one Spring Data repo per entity
+│   ├── service/    IngestService, MappingService, HintMatcher,
+│   │               AiCategorizationService, AnalysisService, ManualEntryService,
+│   │               BackupService, RestoreService, DebugLogService, BudgetService
+│   └── server/     BudgetController, MappingController, AnalysisController,
+│                   ManualEntryController, BackupController, RestoreController,
+│                   DebugLogController, NotificationController, DataInitializer
 ├── src/main/resources/
-│   ├── static/index.html         (the entire vanilla-JS frontend)
-│   └── application.properties    (H2 config)
+│   ├── static/index.html          the entire vanilla-JS frontend
+│   └── application.properties     H2, backups, DevTools, AI settings
 ├── src/test/java/com/pigpurchases/
-│   ├── TestPdfs.java             (generates PDFs so tests need no real statements)
-│   ├── parser/                   (portable parser tests + *ValidationTest)
-│   ├── service/IngestServiceIntegrationTest.java
-│   └── server/StatementSourceControllerTest.java
-├── .github/workflows/ci.yml      (mvnw test on Temurin 25)
-├── mvnw, mvnw.cmd, pom.xml
-├── launch.cmd                    (Windows launcher; expects a bundled Maven)
-├── pig-purchases-db.mv.db        (H2 database file, auto-created, git-ignored)
-├── pig-purchases-data.txt        (legacy seed data; migrated once, git-ignored)
-└── README.md (this file)
+│   ├── TestPdfs.java              generates PDFs so tests need no real statements
+│   ├── parser/                    portable parser tests + *ValidationTest
+│   ├── service/                   mapping, analysis, ingest, AI, manual entry
+│   └── server/                    controller tests
+├── docs/ARCHITECTURE.md           design docs: diagrams, invariants, rationale
+├── .github/workflows/ci.yml       mvnw test on Temurin 25
+├── launch.cmd / stop.cmd / restart.cmd / restore.db.cmd
+└── mvnw, mvnw.cmd, pom.xml
 ```
 
-> Note: a Python `.venv` plus `import_budget.py` / `create_icon.py` are one-off
-> helper scripts (spreadsheet import, icon generation), not part of the running
-> app. `budget-import.json` and the data/db files hold personal amounts and are
+> A Python `.venv` plus `import_budget.py` and `create_icon.py` are one-off helper
+> scripts (spreadsheet import, icon generation), not part of the running app.
+> `budget-import.json` and the data/db files hold personal amounts and are
 > git-ignored.
-
-## Next Steps
-
-1. **Configure `ANTHROPIC_API_KEY` and re-run the June mapping.** The AI pass is
-   built but has never run against real data; this is the step that tells us what
-   recall actually looks like. Writing prose hints on the budget entries (the AI
-   reads them) and `match:` lines for recurring merchants (`FRESHMARKET`,
-   `FRESHMARKET`, `DAILYGRIND`, `HPK`/Harbor Park, `KP SCAL`) both raise it
-   further — the parked bucket on the Mapping screen shows which to write.
-2. Surface parser selection + exclusions in the statement-source UI, so a source
-   created in the app can actually be ingested.
-3. Transaction management UI: view / edit / recategorize stored transactions.
-4. Export / reporting.
-5. Additional statement formats (CSV, OFX) as needed.

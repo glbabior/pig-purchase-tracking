@@ -191,6 +191,53 @@ class MappingServiceTest {
     }
 
     @Test
+    void excludingJustThisOneCreatesNoRuleButSurvivesAReRun() {
+        AnalysisRun run = mappingService.createRun("2026-06", select(juneImportId), false);
+        mappingService.map(run.getId());
+
+        TransactionMapping parked = mappingRepo
+                .findByAnalysisRunIdAndStatus(run.getId(), TransactionMapping.Status.PARKED).get(0);
+        long merchantsBefore = merchantRepo.count();
+
+        mappingService.excludeOnce(run.getId(), parked.getTransactionId());
+
+        TransactionMapping after = mappingRepo
+                .findByAnalysisRunIdAndTransactionId(run.getId(), parked.getTransactionId()).orElseThrow();
+        assertEquals(TransactionMapping.Status.EXCLUDED_ONCE, after.getStatus());
+        assertFalse(after.countsAsSpend(), "a one-off exclusion must not count as spend");
+        assertEquals(merchantsBefore, merchantRepo.count(),
+                "a one-off exclusion must not teach the merchant cache anything");
+
+        // Re-running the statement must not quietly turn it back into spend: there is
+        // no rule to rebuild it from, so doMap has to carry the decision across.
+        MappingService.MapResult result = mappingService.map(run.getId());
+        assertEquals(2, result.excluded(), "the parser transfer plus the one-off exclusion");
+        TransactionMapping reapplied = mappingRepo
+                .findByAnalysisRunIdAndTransactionId(run.getId(), parked.getTransactionId()).orElseThrow();
+        assertEquals(TransactionMapping.Status.EXCLUDED_ONCE, reapplied.getStatus());
+        assertEquals(merchantsBefore, merchantRepo.count(), "still no rule after a re-run");
+    }
+
+    @Test
+    void aOneOffExclusionCanBeUndoneByReassigningIt() {
+        AnalysisRun run = mappingService.createRun("2026-06", select(juneImportId), false);
+        mappingService.map(run.getId());
+        TransactionMapping parked = mappingRepo
+                .findByAnalysisRunIdAndStatus(run.getId(), TransactionMapping.Status.PARKED).get(0);
+        mappingService.excludeOnce(run.getId(), parked.getTransactionId());
+
+        // Putting it back into a category clears the one-off, and the re-run respects that.
+        Long coffeeId = entryRepo.findAll().get(0).getId();
+        mappingService.assign(run.getId(), parked.getTransactionId(), coffeeId);
+        MappingService.MapResult result = mappingService.map(run.getId());
+
+        TransactionMapping reapplied = mappingRepo
+                .findByAnalysisRunIdAndTransactionId(run.getId(), parked.getTransactionId()).orElseThrow();
+        assertEquals(coffeeId, reapplied.getBudgetEntryId());
+        assertEquals(1, result.excluded(), "only the parser transfer remains excluded");
+    }
+
+    @Test
     void unCategorizingByHandForgetsTheRememberedAnswer() {
         AnalysisRun run = mappingService.createRun("2026-06", select(juneImportId), false);
         mappingService.map(run.getId());

@@ -28,7 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
 /**
@@ -55,13 +55,28 @@ public class MappingService {
     @Autowired private AiCategorizationService aiCategorizationService;
 
     /**
-     * Run ids currently being mapped. Mapping now makes real (slow) API calls,
-     * so a second request for the same run — an impatient double-click, or a
-     * second browser tab — would otherwise collide on the transaction_mappings
-     * row locks and fail with a lock-timeout stack trace. This makes the second
-     * caller fail fast and clearly instead.
+     * Set while any mapping is running. Mapping makes real (slow) API calls and
+     * rewrites shared state — the run's mappings, and the merchant cache — so a
+     * second request (an impatient double-click, or a second browser tab) would
+     * otherwise collide on row locks and unique constraints deep inside the run and
+     * surface as a lock-timeout stack trace. This makes the second caller fail fast
+     * and clearly instead, which {@code MappingController} reports as a 409.
+     *
+     * <p>Deliberately one flag rather than a set keyed by run: two concurrent
+     * "map every unmapped statement" requests each create their <b>own</b> run for
+     * the same statement, so per-run keys would never collide — and both would then
+     * insert an {@code analysis_run_sources} row for the same uniquely-indexed
+     * import, which fails at commit. The thing worth serializing is mapping itself,
+     * not a particular run.
+     *
+     * <p>Known limit: the flag is cleared as the mapping call returns, fractionally
+     * before the caller's transaction commits, so a double-submit landing inside
+     * that window can still race. That is a window of milliseconds rather than the
+     * length of a whole AI-calling batch; closing it completely means moving the
+     * guard outside the transaction boundary, which isn't worth the restructuring
+     * for a single-user desktop app.
      */
-    private final Set<Long> mappingInProgress = ConcurrentHashMap.newKeySet();
+    private final AtomicBoolean mappingInProgress = new AtomicBoolean();
 
     /** One source's contribution to a run, as chosen in the UI. */
     public record SourceSelection(Long sourceId, Long importId) {}
@@ -208,20 +223,27 @@ public class MappingService {
     }
 
     // Runs within the caller's transaction (mapUnmapped/remapImports are @Transactional);
-    // calls doMap directly rather than the proxied map() so the transaction actually applies.
+    // calls doMap directly rather than the proxied map() so the transaction actually
+    // applies — which is why the guard is taken here explicitly. This, not map(), is
+    // the path both mapping buttons reach.
     private MapBatchResult mapFiles(List<Long> importIds) {
-        int files = 0, mapped = 0, parked = 0, excluded = 0, ai = 0, cached = 0;
-        for (Long importId : importIds) {
-            AnalysisRun run = consumingRun(importId).orElseGet(() -> createFileRun(importId));
-            MapResult r = doMap(run.getId());
-            files++;
-            mapped += r.mapped();
-            parked += r.parked();
-            excluded += r.excluded();
-            ai += r.aiMapped();
-            cached += r.cached();
+        beginMapping();
+        try {
+            int files = 0, mapped = 0, parked = 0, excluded = 0, ai = 0, cached = 0;
+            for (Long importId : importIds) {
+                AnalysisRun run = consumingRun(importId).orElseGet(() -> createFileRun(importId));
+                MapResult r = doMap(run.getId());
+                files++;
+                mapped += r.mapped();
+                parked += r.parked();
+                excluded += r.excluded();
+                ai += r.aiMapped();
+                cached += r.cached();
+            }
+            return new MapBatchResult(files, mapped, parked, excluded, ai, cached);
+        } finally {
+            endMapping();
         }
-        return new MapBatchResult(files, mapped, parked, excluded, ai, cached);
     }
 
     /**
@@ -263,7 +285,7 @@ public class MappingService {
                         mappingRepository.save(tm);
                         switch (tm.getStatus()) {
                             case PARKED -> pc++;
-                            case EXCLUDED -> ec++;
+                            case EXCLUDED, EXCLUDED_ONCE -> ec++;
                             default -> mc++;
                         }
                     }
@@ -291,20 +313,40 @@ public class MappingService {
      */
     @Transactional
     public MapResult map(Long runId) {
-        if (!mappingInProgress.add(runId)) {
-            throw new IllegalStateException(
-                    "Mapping is already running for this month — please wait for it to finish.");
-        }
+        beginMapping();
         try {
             return doMap(runId);
         } finally {
-            mappingInProgress.remove(runId);
+            endMapping();
         }
+    }
+
+    /** Claim the mapping guard, or fail fast if a mapping is already under way. */
+    private void beginMapping() {
+        if (!mappingInProgress.compareAndSet(false, true)) {
+            throw new IllegalStateException(
+                    "Mapping is already running — please wait for it to finish.");
+        }
+    }
+
+    private void endMapping() {
+        mappingInProgress.set(false);
     }
 
     private MapResult doMap(Long runId) {
         AnalysisRun run = runRepository.findById(runId)
                 .orElseThrow(() -> new IllegalArgumentException("No such run: " + runId));
+
+        // One-off exclusions are per-transaction decisions with no rule behind them,
+        // so unlike every other manual choice they can't be rebuilt from the merchant
+        // cache. Carry them over the rebuild explicitly, or re-running a statement
+        // would silently turn a deliberately-excluded charge back into spend.
+        Map<Long, String> excludedOnce = new LinkedHashMap<>();
+        for (TransactionMapping prior : mappingRepository.findByAnalysisRunId(runId)) {
+            if (prior.getStatus() == TransactionMapping.Status.EXCLUDED_ONCE) {
+                excludedOnce.put(prior.getTransactionId(), prior.getReason());
+            }
+        }
 
         // Flush the removals before inserting the replacements: Hibernate orders
         // inserts ahead of deletes within a flush, which would otherwise trip the
@@ -322,6 +364,13 @@ public class MappingService {
 
         for (AnalysisRunSource link : runSourceRepository.findByAnalysisRunId(runId)) {
             for (Transaction txn : transactionRepository.findByStatementImportId(link.getStatementImportId())) {
+                if (excludedOnce.containsKey(txn.getId())) {
+                    // The user's one-off call on this exact transaction outranks every
+                    // pass below — it is the most specific decision there is.
+                    mappings.add(new TransactionMapping(runId, txn.getId(), null,
+                            TransactionMapping.Status.EXCLUDED_ONCE, excludedOnce.get(txn.getId())));
+                    continue;
+                }
                 if (txn.isExcludeFromSpend()) {
                     // A transfer the source's parser rules already carved out. Recorded
                     // for completeness so the run accounts for every line, never counted.
@@ -365,7 +414,7 @@ public class MappingService {
         for (TransactionMapping mapping : mappings) {
             switch (mapping.getStatus()) {
                 case PARKED -> parked++;
-                case EXCLUDED -> excluded++;
+                case EXCLUDED, EXCLUDED_ONCE -> excluded++;
                 default -> mapped++;
             }
             mappingRepository.save(mapping);
@@ -579,6 +628,34 @@ public class MappingService {
         return mapping;
     }
 
+    /**
+     * Exclude <b>this one transaction only</b>, deliberately creating no rule: the
+     * merchant cache is not written, so the same merchant still counts as spend
+     * next month. For genuine one-time exceptions — a trip paid for out of gift
+     * money, a reimbursed purchase — where {@link #exclude} would wrongly teach the
+     * app to drop that merchant forever.
+     *
+     * <p>Because there is no rule to rebuild it from, {@code doMap} carries this
+     * decision across a re-map explicitly; see the top of that method.
+     *
+     * <p>Any standing exclusion previously remembered for this merchant is left
+     * alone — un-remembering is what {@link #assign} with a null entry is for.
+     */
+    @Transactional
+    public TransactionMapping excludeOnce(Long runId, Long transactionId) {
+        TransactionMapping mapping = mappingRepository.findByAnalysisRunIdAndTransactionId(runId, transactionId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Transaction " + transactionId + " is not part of run " + runId));
+
+        mapping.setBudgetEntryId(null);
+        mapping.setStatus(TransactionMapping.Status.EXCLUDED_ONCE);
+        mapping.setReason("Excluded this one only — no rule created");
+        mappingRepository.save(mapping);
+
+        recount(runId);
+        return mapping;
+    }
+
     /** Keep the run's counts in step after a manual change. */
     private void recount(Long runId) {
         int mapped = 0;
@@ -587,7 +664,7 @@ public class MappingService {
         for (TransactionMapping m : mappingRepository.findByAnalysisRunId(runId)) {
             switch (m.getStatus()) {
                 case PARKED -> parked++;
-                case EXCLUDED -> excluded++;
+                case EXCLUDED, EXCLUDED_ONCE -> excluded++;
                 default -> mapped++;
             }
         }

@@ -63,6 +63,29 @@
       .dup-head { font-weight: bold; color: #6b3b00; margin-bottom: 0.3rem; display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
       .help-q { display: inline-flex; align-items: center; justify-content: center; width: 1.3rem; height: 1.3rem; border-radius: 50%; border: 1px solid #c9a66b; background: #fff8e8; color: #8a4b00; font-size: 0.8rem; font-weight: bold; cursor: pointer; vertical-align: middle; padding: 0; line-height: 1; }
       .help-q:hover { background: #f0e2c6; }
+      .once-tag { display: inline-block; padding: 0 0.35rem; border-radius: 6px; background: #eef2ff; color: #3b4a8a; border: 1px solid #c3cdf0; font-size: 0.72rem; font-weight: 600; }
+
+      /* Screen header: title on the left, its help button pinned right. */
+      .view-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+      .view-head .view-title { flex: 1; }
+      .view-help { flex-shrink: 0; display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.28rem 0.6rem; border-radius: 999px; border: 1px solid #c9a66b; background: #fff8e8; color: #8a4b00; font-size: 0.8rem; font-weight: 600; cursor: pointer; }
+      .view-help:hover { background: #f0e2c6; }
+
+      /* The usage guide: topic rail on the left, scrolling content on the right. */
+      .guide { display: flex; gap: 1rem; max-height: 65vh; }
+      .guide-nav { flex: 0 0 165px; display: flex; flex-direction: column; gap: 0.2rem; overflow-y: auto; border-right: 1px solid #eadfd0; padding-right: 0.6rem; }
+      .guide-nav button { text-align: left; padding: 0.4rem 0.5rem; border: 0; border-radius: 8px; background: transparent; color: #5c4a33; font-size: 0.85rem; cursor: pointer; }
+      .guide-nav button:hover { background: #faf3e6; }
+      .guide-nav button.active { background: #fff8e8; color: #8a4b00; font-weight: 700; }
+      .guide-body { flex: 1; overflow-y: auto; padding-right: 0.4rem; line-height: 1.55; }
+      .guide-body h3 { color: #8a4b00; margin: 0 0 0.4rem; font-size: 1rem; }
+      .guide-body section { margin-bottom: 1.6rem; scroll-margin-top: 0.2rem; }
+      .guide-body section.flash h3 { animation: guideFlash 1.2s ease-out; }
+      @keyframes guideFlash { 0%, 40% { background: #ffeec2; } 100% { background: transparent; } }
+      .guide-body p { margin: 0 0 0.6rem; }
+      .guide-body ul { margin: 0 0 0.6rem; padding-left: 1.1rem; }
+      .guide-body li { margin-bottom: 0.25rem; }
+      .guide-body code { background: #f4ecdd; padding: 0 0.25rem; border-radius: 4px; }
       .stat.clickable { cursor: pointer; }
       .stat.clickable:hover { background: #faf3e8; border-color: #e0cfa4; }
       .stat.clickable .label::after { content: " ›"; color: #b57a2b; }
@@ -133,6 +156,7 @@
       .ingest-source .path { color: #7a6753; font-size: 0.85rem; word-break: break-all; }
       .history-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.6rem; align-items: center; }
       .modal-body.wide { width: min(640px, 100%); }
+      .modal-body.guide-modal { width: min(880px, 100%); }
       .browse-path { color: #7a6753; font-size: 0.85rem; margin-top: 0.3rem; word-break: break-all; }
       .browse-list { border: 1px solid #eee; border-radius: 10px; max-height: 340px; overflow: auto; margin-top: 0.6rem; overscroll-behavior: contain; }
       .browse-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.5rem 0.8rem; border-bottom: 1px solid #f3f3f3; }
@@ -237,6 +261,7 @@
           <div class="value" id="summaryMonthly">$0.00</div>
         </div>
         <div class="spacer"></div>
+        <button class="secondary" id="guideBtn" title="How to use Pig Purchases">? Help</button>
         <button class="secondary" id="restartBtn" title="Rebuild and restart the server to pick up code changes">Rebuild &amp; restart</button>
       </aside>
 
@@ -252,7 +277,10 @@
           </div>
           <div class="card">
             <section id="budgetView">
-              <h2 class="view-title">Budget Entries</h2>
+              <div class="view-head">
+                <h2 class="view-title">Budget Entries</h2>
+                <button class="view-help" data-guide="budget" title="Help for this screen">? Help</button>
+              </div>
               <div class="remainder-bar">
                 <div class="stat">
                   <div class="label">Monthly allowance</div>
@@ -285,7 +313,10 @@
             </section>
 
             <section id="sourcesView" style="display:none">
-              <h2 class="view-title">Statement Sources</h2>
+              <div class="view-head">
+                <h2 class="view-title">Statement Sources</h2>
+                <button class="view-help" data-guide="sources" title="Help for this screen">? Help</button>
+              </div>
               <p class="hint">Each source is an account's statement folder. Point it at the absolute folder path where those statement files live; you can add, edit, or remove sources anytime.</p>
               <div class="toolbar">
                 <button class="primary" id="addSourceBtn">Add Source</button>
@@ -304,7 +335,10 @@
             </section>
 
             <section id="ingestView" style="display:none">
-              <h2 class="view-title">Ingest Statements</h2>
+              <div class="view-head">
+                <h2 class="view-title">Ingest Statements</h2>
+                <button class="view-help" data-guide="ingest" title="Help for this screen">? Help</button>
+              </div>
               <p class="hint">Load each source's statement. Click &ldquo;Load statement&hellip;&rdquo;, drill into the folder, and pick the PDF. Loaded statements are listed by date (mm/dd/yy) &mdash; click one to open it in Acrobat, or &#128193; to show it in its folder.</p>
               <div class="toolbar" style="justify-content:flex-start;margin-bottom:0.8rem;">
                 <button class="secondary" id="addManualBtn">+ Add manual transaction</button>
@@ -314,7 +348,10 @@
             </section>
 
             <section id="mappingView" style="display:none">
-              <h2 class="view-title">Mapping</h2>
+              <div class="view-head">
+                <h2 class="view-title">Mapping</h2>
+                <button class="view-help" data-guide="mapping" title="Help for this screen">? Help</button>
+              </div>
               <p class="hint">Each ingested statement is mapped on its own. &ldquo;Map Transactions&rdquo; categorizes
                 every statement that hasn't been mapped yet; transactions land in the month they actually occurred
                 (Spend screens group by transaction date). Use &ldquo;Re-run mapping&rdquo; to re-map specific files
@@ -330,7 +367,10 @@
             </section>
 
             <section id="spendMonthlyView" style="display:none">
-              <h2 class="view-title with-month">Spend: Monthly <span id="monthlyTitleMonth" class="title-month"></span></h2>
+              <div class="view-head">
+                <h2 class="view-title with-month">Spend: Monthly <span id="monthlyTitleMonth" class="title-month"></span></h2>
+                <button class="view-help" data-guide="spend-monthly" title="Help for this screen">? Help</button>
+              </div>
               <div id="monthlyEmpty" class="empty" style="display:none">
                 No mapped months yet. Map a month on the Mapping screen, then come back here.
               </div>
@@ -355,7 +395,10 @@
             </section>
 
             <section id="spendRollingView" style="display:none">
-              <h2 class="view-title">Spend: Rolling</h2>
+              <div class="view-head">
+                <h2 class="view-title">Spend: Rolling</h2>
+                <button class="view-help" data-guide="spend-rolling" title="Help for this screen">? Help</button>
+              </div>
               <div id="rollingEmpty" class="empty" style="display:none">
                 No mapped months yet. Map a month on the Mapping screen, then come back here.
               </div>
@@ -372,7 +415,10 @@
             </section>
 
             <section id="settingsView" style="display:none">
-              <h2 class="view-title">Settings</h2>
+              <div class="view-head">
+                <h2 class="view-title">Settings</h2>
+                <button class="view-help" data-guide="settings" title="Help for this screen">? Help</button>
+              </div>
               <div class="settings-form">
                 <div class="field">
                   <label for="annualBudgetInput">Annual budget ($)</label>
@@ -433,7 +479,10 @@
             </section>
 
             <section id="debugView" style="display:none">
-              <h2 class="view-title">Debug</h2>
+              <div class="view-head">
+                <h2 class="view-title">Debug</h2>
+                <button class="view-help" data-guide="debug" title="Help for this screen">? Help</button>
+              </div>
               <p class="hint">A record of what the app did behind the scenes &mdash; most usefully, every
                 call out to Anthropic for AI categorization, with its result or error. Newest first.</p>
               <div class="toolbar" style="justify-content:flex-start; gap:0.6rem;">
@@ -489,6 +538,192 @@
           <button class="secondary" id="hintSkipBtn">Skip</button>
         </div>
         <div id="hintMsg" class="hint"></div>
+      </div>
+    </div>
+
+    <div id="guideModal" class="modal" aria-hidden="true">
+      <div class="modal-body guide-modal">
+        <h2>Using Pig Purchases</h2>
+        <div class="guide">
+          <div class="guide-nav" id="guideNav">
+            <button data-goto="overview">Overview</button>
+            <button data-goto="budget">Budget Entries</button>
+            <button data-goto="sources">Statement Sources</button>
+            <button data-goto="ingest">Ingest</button>
+            <button data-goto="mapping">Mapping</button>
+            <button data-goto="spend-monthly">Spend: Monthly</button>
+            <button data-goto="spend-rolling">Spend: Rolling</button>
+            <button data-goto="settings">Settings</button>
+            <button data-goto="debug">Debug</button>
+          </div>
+          <div class="guide-body" id="guideBody">
+
+            <section id="guide-overview">
+              <h3>Overview</h3>
+              <p>Pig Purchases turns your statement PDFs into a monthly budget-vs-actual picture.
+                Everything stays on this machine; the only thing that ever leaves it is a
+                transaction's description and vendor text, sent to categorize the few charges the
+                rules can't place. <strong>Dollar amounts never leave.</strong></p>
+              <p><strong>The usual rhythm, once a month:</strong></p>
+              <ul>
+                <li><strong>Ingest</strong> — load each account's new statement.</li>
+                <li><strong>Mapping</strong> — click “Map Transactions”, then review whatever landed
+                  in “Other” and categorize it.</li>
+                <li><strong>Spend: Monthly</strong> — check the month, and tick <em>Complete</em>
+                  once every statement covering it has been loaded.</li>
+                <li><strong>Spend: Rolling</strong> — see what a typical month actually looks like.</li>
+              </ul>
+              <p><strong>First-time setup</strong> is Budget Entries (what you plan to spend),
+                Statement Sources (where your PDFs live), and the annual budget in Settings.</p>
+              <p><strong>The one idea worth knowing:</strong> categorization learns. Every correction
+                you make is remembered, and hints you write on budget entries catch whole families of
+                charges at once. The first month is the most work; it drops off quickly.</p>
+            </section>
+
+            <section id="guide-budget">
+              <h3>Budget Entries</h3>
+              <p>What you plan to spend, one row per category. Each entry has a per-unit amount and a
+                quantity — “Pharm copays, 6 × $10” stores $60 as the monthly budget.</p>
+              <p>The bar at the top shows your monthly allowance (annual budget ÷ 12), how much of it
+                these entries account for, and what's left. That remainder is the budget for
+                <strong>“Other (discretionary)”</strong> on the Spend screens — it isn't slack, it's
+                the everyday spending you didn't itemize.</p>
+              <p><strong>Hints are the important field.</strong> They're how a charge finds its
+                category:</p>
+              <ul>
+                <li>A line beginning <code>match:</code> is matched literally against the statement
+                  text — <code>match: MERIDIAN MOTORS</code>. Punctuation and case are ignored, so
+                  <code>City Power</code> catches <code>CITYPOWER 800-555-0142 CA</code>.</li>
+                <li>Join parts with <code>+</code> to require all of them:
+                  <code>match: MP + MAILORDER</code> catches the the pharmacy pharmacy line without
+                  <code>KP</code> grabbing everything else.</li>
+                <li>Any other line is plain prose, read only by the AI pass — “this is my auto loan”.</li>
+              </ul>
+              <p>The entry's own name is always matched too, so an entry called “Fresh Market” needs no hint
+                at all. You rarely have to write these by hand: when you categorize something during
+                review, the app offers to save the hint for you.</p>
+            </section>
+
+            <section id="guide-sources">
+              <h3>Statement Sources</h3>
+              <p>One row per account, each pointing at the folder where that account's statement PDFs
+                live. Give the absolute path; the app only ever reads from it.</p>
+              <p>“Excluded from spend” shows the transfers this source drops automatically — a credit
+                card payment made from your checking account is real on both statements, but counting
+                it twice would be wrong. These come from the source's parser rules.</p>
+              <p><strong>Known gap:</strong> the form edits the name and folder only. Which parser
+                reads the PDFs still has to be set through the API
+                (<code>PUT /api/statement-sources/{id}/parser-rules</code>), so a source created here
+                can't be ingested until that's done — you'll see
+                <em>“No parser configured”</em> if you try.</p>
+            </section>
+
+            <section id="guide-ingest">
+              <h3>Ingest</h3>
+              <p>Where statements become transactions. Click “Load statement…”, drill into the
+                folder, pick the PDF. Loaded statements appear as date chips — click one to open it
+                in Acrobat, or 📁 to show it in its folder.</p>
+              <p><strong>Re-loading the same statement is safe.</strong> Loading a statement the app
+                already has for that source and date replaces the old copy rather than duplicating
+                it, so you can re-load freely if something looked wrong.</p>
+              <p><strong>Manual transactions</strong> are for spend that never appears on any
+                statement — a Venmo balance, cash. They're checked against same-day, same-amount
+                transactions as you enter them so you don't double-count something that will also
+                arrive on a statement.</p>
+            </section>
+
+            <section id="guide-mapping">
+              <h3>Mapping</h3>
+              <p>Where transactions get their categories. Each statement is mapped on its own.
+                <strong>Map Transactions</strong> handles every statement not yet mapped;
+                <strong>Re-run mapping</strong> re-does specific files — do that after adding a hint
+                you want applied to charges already sitting in “Other”.</p>
+              <p>Each charge is resolved by the first of these that works: an excluded transfer, a
+                hint or entry-name match, an answer remembered from a previous month, then the AI.
+                Anything left is <strong>parked</strong>.</p>
+              <p><strong>Parked charges still count as spend.</strong> They show up under “Other” —
+                real money that just isn't attributed yet, so your monthly total is right even before
+                you've sorted them. Working through that list is the main review job, and every fix
+                you make is remembered for next month.</p>
+              <p><strong>Review all</strong> shows every transaction in a run with search, for when
+                you want to check or bulk-change things beyond the parked ones.
+                <strong>Check for duplicates</strong> finds same-date, same-amount charges that may
+                have arrived on two overlapping statements; if a pair is genuinely two separate
+                purchases, dismiss it and you won't be asked again.</p>
+              <p><strong>Not spend — the two kinds.</strong> When something shouldn't count toward
+                spend, you have two choices, and the difference matters:</p>
+              <ul>
+                <li><strong>🚫 Not spend — exclude</strong> creates a standing rule. That merchant is
+                  excluded now <em>and every time it appears in future</em>. Right for transfers,
+                  card payments, and deposits.</li>
+                <li><strong>📌 Not spend — just this one</strong> excludes only that single charge and
+                  creates no rule at all. Right for one-time exceptions — a trip paid for out of gift
+                  money, a purchase you were reimbursed for — where the same merchant should still
+                  count normally next month.</li>
+              </ul>
+              <p>A one-off exclusion sticks to that exact transaction, so re-running the statement's
+                mapping won't undo it. To reverse either kind, set the row back to a category or to
+                “Other (parked)”.</p>
+            </section>
+
+            <section id="guide-spend-monthly">
+              <h3>Spend: Monthly</h3>
+              <p>Budget vs. actual for one calendar month. Charges are grouped by <strong>the date
+                they actually happened</strong>, not by which statement they arrived on — so a
+                billing cycle that closes mid-month lands in the right place automatically.</p>
+              <p>Click any category to see the transactions behind it, and change them there —
+                individually or by ticking several and using “Apply to selected”. The
+                <strong>Excluded (not spend)</strong> tile drills in the same way, so anything wrongly
+                excluded is easy to pull back.</p>
+              <p><strong>The Complete tick-box matters.</strong> A month is only counted in the
+                rolling average once you mark it complete. Leave it unticked until every statement
+                covering that month has been loaded — otherwise a half-loaded month drags the
+                averages down. The app suggests when a month looks finished, but the call is yours.</p>
+            </section>
+
+            <section id="guide-spend-rolling">
+              <h3>Spend: Rolling</h3>
+              <p>What a typical month actually costs: your average across every month marked
+                complete, per category and in total, against the same budget. This is the screen for
+                “am I over on groceries in general”, as opposed to “was I over in June”.</p>
+              <p>Only complete months are averaged, so the number isn't distorted by a month that's
+                still half-loaded. Click a category for its month-by-month trend against its budget.</p>
+              <p>The trend chart lower down deliberately shows <em>every</em> month including partial
+                ones, so recent activity is visible even before a month is finished.</p>
+            </section>
+
+            <section id="guide-settings">
+              <h3>Settings</h3>
+              <p><strong>Annual budget</strong> drives everything on the Spend screens — the monthly
+                allowance is simply this ÷ 12.</p>
+              <p><strong>Database backups.</strong> The app writes a full SQL backup outside its own
+                data folder, one per day, keeping as many as you set here. “Back up now” forces one.
+                If a backup ever looks like it captured a broken state, it's saved separately marked
+                <code>SUSPECT</code> and the good one is left alone.</p>
+              <p><strong>Restore is safe to explore.</strong> Pick a backup and preview it: the whole
+                app switches to showing that backup, with a validation report and a banner reminding
+                you. Your live data is untouched until you press Commit — Cancel simply drops the
+                preview.</p>
+              <p><strong>Mapping reminder</strong> puts a badge and banner up if you reach the chosen
+                day of the month without having mapped anything. Set 0 to turn it off.</p>
+            </section>
+
+            <section id="guide-debug">
+              <h3>Debug</h3>
+              <p>A record of what the app did behind the scenes — most usefully, every categorization
+                call and its result or error.</p>
+              <p><strong>Look here when a mapping run categorizes nothing.</strong> The reason will be
+                on this screen: no API key configured, a rejected key, or no credits. Without
+                credentials the AI pass is skipped silently and everything unmatched simply stays in
+                “Other”, which is a working state, not a failure.</p>
+              <p>Entries are kept for the number of days set in Settings, then pruned.</p>
+            </section>
+
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="secondary" id="guideCloseBtn">Close</button>
+        </div>
       </div>
     </div>
 
@@ -715,6 +950,40 @@
       document.getElementById('cancelModalBtn').addEventListener('click', closeModal);
       document.getElementById('saveItemBtn').addEventListener('click', saveItem);
       document.getElementById('restartBtn').addEventListener('click', restartServer);
+
+      // ---- Usage guide -------------------------------------------------------
+      // One document, reached two ways: the sidebar button opens it at the
+      // overview, a screen's own "? Help" opens it at that screen's section. Keeping
+      // it in one place is why the two can never drift apart.
+
+      function openGuide(section) {
+        showModalEl('guideModal');
+        const target = document.getElementById('guide-' + (section || 'overview'));
+        const body = document.getElementById('guideBody');
+        if (target) {
+          // Position without smooth-scrolling: the modal has just been shown, and an
+          // animated scroll from a zero-height box lands in the wrong place.
+          body.scrollTop = target.offsetTop - body.offsetTop;
+          target.classList.remove('flash');
+          void target.offsetWidth; // restart the animation if the same section reopens
+          target.classList.add('flash');
+        } else {
+          body.scrollTop = 0;
+        }
+        document.querySelectorAll('#guideNav button').forEach((b) => {
+          b.classList.toggle('active', b.dataset.goto === (section || 'overview'));
+        });
+      }
+
+      document.getElementById('guideBtn').addEventListener('click', () => openGuide('overview'));
+      document.getElementById('guideCloseBtn').addEventListener('click', () => hideModalEl('guideModal'));
+      backdropClose(document.getElementById('guideModal'), () => hideModalEl('guideModal'));
+      document.querySelectorAll('#guideNav button').forEach((b) => {
+        b.addEventListener('click', () => openGuide(b.dataset.goto));
+      });
+      document.querySelectorAll('.view-help').forEach((b) => {
+        b.addEventListener('click', () => openGuide(b.dataset.guide));
+      });
       document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
       document.getElementById('backupNowBtn').addEventListener('click', backupNow);
       document.getElementById('backupRefreshBtn').addEventListener('click', loadBackupStatus);
@@ -1595,8 +1864,9 @@
 
       let hintTargetEntryId = null;
       // Offer to remember a rule after categorizing to a real entry (not Other/exclude).
+      // Never for a one-off exclusion — creating no rule is the whole point of it.
       function offerHint(entryValue, sampleDescription) {
-        if (!entryValue || entryValue === '__EXCLUDE__') return; // only real budget entries
+        if (!entryValue || isExcludeValue(entryValue)) return; // only real budget entries
         hintTargetEntryId = entryValue;
         document.getElementById('hintEntryName').textContent = entryTitleById(entryValue);
         document.getElementById('hintSampleDesc').textContent = sampleDescription || '(no description)';
@@ -2213,6 +2483,7 @@
         document.getElementById('catBulkSelect').innerHTML =
           '<option value="">Apply to selected…</option>'
           + '<option value="__EXCLUDE__">🚫 Not spend — exclude</option>'
+          + '<option value="__EXCLUDE_ONCE__">📌 Not spend — just this one</option>'
           + sortedEntryOptions();
         document.getElementById('catSelectAll').checked = false;
         await renderCategoryDetail();
@@ -2245,10 +2516,10 @@
             <input type="checkbox" class="cat-check" data-txn="${l.transactionId}" data-run="${l.analysisRunId}" data-desc="${escapeHtml(l.description || '')}" />
             <div class="cat-desc">
               <div>${escapeHtml(l.description || '')}</div>
-              <div class="cat-date">${formatMmDdYy(l.date)}${l.vendor && l.vendor !== l.description ? ' · ' + escapeHtml(l.vendor) : ''}</div>
+              <div class="cat-date">${formatMmDdYy(l.date)}${l.vendor && l.vendor !== l.description ? ' · ' + escapeHtml(l.vendor) : ''}${l.status === 'EXCLUDED_ONCE' ? ' · <span class="once-tag">one-off</span>' : ''}</div>
             </div>
             <div class="cat-amt">${formatCurrency(l.amount)}</div>
-            <select data-txn="${l.transactionId}" data-run="${l.analysisRunId}" data-desc="${escapeHtml(l.description || '')}">${reassignRowOptions(curVal)}</select>
+            <select data-txn="${l.transactionId}" data-run="${l.analysisRunId}" data-desc="${escapeHtml(l.description || '')}">${reassignRowOptions(rowCatValue(l, curVal))}</select>
           </div>
         `).join('')
           + `<div class="cat-row"><div class="cat-desc"><strong>Total (${lines.length})</strong></div>`
@@ -2264,6 +2535,17 @@
         updateCatSelCount();
       }
 
+      /**
+       * The dropdown value for one row of a category drill-down. Rows normally share
+       * the category being viewed, but the Excluded bucket mixes standing and one-off
+       * exclusions, so those are read from the row's own status.
+       */
+      function rowCatValue(line, curVal) {
+        if (line.status === 'EXCLUDED') return '__EXCLUDE__';
+        if (line.status === 'EXCLUDED_ONCE') return '__EXCLUDE_ONCE__';
+        return curVal;
+      }
+
       /** Per-row category dropdown, alphabetical, with the transaction's current category preselected. */
       function reassignRowOptions(curVal) {
         const entryOpts = [...entries]
@@ -2272,6 +2554,7 @@
           .join('');
         return `<option value="" ${curVal === '' ? 'selected' : ''}>Other (parked)</option>`
           + `<option value="__EXCLUDE__" ${curVal === '__EXCLUDE__' ? 'selected' : ''}>🚫 Not spend — exclude</option>`
+          + `<option value="__EXCLUDE_ONCE__" ${curVal === '__EXCLUDE_ONCE__' ? 'selected' : ''}>📌 Not spend — just this one</option>`
           + entryOpts;
       }
 
@@ -2283,6 +2566,7 @@
       /** The dropdown value that represents a row's current mapping. */
       function currentCatValue(row) {
         if (row.status === 'EXCLUDED') return '__EXCLUDE__';
+        if (row.status === 'EXCLUDED_ONCE') return '__EXCLUDE_ONCE__';
         return row.budgetEntryId != null ? String(row.budgetEntryId) : '';
       }
       function entryName(id) {
@@ -2308,6 +2592,7 @@
         document.getElementById('reviewAllBulkSelect').innerHTML =
           '<option value="">Apply to selected…</option>'
           + '<option value="__EXCLUDE__">🚫 Not spend — exclude</option>'
+          + '<option value="__EXCLUDE_ONCE__">📌 Not spend — just this one</option>'
           + sortedEntryOptions();
         document.getElementById('reviewAllModal').classList.add('open');
         document.getElementById('reviewAllModal').setAttribute('aria-hidden', 'false');
@@ -2364,6 +2649,7 @@
       /** Reflect a saved change in the local row so search and re-render stay correct. */
       function applyRowValue(row, value) {
         if (value === '__EXCLUDE__') { row.status = 'EXCLUDED'; row.budgetEntryId = null; row.budgetEntryName = null; }
+        else if (value === '__EXCLUDE_ONCE__') { row.status = 'EXCLUDED_ONCE'; row.budgetEntryId = null; row.budgetEntryName = null; }
         else if (!value) { row.status = 'PARKED'; row.budgetEntryId = null; row.budgetEntryName = 'Other'; }
         else { row.status = 'MAPPED_MANUAL'; row.budgetEntryId = Number(value); row.budgetEntryName = entryName(Number(value)); }
       }
@@ -2424,12 +2710,18 @@
       }
 
       function catPayload(value) {
+        // "once" excludes this single transaction without teaching the app a rule.
+        if (value === '__EXCLUDE_ONCE__') return { exclude: true, once: true };
         if (value === '__EXCLUDE__') return { exclude: true };
         return { budgetEntryId: value ? Number(value) : null };
       }
       function stillInViewedCategory(value) {
-        const newKey = value === '__EXCLUDE__' ? '__excluded__' : (value || 'other');
+        const newKey = isExcludeValue(value) ? '__excluded__' : (value || 'other');
         return newKey === String(catViewedKey);
+      }
+      /** Both flavours of "not spend" land in the same Excluded bucket. */
+      function isExcludeValue(value) {
+        return value === '__EXCLUDE__' || value === '__EXCLUDE_ONCE__';
       }
 
       async function reassignMapped(select) {

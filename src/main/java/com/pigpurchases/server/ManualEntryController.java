@@ -68,6 +68,7 @@ public class ManualEntryController {
         }
         return switch (m.getStatus()) {
             case EXCLUDED -> "Not spend";
+            case EXCLUDED_ONCE -> "Not spend (this one)";
             case PARKED -> "Other";
             default -> m.getBudgetEntryId() != null
                     ? entryName.getOrDefault(m.getBudgetEntryId(), "Other") : "Other";
