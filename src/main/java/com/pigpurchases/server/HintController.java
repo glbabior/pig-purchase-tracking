@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,8 +45,17 @@ public class HintController {
     public Map<String, Object> hints() {
         Map<String, Object> out = new HashMap<>();
         out.put("hints", hintService.allHints());
+
+        // Sorted by name, not left in insertion order. The screen is a list you scan looking
+        // for one category, and creation order is an order only the database knows. Sorted
+        // here rather than in the page so the category picker on "add a hint" agrees with the
+        // table behind it — the same list in two orders is its own small bug.
+        List<BudgetEntry> sorted = new ArrayList<>(entryRepository.findAll());
+        sorted.sort(Comparator.comparing(e -> e.getName() == null ? "" : e.getName(),
+                String.CASE_INSENSITIVE_ORDER));
+
         List<Map<String, Object>> entries = new ArrayList<>();
-        for (BudgetEntry e : entryRepository.findAll()) {
+        for (BudgetEntry e : sorted) {
             Map<String, Object> m = new HashMap<>();
             m.put("id", e.getId());
             m.put("name", e.getName());

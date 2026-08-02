@@ -216,6 +216,28 @@
       .cat-row .cat-amt { white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: bold; color: #8a4b00; }
       .cat-row select { border: 1px solid #ddd; padding: 0.35rem; border-radius: 8px; font: inherit; max-width: 190px; }
       .cat-check { width: 1.05rem; height: 1.05rem; flex-shrink: 0; cursor: pointer; }
+
+      /* Matching Hints: one rule per row.
+         Not .cat-row — that aligns on the BASELINE, which drops a padded pill button out of
+         line with the text beside it. Centred instead, so a rule that wraps to two lines keeps
+         its button in the middle. No horizontal padding, so the Remove buttons share a right
+         edge with the dialog's own Close button rather than sitting a few pixels inboard. */
+      .hint-row { display: flex; align-items: center; justify-content: space-between;
+                  gap: 0.9rem; padding: 0.65rem 0; border-bottom: 1px solid #f3f3f3; }
+      .hint-row:last-child { border-bottom: none; }
+      .hint-row .hint-desc { flex: 1; min-width: 0; word-break: break-word; }
+      .hint-row .hint-state { margin-top: 0.3rem; }
+      /* Same width as Close, so every button in this dialog is one size. */
+      .hint-row button, #categoryHintsModal .modal-actions button { min-width: 7rem; flex-shrink: 0; }
+      /* A badge that opens something. Keeps the badge's colour, gains a pointer. */
+      .badge.clickable { border: none; font: inherit; font-size: 0.8rem; cursor: pointer;
+                         text-decoration: underline; }
+      .match-row { display: flex; align-items: baseline; justify-content: space-between;
+                   gap: 0.9rem; padding: 0.4rem 0; border-bottom: 1px solid #f3f3f3; }
+      .match-row:last-child { border-bottom: none; }
+      .match-row .match-desc { flex: 1; min-width: 0; word-break: break-word; font-size: 0.9rem; }
+      .match-row .match-amt { white-space: nowrap; font-variant-numeric: tabular-nums;
+                              font-weight: bold; color: #8a4b00; }
       .review-search { width: 100%; box-sizing: border-box; border: 1px solid #ddd; padding: 0.6rem 0.7rem; border-radius: 8px; font: inherit; margin: 0.2rem 0 0.4rem; }
       .bar-cell { width: 30%; min-width: 90px; }
       .minibar { position: relative; height: 0.7rem; background: #eef0ee; border-radius: 4px; overflow: hidden; }
@@ -563,6 +585,19 @@
         <div class="modal-actions">
           <button class="primary" id="categoryHintsAddBtn">Add a hint for this category</button>
           <button class="secondary" id="categoryHintsCloseBtn">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="hintMatchesModal" class="modal" aria-hidden="true">
+      <div class="modal-body">
+        <h2 id="hintMatchesTitle">Transactions matched</h2>
+        <p class="hint">Every transaction already loaded whose description contains this rule.
+          Amounts are signed the way the rest of the app signs them, so a refund shows as
+          negative.</p>
+        <div id="hintMatchesList"></div>
+        <div class="modal-actions">
+          <button class="secondary" id="hintMatchesBackBtn">Back</button>
         </div>
       </div>
     </div>
@@ -1197,6 +1232,16 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
       });
       backdropClose(document.getElementById('categoryHintsModal'),
         () => hideModalEl('categoryHintsModal'));
+      // "Back", not "Close" — this dialog is only ever reached from the category's hints, and
+      // dumping the user out to the table would cost them their place.
+      document.getElementById('hintMatchesBackBtn').addEventListener('click', () => {
+        hideModalEl('hintMatchesModal');
+        if (categoryHintsEntryId) openCategoryHints(categoryHintsEntryId);
+      });
+      backdropClose(document.getElementById('hintMatchesModal'), () => {
+        hideModalEl('hintMatchesModal');
+        if (categoryHintsEntryId) openCategoryHints(categoryHintsEntryId);
+      });
       document.getElementById('checkConflictsBtn').addEventListener('click', checkHintConflicts);
       document.getElementById('newHintPreviewBtn').addEventListener('click', previewHint);
       document.getElementById('newHintSaveBtn').addEventListener('click', saveNewHint);
@@ -1723,15 +1768,19 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
             + 'name, or by the AI pass.</div>';
         } else {
           list.innerHTML = mine.map((h) => {
+            // A count you cannot open is a number you have to take on trust. Where there is
+            // something to show, the badge opens it; where there is not, it stays inert rather
+            // than looking clickable and doing nothing.
             const state = h.problem
               ? `<span class="badge parked">ignored — ${escapeHtml(h.problem)}</span>`
               : h.matchCount === 0
                 ? '<span class="badge parked">matches nothing yet</span>'
-                : `<span class="badge mapped">matches ${h.matchCount}</span>`;
-            return `<div class="cat-row">
-              <div class="cat-desc">
+                : `<button class="badge mapped clickable" data-show-matches="${escapeHtml(h.hint || '')}"
+                           data-entry="${h.entryId}">matches ${h.matchCount}</button>`;
+            return `<div class="hint-row">
+              <div class="hint-desc">
                 <div><code>${escapeHtml(formatHintTerms(h.hint))}</code></div>
-                <div class="cat-date">${state}</div>
+                <div class="hint-state">${state}</div>
               </div>
               <button class="secondary" data-del-hint="${escapeHtml(h.hint || '')}"
                       data-entry="${h.entryId}">Remove</button>
@@ -1740,8 +1789,59 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
           list.querySelectorAll('button[data-del-hint]').forEach((b) => {
             b.addEventListener('click', () => removeHint(b.dataset.entry, b.dataset.delHint));
           });
+          list.querySelectorAll('button[data-show-matches]').forEach((b) => {
+            b.addEventListener('click', () => showHintMatches(b.dataset.entry, b.dataset.showMatches));
+          });
         }
         showModalEl('categoryHintsModal');
+      }
+
+      /**
+       * The transactions one saved rule catches.
+       *
+       * <p>Reuses the preview endpoint: "what would this rule match" and "what does this rule
+       * match" are the same question, and asking it against the rule's own category is exactly
+       * the already-saved case.
+       */
+      async function showHintMatches(entryId, hint) {
+        const list = document.getElementById('hintMatchesList');
+        document.getElementById('hintMatchesTitle').textContent =
+          'Matched by ' + formatHintTerms(hint);
+        list.innerHTML = '<div class="hint">Looking…</div>';
+        hideModalEl('categoryHintsModal');
+        showModalEl('hintMatchesModal');
+        try {
+          const r = await fetch('/api/hints/preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entryId, hint })
+          });
+          if (!r.ok) {
+            const payload = await r.json().catch(() => null);
+            throw new Error(payload && payload.error ? payload.error : 'HTTP ' + r.status);
+          }
+          const p = await r.json();
+          const samples = p.samples || [];
+          const rows = samples.map((s) => `<div class="match-row">
+              <div class="match-desc">
+                <div>${escapeHtml(s.description || '')}</div>
+                <div class="cat-date">${escapeHtml(formatMmDdYy(s.date) || '')}</div>
+              </div>
+              <div class="match-amt">${escapeHtml(formatCurrency(s.amount))}</div>
+            </div>`).join('');
+          // Say when the list is shorter than the count. Truncating in silence reads as
+          // "that is all of them".
+          const more = p.matchCount > samples.length
+            ? `<div class="hint" style="margin-top:0.5rem;">Showing the first ${samples.length}
+                 of ${p.matchCount}.</div>`
+            : '';
+          list.innerHTML = rows
+            ? `<div class="hint">${p.matchCount} transaction(s) matched.</div>${rows}${more}`
+            : '<div class="hint">Nothing matches this rule yet.</div>';
+        } catch (err) {
+          list.innerHTML = `<div class="run-error">Could not load the matches: `
+            + `${escapeHtml(err.message)}</div>`;
+        }
       }
 
       async function removeHint(entryId, hint) {
@@ -1803,7 +1903,9 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
           }
           const terms = `<div class="hint">Matching on ${escapeHtml(formatHintTerms(hint))}</div>`;
           const samples = (p.samples || []).map((s) =>
-            `<div style="font-family:monospace;font-size:0.85em;">${escapeHtml(s)}</div>`).join('');
+            `<div style="font-family:monospace;font-size:0.85em;">`
+            + `${escapeHtml(formatMmDdYy(s.date) || '')}  ${escapeHtml(s.description || '')}`
+            + `</div>`).join('');
           // The steal warning matters more than the count: a rule catching plenty is only
           // good news if none of it is already filed where you meant it to be.
           const steal = (p.alreadyElsewhere || []).length

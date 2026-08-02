@@ -31,6 +31,13 @@ import java.util.Map;
 @Service
 public class HintService {
 
+    /**
+     * How many matching transactions a preview returns. The count is always exact; this caps
+     * only the list, and the screen says so when it truncates — a silent cut would read as
+     * "that is all of them".
+     */
+    static final int SAMPLE_LIMIT = 25;
+
     @Autowired private BudgetEntryRepository entryRepository;
     @Autowired private TransactionRepository transactionRepository;
 
@@ -42,9 +49,19 @@ public class HintService {
     public record Conflict(Long transactionId, String date, String description,
                            List<String> claims, boolean parks) {}
 
+    /**
+     * One transaction a rule catches.
+     *
+     * <p>Fielded rather than a formatted line, because the same data is now read two ways:
+     * as a before-you-save preview, and as the answer to "show me the ones this rule already
+     * matches". The second wants an amount, and a caller that has to parse it back out of a
+     * string is a caller that will get it wrong.
+     */
+    public record Sample(Long transactionId, String date, String description, String amount) {}
+
     /** What a candidate rule would catch, before it is saved. */
     public record Preview(String hint, String problem, int matchCount,
-                          List<String> samples, List<String> alreadyElsewhere) {}
+                          List<Sample> samples, List<String> alreadyElsewhere) {}
 
     /**
      * Every rule across every category, with the reason it is ignored (if it is) and how
@@ -143,7 +160,7 @@ public class HintService {
         HintMatcher single = HintMatcher.forSingleHint(entry, hint);
         HintMatcher existing = new HintMatcher(entryRepository.findAll());
 
-        List<String> samples = new ArrayList<>();
+        List<Sample> samples = new ArrayList<>();
         List<String> elsewhere = new ArrayList<>();
         int count = 0;
         for (Transaction txn : transactionRepository.findAll()) {
@@ -151,12 +168,16 @@ public class HintService {
                 continue;
             }
             count++;
-            if (samples.size() < 25) {
-                samples.add((txn.getTransactionDate() == null ? "" : txn.getTransactionDate() + "  ")
-                        + txn.getDescription());
+            if (samples.size() < SAMPLE_LIMIT) {
+                // Signed the same way the rest of the app signs it, so a refund reads as a
+                // refund here too rather than as spend this rule is capturing.
+                samples.add(new Sample(txn.getId(),
+                        txn.getTransactionDate() == null ? null : txn.getTransactionDate().toString(),
+                        txn.getDescription(),
+                        AnalysisService.signedSpend(txn).toPlainString()));
             }
             existing.match(txn.getDescription(), txn.getVendor()).ifPresent(m -> {
-                if (!m.entry().getId().equals(entryId) && elsewhere.size() < 25) {
+                if (!m.entry().getId().equals(entryId) && elsewhere.size() < SAMPLE_LIMIT) {
                     elsewhere.add(txn.getDescription() + "  →  currently " + m.entry().getName());
                 }
             });

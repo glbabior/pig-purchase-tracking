@@ -26,11 +26,13 @@ The UI is a single browser tab with nine screens, worked roughly left to right.
 carries an optional free-text **hints** field, which is the knowledge base that
 categorization gets better from. See [Writing hints](#writing-hints).
 
-**Matching Hints** — one row per category, showing how many hints it has and how much
-they catch. Click a category to see, add or remove its hints; terms are quoted so the
-split points of a `+` hint are visible. Categories with **no** hints are listed too —
-those rely on the category name or the AI. Hints still live on the budget entries; this
-is the only view where hints on one category can be compared with hints on another.
+**Matching Hints** — one row per category, sorted by name, showing how many hints it has
+and how much they catch. Click a category to see, add or remove its hints; terms are
+quoted so the split points of a `+` hint are visible, and a hint's **matches N** badge
+opens the transactions it actually catches (dated, with the amount signed the same way
+the rest of the app signs it). Categories with **no** hints are listed too — those rely
+on the category name or the AI. Hints still live on the budget entries; this is the only
+view where hints on one category can be compared with hints on another.
 
 It flags hints that are **ignored** (with the reason) separately from hints that simply
 **match nothing yet**, previews what a new hint would catch *before* saving — including
@@ -421,9 +423,11 @@ Served by nine controllers on `localhost:8080`.
 rules and its prose untouched)
 
 **Hints** — `GET /api/hints` (every rule, with why it's ignored and how many
-transactions it matches), `GET /api/hints/conflicts` (transactions claimed by more than
-one category, flagged for whether the tie parks them), `POST /api/hints/preview`
-`{entryId, hint}` (what a rule would catch, and what it would take from elsewhere)
+transactions it matches, plus every category sorted by name), `GET /api/hints/conflicts`
+(transactions claimed by more than one category, flagged for whether the tie parks them),
+`POST /api/hints/preview` `{entryId, hint}` (what a rule would catch, and what it would
+take from elsewhere — `samples` are `{transactionId, date, description, amount}` and are
+capped at 25 while `matchCount` stays exact)
 
 **Settings** — `GET|PUT /api/settings` (annual budget, debug-log retention,
 notification day, backup retention)

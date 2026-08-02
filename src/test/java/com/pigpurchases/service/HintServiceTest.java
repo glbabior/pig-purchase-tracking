@@ -46,9 +46,13 @@ class HintServiceTest {
     }
 
     private void txn(String description) {
+        txn(description, "PURCHASE", "10.00");
+    }
+
+    private void txn(String description, String type, String amount) {
         Transaction t = new Transaction(LocalDate.of(2026, 6, 15), description, description,
-                new BigDecimal("10.00"), "2026-06");
-        t.setType("PURCHASE");
+                new BigDecimal(amount), "2026-06");
+        t.setType(type);
         txnRepo.save(t);
     }
 
@@ -144,6 +148,42 @@ class HintServiceTest {
         assertEquals(2, p.matchCount(), "both Daily Grind rows, whatever the store number");
         assertEquals(2, p.samples().size());
         assertTrue(p.alreadyElsewhere().isEmpty(), "nothing else claims them");
+
+        // The screen shows these as transaction rows, so each sample must carry the fields a
+        // row needs. A formatted line would force the caller to parse the amount back out.
+        HintService.Sample s = p.samples().get(0);
+        assertNotNull(s.transactionId());
+        assertEquals("2026-06-15", s.date());
+        assertTrue(s.description().contains("DAILYGRIND"), s.description());
+        assertEquals("10.00", s.amount());
+    }
+
+    @Test
+    void aMatchedRefundIsShownAsMoneyInRatherThanSpend() {
+        // Signed the way AnalysisService signs it. Shown unsigned, a 150 refund would read as
+        // 150 of spend this rule is capturing — the exact inversion that made a category go the
+        // wrong way on the review screen.
+        BudgetEntry coffee = entry("Coffee", null);
+        txn("DAILYGRIND REFUND", "CREDIT", "150.00");
+
+        HintService.Preview p = hintService.preview(coffee.getId(), "DAILYGRIND");
+        assertEquals(1, p.matchCount());
+        assertEquals("-150.00", p.samples().get(0).amount(),
+                "a credit must come back negative, not as spend");
+    }
+
+    @Test
+    void theSampleListIsCappedButTheCountIsNot() {
+        // The count drives "matches N" on screen. If it were capped too, a rule catching
+        // hundreds would quietly report 25 and look far narrower than it is.
+        BudgetEntry coffee = entry("Coffee", null);
+        for (int i = 0; i < HintService.SAMPLE_LIMIT + 7; i++) {
+            txn("DAILYGRIND STORE " + i);
+        }
+
+        HintService.Preview p = hintService.preview(coffee.getId(), "DAILYGRIND");
+        assertEquals(HintService.SAMPLE_LIMIT + 7, p.matchCount(), "the count must be exact");
+        assertEquals(HintService.SAMPLE_LIMIT, p.samples().size(), "the list is what is capped");
     }
 
     @Test
