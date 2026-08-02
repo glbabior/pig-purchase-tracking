@@ -2461,7 +2461,11 @@
         const data = await (await fetch(`/api/analysis/month/${encodeURIComponent(month)}`)).json();
         document.getElementById('monthStats').innerHTML =
           statTiles(data.totalBudget, data.totalActual, data.variance)
-          + (Number(data.excluded) ? statTile('Excluded (not spend)', data.excluded, false, 'clickable', 'excludedTile') : '');
+          // Gate on the COUNT, not the net. A card payment nets against the withdrawal that
+          // paid it, so a month can hold excluded transactions whose net is exactly zero —
+          // and this tile is the only way into the excluded list, so hiding it there left a
+          // wrongly-excluded charge with no route back into spend.
+          + (Number(data.excludedCount) ? statTile('Excluded (not spend)', data.excluded, false, 'clickable', 'excludedTile') : '');
         // The Excluded tile drills into the excluded transactions so they can be reassigned.
         const excludedTile = document.getElementById('excludedTile');
         if (excludedTile) {

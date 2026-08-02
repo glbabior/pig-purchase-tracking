@@ -221,7 +221,21 @@ public class BackupService {
 
     /**
      * A cheap fingerprint of everything worth backing up. Counts catch adds/removes;
-     * the mapping sums catch re-categorisations that keep counts the same.
+     * the mapping sums catch re-categorisations that keep counts the same; the text and
+     * numeric sums catch edits in place.
+     *
+     * <p>This used to read {@code budget_entries} as a bare {@code COUNT(*)} and not read
+     * {@code statement_sources} at all, so editing an entry's allowance or hints — or
+     * renaming a source, or repointing its folder — left the fingerprint byte-identical
+     * and every backup for the rest of the session was skipped as "no changes". Losing
+     * the live file then restored the old allowance and none of the new hints, which
+     * silently changes both budget-vs-actual and how future statements categorize.
+     *
+     * <p>Text columns contribute their length and first-character code rather than a real
+     * hash, which is cheap and catches every realistic edit. The one edit it cannot see is
+     * a rename to a string of identical length whose first letter is unchanged, with no
+     * other field touched; the startup and shutdown backups run with {@code force} and so
+     * are unaffected.
      */
     private String computeSignature(Connection c) throws SQLException {
         StringBuilder sb = new StringBuilder();
@@ -237,7 +251,37 @@ public class BackupService {
                 "SELECT COUNT(*) FROM transaction_mappings WHERE status IN ('EXCLUDED','EXCLUDED_ONCE')")).append(';');
         sb.append("exflag=").append(scalar(c, "SELECT COUNT(*) FROM transactions WHERE exclude_from_spend=TRUE")).append(';');
         sb.append("budget=").append(scalar(c, "SELECT COALESCE(SUM(annual_budget),0) FROM app_settings")).append(';');
+
+        // Edits in place — an allowance corrected, hints added, a source renamed or
+        // repointed. None of these move a row count.
+        sb.append("entryval=").append(scalar(c, "SELECT COALESCE(SUM(COALESCE(monthly_allowance,0)),0)"
+                + " + COALESCE(SUM(COALESCE(quantity,0)),0) FROM budget_entries")).append(';');
+        sb.append("entrytxt=").append(textFingerprint(c, "budget_entries", "name", "hints")).append(';');
+        sb.append("sources=").append(scalar(c, "SELECT COUNT(*) FROM statement_sources")).append(';');
+        sb.append("sourcetxt=").append(
+                textFingerprint(c, "statement_sources", "name", "folder_path", "parser_rules")).append(';');
+        sb.append("prefs=").append(scalar(c, "SELECT COALESCE(SUM("
+                + "COALESCE(debug_log_retention_days,0) + COALESCE(notification_day_of_month,0)"
+                + " + COALESCE(backup_retention_count,0)),0) FROM app_settings")).append(';');
+        sb.append("months=").append(scalar(c,
+                "SELECT COUNT(*) FROM month_status WHERE complete=TRUE")).append(';');
         return sb.toString();
+    }
+
+    /**
+     * Length plus first-character code, summed over the given text columns. Cheap, and
+     * it moves for any edit except a same-length rename with the same first letter.
+     */
+    private String textFingerprint(Connection c, String table, String... columns) throws SQLException {
+        StringBuilder expr = new StringBuilder();
+        for (String column : columns) {
+            if (!expr.isEmpty()) {
+                expr.append(" + ");
+            }
+            expr.append("LENGTH(COALESCE(").append(column).append(",''))")
+                .append(" + COALESCE(ASCII(NULLIF(").append(column).append(",'')),0)");
+        }
+        return String.valueOf(scalar(c, "SELECT COALESCE(SUM(" + expr + "),0) FROM " + table));
     }
 
     /** "Real work" metric: mappings a person or the AI produced, used by the anti-clobber guard. */

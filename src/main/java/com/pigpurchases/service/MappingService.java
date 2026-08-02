@@ -600,11 +600,18 @@ public class MappingService {
                 .map(txn -> HintMatcher.normalize(txn.getDescription())).orElse(null);
 
         if (budgetEntryId == null) {
+            // Reversing a ONE-OFF exclusion must touch no rule. excludeOnce deliberately
+            // wrote nothing, so any merchant_categories row here belongs to some earlier,
+            // unrelated decision — deleting it forgot that a merchant meant a category
+            // everywhere, for every month, because of one transaction the user set aside.
+            boolean wasOneOff = mapping.getStatus() == TransactionMapping.Status.EXCLUDED_ONCE;
+
             mapping.setBudgetEntryId(null);
             mapping.setStatus(TransactionMapping.Status.PARKED);
             mapping.setReason("Un-categorized by hand");
-            // Deliberately parking it means "this was wrong" — forget the remembered answer.
-            if (merchantKey != null) {
+            // Deliberately parking a *categorized* row means "this was wrong" — forget the
+            // remembered answer. Parking a one-off exclusion means only "never mind".
+            if (merchantKey != null && !wasOneOff) {
                 merchantCategoryRepository.findByMerchantKey(merchantKey)
                         .ifPresent(merchantCategoryRepository::delete);
             }

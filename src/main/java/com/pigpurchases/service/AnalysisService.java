@@ -61,8 +61,16 @@ public class AnalysisService {
     public record CategoryRow(Long entryId, String name, BigDecimal budget,
                               BigDecimal actual, BigDecimal variance, int count) {}
 
+    /**
+     * {@code excluded} is the NET of everything not counted as spend, so it can be zero
+     * while excluded transactions exist — a card payment nets against the withdrawal that
+     * paid it. {@code excludedCount} is therefore what the UI must gate the Excluded tile
+     * on: gating on the net hid the tile in exactly that case, and since the tile is the
+     * only way into the excluded list, a wrongly-excluded charge became unreachable.
+     */
     public record MonthSummary(String month, BigDecimal totalBudget, BigDecimal totalActual,
-                               BigDecimal variance, BigDecimal excluded, List<CategoryRow> categories) {}
+                               BigDecimal variance, BigDecimal excluded, int excludedCount,
+                               List<CategoryRow> categories) {}
 
     public record RollingSummary(int months, BigDecimal totalBudget, BigDecimal avgActual,
                                  BigDecimal variance, List<CategoryRow> categories) {}
@@ -255,6 +263,7 @@ public class AnalysisService {
         final Map<Long, Integer> countByEntry = new HashMap<>();
         BigDecimal other = BigDecimal.ZERO;
         BigDecimal excluded = BigDecimal.ZERO;
+        int excludedCount = 0;
         int otherCount = 0;
     }
 
@@ -271,6 +280,7 @@ public class AnalysisService {
             BigDecimal spend = signedSpend(txn);
             if (!m.countsAsSpend() || isMoneyIn(txn)) {
                 agg.excluded = agg.excluded.add(spend);
+                agg.excludedCount++;
             } else if (m.getStatus() == TransactionMapping.Status.PARKED || m.getBudgetEntryId() == null) {
                 agg.other = agg.other.add(spend);
                 agg.otherCount++;
@@ -305,7 +315,8 @@ public class AnalysisService {
         BigDecimal totalActual = categories.stream().map(CategoryRow::actual)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         return new MonthSummary(month, totalBudget, round(totalActual),
-                round(totalBudget.subtract(totalActual)), round(agg.excluded), categories);
+                round(totalBudget.subtract(totalActual)), round(agg.excluded), agg.excludedCount,
+                categories);
     }
 
     /**

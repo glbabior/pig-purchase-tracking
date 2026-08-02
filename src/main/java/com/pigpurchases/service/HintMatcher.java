@@ -116,15 +116,23 @@ public class HintMatcher {
         int weight = 0;
         for (String piece : pieces) {
             String normalized = normalize(piece);
-            if (normalized.length() >= minPart) {
-                parts.add(normalized);
-                weight += normalized.length();
+            if (normalized.length() < minPart) {
+                // Drop the WHOLE hint, not just the offending part.
+                //
+                // Dropping parts individually turned an AND the user wrote into a bare
+                // substring: "match: T + MOBILE" lost the "t" and registered as `mobile`,
+                // which matches "MOBILE DEPOSIT" and "UNITED MOBILE INC"; "match: 7 + ELEVEN"
+                // became `eleven` and matched "CORNER BISTRO PARK". The transaction then
+                // landed in the wrong category, and the review screen showed the reason as
+                // the full line the user typed, hiding that only one part was required.
+                //
+                // Parking is the safe failure here: a rule the app cannot honour as written
+                // should produce no rule at all, because a wrong automatic answer is worse
+                // than a transaction held for review.
+                return;
             }
-        }
-        // A composite that collapsed to a single short part is no safer than a bare
-        // short hint would have been, so hold it to the single-part minimum.
-        if (parts.size() == 1 && parts.get(0).length() < MIN_HINT_PART_LENGTH) {
-            return;
+            parts.add(normalized);
+            weight += normalized.length();
         }
         if (!parts.isEmpty()) {
             patterns.add(new Pattern(entry, parts, weight, raw.trim()));

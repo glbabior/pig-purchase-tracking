@@ -36,6 +36,30 @@ class HintMatcherTest {
         assertEquals("Daily Grind", matcher.match("DAILYGRIND*COFFEE", "DAILYGRIND").orElseThrow().entry().getName());
     }
 
+    /**
+     * A composite whose part is too short used to lose that part and register as a bare
+     * substring, so "T + MOBILE" quietly became `mobile` and matched anything containing
+     * it. An AND the user wrote must never become an OR-of-one — the whole hint is
+     * discarded instead, and the transaction parks for review.
+     */
+    @Test
+    void aCompositeWithATooShortPartIsDiscardedRatherThanBroadened() {
+        HintMatcher phone = new HintMatcher(List.of(entry(1, "Phone bill", "match: T + MOBILE")));
+        assertTrue(phone.match("MOBILE DEPOSIT 12345", "MOBILE DEPOSIT").isEmpty(),
+                "a deposit is not a phone bill");
+        assertTrue(phone.match("UNITED MOBILE INC", "UNITED MOBILE").isEmpty());
+
+        HintMatcher store = new HintMatcher(List.of(entry(1, "Corner store", "match: 7 + ELEVEN")));
+        assertTrue(store.match("CORNER BISTRO PARK", "CORNER BISTRO").isEmpty(),
+                "a restaurant is not a convenience store");
+
+        // Composites whose parts are all long enough are untouched — this is the documented
+        // way to pair an ambiguous token with a distinctive one.
+        HintMatcher rx = new HintMatcher(List.of(entry(1, "Pharmacy", "match: MP + MAILORDER")));
+        assertEquals("Pharmacy", rx.match("MP RX00042 MAILORDER80 800-555-0175 CA", "KP RX")
+                .orElseThrow().entry().getName());
+    }
+
     @Test
     void ignoresPatternsTooShortToTrust() {
         // "Gas" would otherwise match CITYPOWER and POWELL ST GARAGE.

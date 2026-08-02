@@ -143,6 +143,31 @@ class MappingServiceTest {
     }
 
     /**
+     * A one-off exclusion writes no rule, so reversing one must delete none. Un-categorizing
+     * used to drop the merchant_categories row unconditionally, which forgot that a merchant
+     * meant a category — everywhere, for every month — because of a single transaction the
+     * user set aside and then changed their mind about.
+     */
+    @Test
+    void reversingAOneOffExclusionLeavesTheMerchantRuleAlone() {
+        mappingService.mapUnmapped();
+        Long runId = runFor(mayImportId);
+        Long txnId = mappingRepo.findByAnalysisRunId(runId).get(0).getTransactionId();
+        Long metroId = entryRepo.findAll().stream()
+                .filter(e -> "Metro Station".equals(e.getName())).findFirst().orElseThrow().getId();
+
+        mappingService.assign(runId, txnId, metroId);   // teaches the merchant rule
+        long rulesAfterTeaching = merchantRepo.count();
+        assertTrue(rulesAfterTeaching > 0, "assigning by hand should remember the merchant");
+
+        mappingService.excludeOnce(runId, txnId);       // "not spend, just this one"
+        mappingService.assign(runId, txnId, null);      // ...never mind
+
+        assertEquals(rulesAfterTeaching, merchantRepo.count(),
+                "reversing a one-off must not forget an unrelated remembered answer");
+    }
+
+    /**
      * Re-ingest deletes the statement's transactions and creates new ones with new ids.
      * The mappings used to be left pointing at the deleted rows: the statement then
      * contributed nothing to any month, its run vanished from the Mapping screen, and
