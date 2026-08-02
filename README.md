@@ -26,14 +26,17 @@ The UI is a single browser tab with nine screens, worked roughly left to right.
 carries an optional free-text **hints** field, which is the knowledge base that
 categorization gets better from. See [Writing hints](#writing-hints).
 
-**Hints** — every `match:` rule across every category in one place. Rules still live
-on the budget entries; this is the only view where a rule on one category can be
-compared with a rule on another. It flags rules that are **ignored** (with the reason)
-separately from rules that simply **match nothing yet**, shows how many transactions
-each currently catches, previews what a new rule would catch *before* saving — including
+**Matching Hints** — one row per category, showing how many hints it has and how much
+they catch. Click a category to see, add or remove its hints; terms are quoted so the
+split points of a `+` hint are visible. Categories with **no** hints are listed too —
+those rely on the category name or the AI. Hints still live on the budget entries; this
+is the only view where hints on one category can be compared with hints on another.
+
+It flags hints that are **ignored** (with the reason) separately from hints that simply
+**match nothing yet**, previews what a new hint would catch *before* saving — including
 whether it would take transactions from another category — and has a **conflict check**
 that finds transactions claimed by more than one category, distinguishing a tie (which
-parks the transaction) from an uneven overlap (where the longer rule silently wins).
+parks the transaction) from an uneven overlap (where the longer hint silently wins).
 
 **Statement Sources** — the named accounts, each with the folder its statements
 live in. Add / edit / delete, with per-source spend exclusions shown inline.

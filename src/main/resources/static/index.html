@@ -128,6 +128,10 @@
       .run-card .counts { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.5rem 0; }
       .badge { display: inline-block; border-radius: 999px; padding: 0.15rem 0.65rem; font-size: 0.8rem; }
       .badge.mapped { background: #e4f0e4; color: #2f7d32; }
+      /* A table cell that opens something, styled as a link rather than a button. */
+      .linklike { background: none; border: none; padding: 0; font: inherit; color: #2a4d9b;
+                  text-decoration: underline; cursor: pointer; text-align: left; }
+      .linklike:hover { color: #16306b; }
       .badge.parked { background: #fbe9c9; color: #8a4b00; }
       .badge.excluded { background: #ececec; color: #5c5c5c; }
       .parked-row { display: flex; align-items: center; justify-content: space-between; gap: 0.7rem; padding: 0.55rem 0.8rem; border-bottom: 1px solid #f3f3f3; }
@@ -246,7 +250,7 @@
         </div>
         <nav>
           <button class="nav-item active" data-view="budget">Budget Entries</button>
-          <button class="nav-item" data-view="hints">Hints</button>
+          <button class="nav-item" data-view="hints">Matching Hints</button>
           <button class="nav-item" data-view="sources">Statement Sources</button>
           <button class="nav-item" data-view="ingest">Ingest</button>
           <button class="nav-item" data-view="mapping">Mapping<span id="mappingBadge" class="nav-badge" style="display:none">●</span></button>
@@ -315,15 +319,16 @@
 
             <section id="hintsView" style="display:none">
               <div class="view-head">
-                <h2 class="view-title">Hints</h2>
+                <h2 class="view-title">Matching Hints</h2>
                 <button class="view-help" data-guide="hints" title="Help for this screen">? Help</button>
               </div>
-              <p class="hint">Every <code>match:</code> rule across every category, in one place. A rule
-                is a plain substring: if a transaction's description contains it, the transaction goes to
-                that category &mdash; free, on the first pass, before anything is sent to the AI. Rules take
-                effect on the <strong>next mapping run</strong>, not retroactively.</p>
+              <p class="hint">One row per category. A matching hint is a plain substring: if a
+                transaction's description contains it, the transaction goes to that category &mdash;
+                free, on the first pass, before anything is sent to the AI. <strong>Click a category</strong>
+                to see and edit its hints. Hints take effect on the <strong>next mapping run</strong>,
+                not retroactively.</p>
               <div class="toolbar">
-                <button class="primary" id="addHintBtn">Add rule</button>
+                <button class="primary" id="addHintBtn">Add hint</button>
                 <button class="secondary" id="checkConflictsBtn">Check for conflicts</button>
               </div>
               <div id="hintsConflicts" style="display:none;margin:0.6rem 0;"></div>
@@ -331,16 +336,15 @@
                 <thead>
                   <tr>
                     <th>Category</th>
-                    <th>Rule</th>
-                    <th>Matches now</th>
-                    <th></th>
+                    <th>Hints</th>
+                    <th>Transactions matched</th>
+                    <th>Needs attention</th>
                   </tr>
                 </thead>
                 <tbody id="hintsBody"></tbody>
               </table>
               <div id="hintsEmptyState" class="empty" style="display:none">
-                No rules yet. Add one here, or let the app offer you a hint when you categorize a
-                parked transaction.
+                No budget categories yet. Add one on the Budget Entries screen first.
               </div>
             </section>
 
@@ -549,6 +553,20 @@
       </div>
     </div>
 
+    <div id="categoryHintsModal" class="modal" aria-hidden="true">
+      <div class="modal-body">
+        <h2 id="categoryHintsTitle">Matching hints</h2>
+        <p class="hint">Each hint is independent — a category can have as many as it needs, and a
+          transaction matching any one of them lands here. Terms are shown in quotes so trailing
+          spaces and the split points of a <code>+</code> hint are visible.</p>
+        <div id="categoryHintsList"></div>
+        <div class="modal-actions">
+          <button class="primary" id="categoryHintsAddBtn">Add a hint for this category</button>
+          <button class="secondary" id="categoryHintsCloseBtn">Close</button>
+        </div>
+      </div>
+    </div>
+
     <div id="newHintModal" class="modal" aria-hidden="true">
       <div class="modal-body">
         <h2>Add a rule</h2>
@@ -607,7 +625,7 @@
           <div class="guide-nav" id="guideNav">
             <button data-goto="overview">Overview</button>
             <button data-goto="budget">Budget Entries</button>
-            <button data-goto="hints">Hints</button>
+            <button data-goto="hints">Matching Hints</button>
             <button data-goto="sources">Statement Sources</button>
             <button data-goto="ingest">Ingest</button>
             <button data-goto="mapping">Mapping</button>
@@ -665,12 +683,15 @@
             </section>
 
             <section id="guide-hints">
-              <h3>Hints</h3>
-              <p>Every <code>match:</code> rule you've written, across every category, on one screen.
-                Rules live on the budget entries themselves — this is a view of them all together,
-                which is the only place a rule on one category can be compared with a rule on another.</p>
+              <h3>Matching Hints</h3>
+              <p>One row per category, showing how many matching hints it has and how much they
+                currently catch. <strong>Click a category</strong> to see its hints, add one, or remove
+                one. Categories with no hints are listed too — those rely on the category's own name
+                or on the AI pass, which is worth knowing.</p>
+              <p>Hints live on the budget entries themselves; this is the only place hints on one
+                category can be compared with hints on another.</p>
 
-              <h4>What a rule is</h4>
+              <h4>What a hint is</h4>
               <p>A plain substring. If a transaction's description contains it, the transaction goes to
                 that category — on the first pass, free, before anything is sent to the AI.</p>
               <p>Both sides are lowercased and stripped of everything that isn't a letter or digit
@@ -1167,7 +1188,15 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
       document.getElementById('browseCancelBtn').addEventListener('click', closeBrowseModal);
       backdropClose(browseModal, closeBrowseModal);
 
-      document.getElementById('addHintBtn').addEventListener('click', openNewHint);
+      document.getElementById('addHintBtn').addEventListener('click', () => openNewHint(null));
+      document.getElementById('categoryHintsCloseBtn')
+        .addEventListener('click', () => hideModalEl('categoryHintsModal'));
+      document.getElementById('categoryHintsAddBtn').addEventListener('click', () => {
+        hideModalEl('categoryHintsModal');
+        openNewHint(categoryHintsEntryId);
+      });
+      backdropClose(document.getElementById('categoryHintsModal'),
+        () => hideModalEl('categoryHintsModal'));
       document.getElementById('checkConflictsBtn').addEventListener('click', checkHintConflicts);
       document.getElementById('newHintPreviewBtn').addEventListener('click', previewHint);
       document.getElementById('newHintSaveBtn').addEventListener('click', saveNewHint);
@@ -1615,6 +1644,23 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
 
       let hintsData = { hints: [], entries: [] };
 
+      /**
+       * A hint's terms, quoted. `Crestline + Ext Trnsfr` becomes
+       * "Crestline" + "Ext Trnsfr" — so where one term ends and the next begins is
+       * visible, and so is a stray trailing space, which otherwise silently changes nothing
+       * (it is stripped) but looks like it might.
+       */
+      function formatHintTerms(hint) {
+        return String(hint || '').split('+')
+          .map((part) => '"' + part.trim() + '"')
+          .join(' + ');
+      }
+
+      /** Hints belonging to one category, in the order the entry lists them. */
+      function hintsForEntry(entryId) {
+        return (hintsData.hints || []).filter((h) => String(h.entryId) === String(entryId));
+      }
+
       async function loadHints() {
         const body = document.getElementById('hintsBody');
         const empty = document.getElementById('hintsEmptyState');
@@ -1624,42 +1670,83 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
           hintsData = await r.json();
         } catch (err) {
           body.innerHTML = '';
-          empty.textContent = 'Could not load rules. Is the server running?';
+          empty.textContent = 'Could not load hints. Is the server running?';
           empty.style.display = 'block';
           return;
         }
 
-        const rows = hintsData.hints || [];
-        empty.style.display = rows.length ? 'none' : 'block';
-        empty.textContent = 'No rules yet. Add one here, or let the app offer you a hint when you '
-          + 'categorize a parked transaction.';
+        // One row per CATEGORY, including categories with no hints at all — "this category
+        // has nothing catching anything" is exactly what you want to see, and listing only
+        // categories that already have hints hides it. A flat list of every hint becomes
+        // unreadable well before a real budget is fully covered.
+        const entries = hintsData.entries || [];
+        empty.style.display = entries.length ? 'none' : 'block';
 
-        body.innerHTML = rows.map((h) => {
-          // A rule that is ignored, and one that simply matches nothing yet, are different
-          // problems: the first can never work, the second may just be waiting for a
-          // statement. Saying which is the whole point of this screen.
-          const state = h.problem
-            ? `<span class="badge parked">ignored — ${escapeHtml(h.problem)}</span>`
-            : h.matchCount === 0
-              ? '<span class="badge parked">matches nothing yet</span>'
-              : `<span class="badge mapped">${h.matchCount}</span>`;
+        body.innerHTML = entries.map((e) => {
+          const mine = hintsForEntry(e.id);
+          const ignored = mine.filter((h) => h.problem).length;
+          const idle = mine.filter((h) => !h.problem && h.matchCount === 0).length;
+          const matched = mine.filter((h) => !h.problem)
+            .reduce((sum, h) => sum + (h.matchCount || 0), 0);
+
+          const attention = ignored
+            ? `<span class="badge parked">${ignored} ignored</span>`
+            : idle
+              ? `<span class="badge parked">${idle} matching nothing yet</span>`
+              : mine.length ? '' : '<span class="hint">no hints — relies on the name or the AI</span>';
+
           return `<tr>
-            <td>${escapeHtml(h.entryName || '')}</td>
-            <td><code>${escapeHtml(h.hint || '')}</code></td>
-            <td>${state}</td>
-            <td><button class="secondary" data-del-hint="${escapeHtml(h.hint || '')}"
-                        data-entry="${h.entryId}">Remove</button></td>
+            <td><button class="linklike" data-cat-hints="${e.id}">${escapeHtml(e.name || '')}</button></td>
+            <td>${mine.length}</td>
+            <td>${mine.length ? matched : ''}</td>
+            <td>${attention}</td>
           </tr>`;
         }).join('');
 
-        body.querySelectorAll('button[data-del-hint]').forEach((b) => {
-          b.addEventListener('click', () => removeHint(b.dataset.entry, b.dataset.delHint));
+        body.querySelectorAll('button[data-cat-hints]').forEach((b) => {
+          b.addEventListener('click', () => openCategoryHints(b.dataset.catHints));
         });
       }
 
+      let categoryHintsEntryId = null;
+
+      function openCategoryHints(entryId) {
+        categoryHintsEntryId = entryId;
+        const entry = (hintsData.entries || []).find((e) => String(e.id) === String(entryId));
+        document.getElementById('categoryHintsTitle').textContent =
+          'Matching hints — ' + (entry ? entry.name : '');
+
+        const mine = hintsForEntry(entryId);
+        const list = document.getElementById('categoryHintsList');
+        if (!mine.length) {
+          list.innerHTML = '<div class="hint">No hints yet. This category is matched only by its own '
+            + 'name, or by the AI pass.</div>';
+        } else {
+          list.innerHTML = mine.map((h) => {
+            const state = h.problem
+              ? `<span class="badge parked">ignored — ${escapeHtml(h.problem)}</span>`
+              : h.matchCount === 0
+                ? '<span class="badge parked">matches nothing yet</span>'
+                : `<span class="badge mapped">matches ${h.matchCount}</span>`;
+            return `<div class="cat-row">
+              <div class="cat-desc">
+                <div><code>${escapeHtml(formatHintTerms(h.hint))}</code></div>
+                <div class="cat-date">${state}</div>
+              </div>
+              <button class="secondary" data-del-hint="${escapeHtml(h.hint || '')}"
+                      data-entry="${h.entryId}">Remove</button>
+            </div>`;
+          }).join('');
+          list.querySelectorAll('button[data-del-hint]').forEach((b) => {
+            b.addEventListener('click', () => removeHint(b.dataset.entry, b.dataset.delHint));
+          });
+        }
+        showModalEl('categoryHintsModal');
+      }
+
       async function removeHint(entryId, hint) {
-        if (!confirm(`Remove the rule "${hint}"?\n\nTransactions already categorized by it keep their `
-            + `category until you re-run mapping.`)) return;
+        if (!confirm(`Remove the hint ${formatHintTerms(hint)}?\n\nTransactions already categorized `
+            + `by it keep their category until you re-run mapping.`)) return;
         try {
           const r = await fetch(`/api/entries/${entryId}/hints`, {
             method: 'DELETE',
@@ -1672,15 +1759,20 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
           }
           await loadEntries();
           await loadHints();
+          // Keep the per-category dialog in step if it is the one we removed from.
+          if (categoryHintsEntryId && String(categoryHintsEntryId) === String(entryId)) {
+            openCategoryHints(categoryHintsEntryId);
+          }
         } catch (err) {
-          alert('Could not remove the rule: ' + err.message);
+          alert('Could not remove the hint: ' + err.message);
         }
       }
 
-      function openNewHint() {
+      function openNewHint(presetEntryId) {
         const sel = document.getElementById('newHintEntry');
         sel.innerHTML = (hintsData.entries || [])
           .map((e) => `<option value="${e.id}">${escapeHtml(e.name || '')}</option>`).join('');
+        if (presetEntryId) sel.value = String(presetEntryId);
         document.getElementById('newHintText').value = '';
         document.getElementById('newHintMsg').textContent = '';
         document.getElementById('newHintPreview').innerHTML = '';
@@ -1705,9 +1797,11 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
           }
           const p = await r.json();
           if (p.problem) {
-            out.innerHTML = `<div class="run-error">This rule would be ignored: ${escapeHtml(p.problem)}</div>`;
+            out.innerHTML = `<div class="run-error">${escapeHtml(formatHintTerms(hint))} would be `
+              + `ignored: ${escapeHtml(p.problem)}</div>`;
             return;
           }
+          const terms = `<div class="hint">Matching on ${escapeHtml(formatHintTerms(hint))}</div>`;
           const samples = (p.samples || []).map((s) =>
             `<div style="font-family:monospace;font-size:0.85em;">${escapeHtml(s)}</div>`).join('');
           // The steal warning matters more than the count: a rule catching plenty is only
@@ -1719,7 +1813,8 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
                   `<span style="font-family:monospace;font-size:0.85em;">${escapeHtml(s)}</span>`).join('<br/>')
               + '</div>'
             : '';
-          out.innerHTML = `<div><strong>${p.matchCount}</strong> existing transaction(s) would match`
+          out.innerHTML = terms
+            + `<div><strong>${p.matchCount}</strong> existing transaction(s) would match`
             + (p.matchCount > (p.samples || []).length ? ` (showing ${p.samples.length})` : '')
             + `:</div>${samples}${steal}`;
         } catch (err) {
