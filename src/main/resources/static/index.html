@@ -2393,8 +2393,16 @@
         if (reason === 'Un-categorized by hand') {
           return '📌 you parked this by hand — nothing will re-categorize it automatically';
         }
+        if (reason === 'No rule matched and the AI did not place it') {
+          return 'nothing placed it — hints, remembered answers and the AI all passed. '
+               + 'Categorize it once and save the hint, and it will map itself after that.';
+        }
+        if (reason === 'No rule matched; AI categorization is off') {
+          return '⚠ nothing matched it, and the AI was never asked — no API key configured.';
+        }
         if (reason === 'No hint or name matched') {
-          return 'nothing matched it — a hint, or the AI pass, would place it';
+          // Pass 1's wording, left on rows from a run before this distinction existed.
+          return 'nothing matched it on the pass that ran';
         }
         return reason;
       }

@@ -105,6 +105,13 @@ public class MappingService {
      */
     static final String ASSIGNED_BY_HAND = "Categorized by hand";
 
+    /** Pass 1's verdict. Replaced below with the run's ACTUAL outcome if nothing else places it. */
+    static final String NO_MATCH = "No hint or name matched";
+    /** Every pass declined it, AI included — so a hint is the remedy, not another run. */
+    static final String NOTHING_PLACED_IT = "No rule matched and the AI did not place it";
+    /** Nothing matched and the AI was never asked, which is usually the real explanation. */
+    static final String NO_MATCH_AI_OFF = "No rule matched; AI categorization is off";
+
     /** A decision the user made about one specific transaction, carried across a rebuild. */
     private record CarriedDecision(TransactionMapping.Status status, Long budgetEntryId, String reason) {}
 
@@ -474,7 +481,7 @@ public class MappingService {
                 } else {
                     // Parked for now: shows as "Other" and still counts as spend.
                     TransactionMapping parkedMapping = new TransactionMapping(runId, txn.getId(), null,
-                            TransactionMapping.Status.PARKED, "No hint or name matched");
+                            TransactionMapping.Status.PARKED, NO_MATCH);
                     mappings.add(parkedMapping);
                     parkedTransactions.put(txn.getId(), txn);
                 }
@@ -497,6 +504,21 @@ public class MappingService {
         // so this is the only run that pays for them. Skipped silently with no
         // credentials, leaving those transactions parked.
         int aiMapped = applyAiSuggestions(mappings, parkedTransactions, entries, validEntryIds);
+
+        // Record what ACTUALLY happened to anything still parked.
+        //
+        // Pass 1 writes "No hint or name matched", which is true of pass 1 and misleading as
+        // a final verdict: a row still parked here was also declined by the merchant cache
+        // and by the AI, or the AI never ran. Leaving pass 1's wording made the screen
+        // suggest the AI would place a transaction the AI had just passed on — and gave no
+        // hint that the real remedy is a hint, or that AI is switched off.
+        boolean aiRan = aiCategorizationService.isAvailable();
+        for (TransactionMapping mapping : mappings) {
+            if (mapping.getStatus() == TransactionMapping.Status.PARKED
+                    && NO_MATCH.equals(mapping.getReason())) {
+                mapping.setReason(aiRan ? NOTHING_PLACED_IT : NO_MATCH_AI_OFF);
+            }
+        }
 
         int mapped = 0;
         int parked = 0;
