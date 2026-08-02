@@ -68,9 +68,15 @@ class BackupServiceTest {
         if (!Files.isDirectory(DIR)) {
             return;
         }
+        // Everything under DIR, directories included. Filtering to regular files let a
+        // stray directory — this suite deliberately creates one to make a dump fail —
+        // survive into later runs, where it is indistinguishable from a backup file and
+        // cannot be read.
         try (Stream<Path> s = Files.walk(DIR)) {
-            for (Path p : s.sorted(Comparator.reverseOrder()).filter(Files::isRegularFile).toList()) {
-                Files.deleteIfExists(p);
+            for (Path p : s.sorted(Comparator.reverseOrder()).toList()) {
+                if (!p.equals(DIR)) {
+                    Files.deleteIfExists(p);
+                }
             }
         }
     }
@@ -124,11 +130,44 @@ class BackupServiceTest {
     }
 
     /**
-     * SCRIPT TO truncates its target and streams into it, so writing straight to the daily
-     * file destroyed the previous good copy before knowing the new one would finish. The
-     * dump now lands in a .part file and is moved into place, so a completed backup leaves
-     * no staging file behind and the sidecar always describes the dump beside it.
+     * The property that actually changed: <b>a dump that fails leaves the previous good
+     * daily file intact.</b> {@code SCRIPT TO} truncates its target and streams into it, so
+     * writing straight to the daily file destroyed the good copy before knowing the new one
+     * would finish — a kill during the shutdown dump, a full disk, or a scanner lock left a
+     * truncated .sql that RUNSCRIPT loads partway before erroring.
+     *
+     * <p>The failure is induced by putting a <i>directory</i> where the staging file goes,
+     * which is the cheapest way to make H2's write fail. Asserting only "no .part survives"
+     * would pass against the pre-fix code too, since it never created one — that version of
+     * this test was vacuous.
      */
+    @Test
+    void aFailedDumpLeavesThePreviousGoodBackupIntact() throws IOException {
+        entryRepo.save(new BudgetEntry("Coffee", new BigDecimal("50.00")));
+        backupService.backupNow();
+
+        Path daily;
+        try (Stream<Path> s = Files.list(DIR)) {
+            daily = s.filter(p -> p.getFileName().toString().endsWith(".sql")).findFirst().orElseThrow();
+        }
+        String goodDump = Files.readString(daily);
+        assertFalse(goodDump.isBlank(), "the first dump must have content to protect");
+
+        // Block the staging path, then give the signature something to notice.
+        Path staging = daily.resolveSibling(daily.getFileName() + ".part");
+        Files.createDirectory(staging);
+        try {
+            sourceRepo.save(new StatementSource("Crestline", "C:/statements/crestline"));
+            backupService.backupNow();
+
+            assertEquals(goodDump, Files.readString(daily),
+                    "a failed dump must not touch the previous good daily backup");
+        } finally {
+            Files.deleteIfExists(staging);
+        }
+    }
+
+    /** A successful dump leaves no staging file and a sidecar beside every dump. */
     @Test
     void aCompletedBackupLeavesNoStagingFileAndAMatchingSidecar() throws IOException {
         entryRepo.save(new BudgetEntry("Coffee", new BigDecimal("50.00")));
