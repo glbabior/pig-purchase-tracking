@@ -459,8 +459,15 @@ public class AnalysisService {
                 && MappingService.ASSIGNED_BY_HAND.equals(m.getReason());
     }
 
-    /** Money out adds to spend; money in (refunds, payments, deposits) subtracts. */
-    private static BigDecimal signedSpend(Transaction txn) {
+    /**
+     * Money out adds to spend; money in (refunds, payments, deposits) subtracts.
+     *
+     * <p>Public so {@code AppMathTest} can run it against the JavaScript mirror in
+     * {@code static/app-math.js} and prove the two agree. A mirror that drifts is worse
+     * than no mirror — the screen and the database would show different money with nothing
+     * to say so.
+     */
+    public static BigDecimal signedSpend(Transaction txn) {
         BigDecimal amount = txn.getAmount() != null ? txn.getAmount().abs() : BigDecimal.ZERO;
         String type = txn.getType();
         if ("PAYMENT".equals(type) || "CREDIT".equals(type) || "DEPOSIT".equals(type)) {

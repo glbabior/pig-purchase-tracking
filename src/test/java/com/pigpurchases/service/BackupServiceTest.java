@@ -163,8 +163,29 @@ class BackupServiceTest {
             assertEquals(goodDump, Files.readString(daily),
                     "a failed dump must not touch the previous good daily backup");
         } finally {
-            Files.deleteIfExists(staging);
+            // Verified, not best-effort. A directory left at the staging path makes EVERY
+            // later backup in this class fail the same way, which surfaced as an unrelated
+            // test failing — and Windows can defer a directory delete just long enough for
+            // the next create to see a phantom, so this retries and then asserts.
+            removeStagingDirectory(staging);
         }
+    }
+
+    private static void removeStagingDirectory(Path staging) throws IOException {
+        for (int attempt = 0; attempt < 20 && Files.exists(staging); attempt++) {
+            try {
+                Files.deleteIfExists(staging);
+            } catch (IOException retryable) {
+                try {
+                    Thread.sleep(25);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        assertFalse(Files.exists(staging),
+                "the blocking directory must be gone, or it breaks every later backup: " + staging);
     }
 
     /** A successful dump leaves no staging file and a sidecar beside every dump. */

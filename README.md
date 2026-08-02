@@ -472,11 +472,15 @@ PigPurchases/
 │                   ManualEntryController, BackupController, RestoreController,
 │                   DebugLogController, NotificationController, DataInitializer
 ├── src/main/resources/
-│   ├── static/index.html          the entire vanilla-JS frontend
+│   ├── static/index.html          the frontend: markup, styles, and all DOM/fetch code
+│   ├── static/app-math.js         its pure functions (money, dates, escaping), split out
+│   │                              so AppMathTest can cover them. Plain <script>, no bundler
 │   └── application.properties     H2, backups, DevTools, AI settings
 ├── src/test/java/com/pigpurchases/
 │   ├── TestPdfs.java              generates PDFs so tests need no real statements
 │   ├── config/                    EnumColumnMigration (ENUM → VARCHAR) tests
+│   ├── web/                       AppMathTest — runs static/app-math.js and checks its
+│   │                              signedSpend still agrees with the server's
 │   ├── parser/                    portable parser tests + *ValidationTest
 │   ├── service/                   mapping, analysis, ingest, AI, manual entry
 │   └── server/                    controller tests

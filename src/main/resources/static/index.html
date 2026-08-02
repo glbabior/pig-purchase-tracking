@@ -908,6 +908,10 @@
       </div>
     </div>
 
+    <!-- The pure money/date/escaping functions, kept separate so they can be tested from
+         the Maven build (AppMathTest). Plain <script>, no bundler: the browser gets the
+         file exactly as written and editing it still needs only a refresh. -->
+    <script src="app-math.js"></script>
     <script>
       let entries = [];
       let editingId = null;
@@ -1467,13 +1471,6 @@
         }
       }
 
-      function formatLogTime(iso) {
-        if (!iso) return '';
-        // "2026-07-22T15:53:38.53" -> "07/22 15:53:38"
-        const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
-        return m ? `${m[2]}/${m[3]} ${m[4]}:${m[5]}:${m[6]}` : iso;
-      }
-
       // ---- Statement sources -------------------------------------------------
 
       async function loadSources() {
@@ -1648,13 +1645,6 @@
             el.addEventListener('click', () => revealStatementFile(el.getAttribute('data-reveal'))));
           container.appendChild(card);
         });
-      }
-
-      function formatMmDdYy(iso) {
-        if (!iso) return '??';
-        const parts = String(iso).split('-');
-        if (parts.length !== 3) return iso;
-        return `${parts[1]}/${parts[2]}/${parts[0].slice(2)}`;
       }
 
       /**
@@ -2362,40 +2352,8 @@
         return payload;
       }
 
-      function parseDollarAmount(value) {
-        const trimmed = String(value).replace(/\$/g, '').replace(/,/g, '').trim();
-        if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) {
-          return null;
-        }
-        return Number(trimmed).toFixed(2);
-      }
-
-      function formatCurrency(value) {
-        const numericValue = Number(value || 0);
-        return '$' + numericValue.toFixed(2);
-      }
-
-      // Mirrors AnalysisService.signedSpend: money out is positive, money in negative.
-      // The parsers disagree on stored sign for the same direction — a Bayside withdrawal is
-      // negative, a Crestline purchase positive — so the TYPE decides, not the sign.
-      //
-      // Review all used to render Math.abs(amount), so a 150 refund read as a 150 charge
-      // there and as -150 in the category drill-down: the same transaction, opposite signs,
-      // on the two screens where it gets acted on. Assigning that "charge" to Groceries
-      // made Groceries go down.
-      function signedSpend(row) {
-        const magnitude = Math.abs(Number(row.amount || 0));
-        const moneyIn = row.type === 'PAYMENT' || row.type === 'CREDIT' || row.type === 'DEPOSIT';
-        return moneyIn ? -magnitude : magnitude;
-      }
-
-      function escapeHtml(value) {
-        return String(value)
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/\"/g, '&quot;');
-      }
+      // parseDollarAmount, formatCurrency, signedSpend and escapeHtml now live in
+      // app-math.js, loaded above, so they can be tested. See the note at the top of it.
 
       function showView(viewName) {
         // Leave a clean slate: never carry an open dialog or a stuck busy overlay
@@ -2529,15 +2487,6 @@
       }
 
       // "2026-05" -> "May 2026" for the large title label; unknown shapes pass through.
-      function formatMonthLong(month) {
-        const m = /^(\d{4})-(\d{2})$/.exec(month || '');
-        if (!m) return month || '';
-        const names = ['January','February','March','April','May','June',
-                       'July','August','September','October','November','December'];
-        const idx = Number(m[2]) - 1;
-        return names[idx] ? `${names[idx]} ${m[1]}` : month;
-      }
-
       async function loadMonth(month) {
         currentAnalysisMonth = month;
         document.getElementById('monthlyTitleMonth').textContent = formatMonthLong(month);
