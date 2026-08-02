@@ -5,6 +5,7 @@ import com.pigpurchases.model.AnalysisRun;
 import com.pigpurchases.model.AppSettings;
 import com.pigpurchases.model.BudgetEntry;
 import com.pigpurchases.model.StatementSource;
+import com.pigpurchases.model.Transaction;
 import com.pigpurchases.model.TransactionMapping;
 import com.pigpurchases.repository.AnalysisRunRepository;
 import com.pigpurchases.repository.AnalysisRunSourceRepository;
@@ -26,6 +27,7 @@ import org.springframework.test.context.ActiveProfiles;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -124,6 +126,37 @@ class AnalysisServiceTest {
                 .filter(c -> c.entryId() == null).findFirst().orElseThrow();
         assertEquals(0, new BigDecimal("20.00").compareTo(other.budget()), "discretionary = 100 - 80");
         assertEquals(0, BigDecimal.ZERO.compareTo(other.actual()));
+    }
+
+    /**
+     * The Bayside parser has no CREDIT type — every positive line is a DEPOSIT — so keeping all
+     * money-in out of the spend buckets left a returned purchase showing as spend, and
+     * assigning the refund to its category appeared to work while changing nothing.
+     *
+     * <p>A hand-assigned money-in row therefore nets against its category. A parked or
+     * AI-guessed one still does not, which is what the exclusion was added for.
+     */
+    @Test
+    void aRefundAssignedByHandNetsAgainstItsCategory() {
+        Long coffeeId = entryRepo.findAll().stream()
+                .filter(e -> "Coffee Shop".equals(e.getName())).findFirst().orElseThrow().getId();
+
+        // A $4.10 refund of the coffee, arriving as Bayside does it: positive, typed DEPOSIT.
+        Transaction refund = new Transaction(LocalDate.of(2026, 5, 22), "COFFEE SHOP REFUND",
+                "COFFEE SHOP", new BigDecimal("4.10"), "2026-05");
+        refund.setType("DEPOSIT");
+        txnRepo.save(refund);
+        mappingRepo.save(new TransactionMapping(runId, refund.getId(), coffeeId,
+                TransactionMapping.Status.MAPPED_MANUAL, "Categorized by hand"));
+
+        AnalysisService.CategoryRow coffee = analysisService.month("2026-05").categories().stream()
+                .filter(c -> "Coffee Shop".equals(c.name())).findFirst().orElseThrow();
+        assertEquals(0, BigDecimal.ZERO.compareTo(coffee.actual()),
+                "the 4.10 purchase and its 4.10 refund must cancel");
+
+        // And the drill-down must agree with the tile it sits behind.
+        assertEquals(2, analysisService.categoryTransactions("2026-05", String.valueOf(coffeeId)).size(),
+                "both the charge and the refund belong in the category's list");
     }
 
     /**

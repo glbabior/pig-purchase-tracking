@@ -233,9 +233,18 @@ public class IngestService {
         if (purchases != null || credits != null) {
             BigDecimal parsedPurchases = sumWhere(statement, true);
             BigDecimal parsedCredits = sumWhere(statement, false);
-            if (purchases != null && parsedPurchases.compareTo(purchases) != 0) {
-                fail(fileName, "purchases total " + parsedPurchases
-                        + " but the statement prints " + purchases);
+            // Fees and interest print as ordinary dated rows, so they are inside
+            // parsedPurchases — but the summary box totals them on their own lines. Compare
+            // against the sum, or every cycle carrying an annual fee, a late fee or an
+            // interest charge is refused for a parser problem that does not exist.
+            BigDecimal expectedPositives = orZero(purchases)
+                    .add(orZero(statement.control("fees")))
+                    .add(orZero(statement.control("interest")));
+            if (purchases != null && parsedPurchases.compareTo(expectedPositives) != 0) {
+                fail(fileName, "purchases, fees and interest total " + parsedPurchases
+                        + " but the statement prints " + expectedPositives
+                        + " (purchases " + purchases + ", fees " + orZero(statement.control("fees"))
+                        + ", interest " + orZero(statement.control("interest")) + ")");
             }
             if (credits != null && parsedCredits.compareTo(credits) != 0) {
                 fail(fileName, "credits total " + parsedCredits
@@ -261,6 +270,11 @@ public class IngestService {
                 + " with no other sign of a problem.";
         debugLog.error("ingest", message);
         throw new IllegalStateException(message);
+    }
+
+    /** A control total the statement did not print contributes nothing. */
+    private static BigDecimal orZero(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
     }
 
     /** Sum of the positive (purchase) or negative (credit) amounts. */

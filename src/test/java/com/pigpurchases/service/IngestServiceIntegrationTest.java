@@ -98,6 +98,32 @@ class IngestServiceIntegrationTest {
     }
 
     /**
+     * Crestline prints fees and interest as ordinary dated rows in the activity table but
+     * totals them on their own summary lines, separate from Purchases. Reconciling the
+     * parsed positives against Purchases alone therefore refused every cycle carrying an
+     * annual fee, a late fee or an interest charge — a statement the user then could not
+     * load at all, blamed on a parser problem that did not exist.
+     */
+    @Test
+    void aStatementCarryingFeesAndInterestStillReconciles(@TempDir Path dir) throws IOException {
+        Path pdf = dir.resolve("crestline-fees.pdf");
+        TestPdfs.write(pdf, List.of(
+                "Opening/Closing Date 05/12/26 - 06/11/26",
+                "Purchases +$4.10",
+                "Fees Charged +$95.00",
+                "Interest Charged +$12.34",
+                "05/20 COFFEE SHOP ANYTOWN CA 4.10",
+                "05/21 ANNUAL MEMBERSHIP FEE 95.00",
+                "05/22 PURCHASE INTEREST CHARGE 12.34"));
+
+        StatementSource source = sourceRepo.save(withRules("Crestline Fees", dir));
+
+        IngestService.IngestResult result = ingestService.ingest(source, pdf);
+        assertEquals(3, result.transactionCount(), "the fee and interest rows are real transactions");
+        assertEquals(3, txnRepo.findByStatementSourceId(source.getId()).size());
+    }
+
+    /**
      * No statement date means no month to group by, and the null used to become the
      * idempotency key — where Spring Data turns it into IS NULL, so a second undated
      * statement matched the first and deleted its transactions.

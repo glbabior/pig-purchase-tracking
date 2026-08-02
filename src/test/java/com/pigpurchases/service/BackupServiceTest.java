@@ -4,6 +4,8 @@ import com.pigpurchases.model.BudgetEntry;
 import com.pigpurchases.model.StatementSource;
 import com.pigpurchases.repository.BudgetEntryRepository;
 import com.pigpurchases.repository.StatementSourceRepository;
+import com.pigpurchases.repository.TransactionMappingRepository;
+import com.pigpurchases.repository.TransactionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -44,9 +46,16 @@ class BackupServiceTest {
     @Autowired private BackupService backupService;
     @Autowired private BudgetEntryRepository entryRepo;
     @Autowired private StatementSourceRepository sourceRepo;
+    @Autowired private TransactionMappingRepository mappingRepo;
+    @Autowired private TransactionRepository txnRepo;
 
     @BeforeEach
     void clean() throws IOException {
+        // Everything the signature reads, not just the two tables these tests write. A test
+        // failing earlier in the suite leaves rows behind, and clearing only part of them
+        // let an unrelated failure cascade into a confusing failure here.
+        mappingRepo.deleteAll();
+        txnRepo.deleteAll();
         entryRepo.deleteAll();
         sourceRepo.deleteAll();
         // BackupService is a singleton, so clear the signature this suite's other tests left

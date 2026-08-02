@@ -237,7 +237,7 @@ public class AnalysisService {
             }
             // Same split as aggregateByActualMonth, so the drill-down always lists exactly
             // the transactions behind the figure the user clicked.
-            boolean isExcluded = !m.countsAsSpend() || isMoneyIn(txn);
+            boolean isExcluded = !inSpendBuckets(m, txn);
             if (excluded) {
                 if (!isExcluded) continue;
             } else {
@@ -278,7 +278,7 @@ public class AnalysisService {
             }
             MonthAgg agg = byMonth.computeIfAbsent(yyyymm(txn.getTransactionDate()), k -> new MonthAgg());
             BigDecimal spend = signedSpend(txn);
-            if (!m.countsAsSpend() || isMoneyIn(txn)) {
+            if (!inSpendBuckets(m, txn)) {
                 agg.excluded = agg.excluded.add(spend);
                 agg.excludedCount++;
             } else if (m.getStatus() == TransactionMapping.Status.PARKED || m.getBudgetEntryId() == null) {
@@ -424,6 +424,33 @@ public class AnalysisService {
     private static boolean isMoneyIn(Transaction txn) {
         String type = txn.getType();
         return "PAYMENT".equals(type) || "DEPOSIT".equals(type);
+    }
+
+    /**
+     * True when this row belongs in a category or the parked "Other" bucket, rather than
+     * in the excluded total. The single test, asked identically by the month aggregate and
+     * by the click-through, so the drill-down always lists exactly the rows behind the
+     * figure that was clicked.
+     *
+     * <p>Money in is normally kept out — see {@link #isMoneyIn} — <b>unless the user
+     * assigned it to a category by hand.</b> That exception exists because the Bayside parser
+     * has no {@code CREDIT} type: it types every positive line {@code DEPOSIT}, so a
+     * debit-card refund, a merchant credit and a paycheck are indistinguishable by type.
+     * Keeping all three out left a returned $200 purchase showing as $200 of spend, and
+     * assigning the refund to its category appeared to work while changing nothing.
+     *
+     * <p>Only {@code MAPPED_MANUAL} qualifies. A parked or AI-guessed card payment still
+     * cannot reach the spend buckets, which is what the exclusion was added for.
+     */
+    private static boolean inSpendBuckets(TransactionMapping m, Transaction txn) {
+        if (!m.countsAsSpend()) {
+            return false;
+        }
+        if (!isMoneyIn(txn)) {
+            return true;
+        }
+        return m.getStatus() == TransactionMapping.Status.MAPPED_MANUAL
+                && m.getBudgetEntryId() != null;
     }
 
     /** Money out adds to spend; money in (refunds, payments, deposits) subtracts. */
