@@ -33,6 +33,7 @@ import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Parses a statement file for a source and stores its transactions. The parser
@@ -109,7 +110,17 @@ public class IngestService {
         debugLog.info("ingest", "Loading " + file.getFileName() + " for source \"" + source.getName()
                 + "\" using parser " + rules.path("parser").asText("") + ".");
 
-        ParsedStatement statement = parser.parse(file);
+        ParsedStatement statement;
+        try {
+            statement = parser.parse(file);
+        } catch (RuntimeException e) {
+            // The loudest guards in the codebase throw from inside the parser — Crestline with
+            // no Opening/Closing Date, Ridgeline with no dated ledger row. They wrote
+            // nothing here, so the Debug screen ended at "Loading …" with no record of the
+            // refusal, contradicting this class's promise that every ingest leaves a trail.
+            debugLog.error("ingest", "Refused " + file.getFileName() + ": " + e.getMessage());
+            throw e;
+        }
         LocalDate statementDate = statement.getStatementDate();
 
         if (statementDate == null) {
@@ -155,10 +166,30 @@ public class IngestService {
         // rows: either the deliberate exclusion spread to its twin and a real charge left
         // spend, or it was lost and the excluded charge came back. Push and poll in row
         // order so the nth old row feeds the nth new one.
+        Optional<StatementImport> prior =
+                statementImportRepository.findByStatementSourceIdAndStatementDate(source.getId(), statementDate);
+
+        // NOTHING MAY REPLACE SOMETHING. Enforced here, where the consequence lives, rather
+        // than in reconcile — which can only refuse an empty parse for a parser that prints
+        // control totals. Ridgeline prints none (its "total" is derived from the very
+        // rows being checked), so a layout change that stopped its utility rows matching
+        // returned zero transactions, passed reconcile's fallthrough, and then deleted the
+        // month's real utilities and replaced them with nothing, reporting success.
+        //
+        // Stated as a rule about outcomes, this cannot be got round by a parser that has no
+        // way to verify itself, and it still allows a genuine first-time load of an empty
+        // statement.
+        if (statement.getTransactions().isEmpty() && prior.isPresent()
+                && !transactionRepository.findByStatementImportId(prior.get().getId()).isEmpty()) {
+            fail(file.getFileName().toString(), "the parse found no transactions at all, but the"
+                    + " statement already loaded for " + statementDate + " has them. Refusing to"
+                    + " replace real data with nothing — the parser has probably stopped matching"
+                    + " this layout");
+        }
+
         Map<String, Deque<CarriedMapping>> carried = new LinkedHashMap<>();
         List<AnalysisRunSource> consumingLinks = new ArrayList<>();
-        statementImportRepository.findByStatementSourceIdAndStatementDate(source.getId(), statementDate)
-                .ifPresent(prev -> {
+        prior.ifPresent(prev -> {
                     for (Transaction old : transactionRepository.findByStatementImportId(prev.getId())) {
                         for (TransactionMapping m : mappingRepository.findByTransactionId(old.getId())) {
                             carried.computeIfAbsent(
@@ -198,10 +229,10 @@ public class IngestService {
 
             Deque<CarriedMapping> queue = carried.get(contentKey(txn.getTransactionDate(),
                     txn.getAmount(), txn.getType(), txn.getDescription()));
-            CarriedMapping prior = queue == null ? null : queue.poll();
-            if (prior != null) {
-                mappingRepository.save(new TransactionMapping(prior.runId(), txn.getId(),
-                        prior.budgetEntryId(), prior.status(), prior.reason()));
+            CarriedMapping carriedForRow = queue == null ? null : queue.poll();
+            if (carriedForRow != null) {
+                mappingRepository.save(new TransactionMapping(carriedForRow.runId(), txn.getId(),
+                        carriedForRow.budgetEntryId(), carriedForRow.status(), carriedForRow.reason()));
             } else {
                 unmatchedRows = true;
             }
@@ -222,9 +253,12 @@ public class IngestService {
                     + (priorDecisions - stranded) + " of " + priorDecisions
                     + " existing categorization(s) carried onto the new rows"
                     + (stranded > 0 ? ", " + stranded + " lost because those lines changed" : "")
+                    // Driven off `stranded`, not off `unmatchedRows`. With zero new rows the
+                    // insert loop never runs, so unmatchedRows stays false and this claimed
+                    // "every row kept its category" for an import that kept nothing.
                     + (unmatchedRows
                         ? ". Some rows have no categorization, so this statement is being re-mapped."
-                        : ". Every row kept its category."));
+                        : stranded == 0 ? ". Every row kept its category." : "."));
         }
 
         if (!consumingLinks.isEmpty()) {
@@ -345,6 +379,23 @@ public class IngestService {
                         purchases.add(interest),
                         purchases.add(fees).add(interest));
                 boolean ties = acceptable.stream().anyMatch(v -> parsedPurchases.compareTo(v) == 0);
+                // Say WHICH combination tied. The tolerance exists because the layout is
+                // unknown, but it also means a fee row the parser dropped ties the
+                // purchases-only value and passes — so if the statement prints a non-zero
+                // fee or interest and the rows did not account for it, that has to be
+                // visible here rather than silently accepted.
+                boolean feesAccountedFor = fees.signum() == 0
+                        || parsedPurchases.compareTo(purchases.add(fees)) == 0
+                        || parsedPurchases.compareTo(purchases.add(fees).add(interest)) == 0;
+                boolean interestAccountedFor = interest.signum() == 0
+                        || parsedPurchases.compareTo(purchases.add(interest)) == 0
+                        || parsedPurchases.compareTo(purchases.add(fees).add(interest)) == 0;
+                if (ties && !(feesAccountedFor && interestAccountedFor)) {
+                    debugLog.warn("ingest", "Reconciled " + fileName + " against purchases alone."
+                            + " The statement also prints fees " + fees + " and interest " + interest
+                            + ", and no parsed row accounts for them — either they are printed"
+                            + " undated (expected) or the parser is dropping those rows.");
+                }
                 if (!ties) {
                     fail(fileName, "positive rows total " + parsedPurchases
                             + " but the statement prints purchases " + purchases

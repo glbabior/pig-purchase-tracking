@@ -1,8 +1,10 @@
 package com.pigpurchases.service;
 
 import com.pigpurchases.model.BudgetEntry;
+import com.pigpurchases.model.DismissedDuplicate;
 import com.pigpurchases.model.StatementSource;
 import com.pigpurchases.repository.BudgetEntryRepository;
+import com.pigpurchases.repository.DismissedDuplicateRepository;
 import com.pigpurchases.repository.StatementSourceRepository;
 import com.pigpurchases.repository.TransactionMappingRepository;
 import com.pigpurchases.repository.TransactionRepository;
@@ -22,7 +24,6 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -48,6 +49,7 @@ class BackupServiceTest {
     @Autowired private StatementSourceRepository sourceRepo;
     @Autowired private TransactionMappingRepository mappingRepo;
     @Autowired private TransactionRepository txnRepo;
+    @Autowired private DismissedDuplicateRepository dismissedRepo;
 
     @BeforeEach
     void clean() throws IOException {
@@ -58,6 +60,7 @@ class BackupServiceTest {
         txnRepo.deleteAll();
         entryRepo.deleteAll();
         sourceRepo.deleteAll();
+        dismissedRepo.deleteAll();
         // BackupService is a singleton, so clear the signature this suite's other tests left
         // behind. This writes a backup of its own, hence deleting the files afterwards.
         backupService.resetBaselineAfterRestore();
@@ -87,13 +90,30 @@ class BackupServiceTest {
     }
 
     /**
+     * The contents of today's dump.
+     *
+     * <p>Asserting on this rather than on {@code lastBackupAt} because the timestamp is a
+     * proxy for the thing that matters and a flaky one: two backups a few milliseconds
+     * apart can land on the same {@code LocalDateTime}, so the test intermittently read a
+     * successful write as a skip. What the user actually needs is that the edit REACHED a
+     * backup, which is exactly what the file says.
+     */
+    private String dumpContents() throws IOException {
+        try (Stream<Path> s = Files.list(DIR)) {
+            Path daily = s.filter(p -> p.getFileName().toString().endsWith(".sql"))
+                    .findFirst().orElseThrow(() -> new IllegalStateException("no backup written"));
+            return Files.readString(daily);
+        }
+    }
+
+    /**
      * The change signature read budget_entries as a bare COUNT(*) and statement_sources
      * not at all, so an edit in place left it byte-identical and every backup for the rest
      * of the session was skipped as "no changes" — losing the live file then restored the
      * old allowance and none of the new hints.
      */
     @Test
-    void editingABudgetEntryIsNoticedByTheChangeSignature() {
+    void editingABudgetEntryIsNoticedByTheChangeSignature() throws IOException {
         BudgetEntry entry = entryRepo.save(new BudgetEntry("Coffee", new BigDecimal("50.00")));
         backupService.backupNow();              // forces a write, recording the signature
         Object afterFirst = lastBackupAt();
@@ -107,13 +127,16 @@ class BackupServiceTest {
         entryRepo.save(entry);
 
         backupService.scheduled();
-        assertNotEquals(afterFirst, lastBackupAt(),
-                "editing an entry's allowance and hints must trigger a backup");
+
+        String dump = dumpContents();
+        assertTrue(dump.contains("400.00"),
+                "the new allowance must have reached a backup, not just the live database");
+        assertTrue(dump.contains("DAILYGRIND"), "and so must the new hint");
     }
 
     /** The same blindness covered statement sources, which were not in the signature at all. */
     @Test
-    void repointingAStatementSourceIsNoticedByTheChangeSignature() {
+    void repointingAStatementSourceIsNoticedByTheChangeSignature() throws IOException {
         StatementSource source = sourceRepo.save(new StatementSource("Crestline", "C:/statements/crestline"));
         backupService.backupNow();
         Object afterFirst = lastBackupAt();
@@ -125,8 +148,29 @@ class BackupServiceTest {
         sourceRepo.save(source);
 
         backupService.scheduled();
-        assertNotEquals(afterFirst, lastBackupAt(),
-                "repointing a source's folder must trigger a backup");
+        assertTrue(dumpContents().contains("D:/moved/crestline"),
+                "the repointed folder must have reached a backup");
+    }
+
+    /**
+     * Dismissing a duplicate group was invisible to the fingerprint, so a session spent
+     * clearing the Duplicates screen and doing nothing else never reached a backup — and
+     * the next startup skipped too, because the sidecar restored the same signature.
+     */
+    @Test
+    void dismissingADuplicateIsNoticedByTheChangeSignature() throws IOException {
+        entryRepo.save(new BudgetEntry("Coffee", new BigDecimal("50.00")));
+        backupService.backupNow();
+        Object afterFirst = lastBackupAt();
+
+        backupService.scheduled();
+        assertEquals(afterFirst, lastBackupAt(), "an unchanged database should not be re-dumped");
+
+        dismissedRepo.save(new DismissedDuplicate("2026-06-15|89.99|out"));
+
+        backupService.scheduled();
+        assertTrue(dumpContents().contains("2026-06-15|89.99|out"),
+                "a dismissed duplicate must reach a backup");
     }
 
     /**

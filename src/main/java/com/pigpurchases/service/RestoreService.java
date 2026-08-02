@@ -137,7 +137,14 @@ public class RestoreService {
         DataSource live = switchableDataSource.getLive();
 
         // Rollback snapshot of the current live db before we overwrite it.
-        Path rollback = Paths.get(backupDir).resolve("restore-rollback-"
+        //
+        // Named with the "pigpurchases-" prefix so listBackups shows it and the restore
+        // picker can select it. It used to be called "restore-rollback-…", which the list
+        // filters out — so the one file that exists specifically to undo a bad restore was
+        // the one file the app could not offer. Worse, the commit then forces a backup of
+        // the RESTORED state straight over today's daily file, leaving this snapshot as the
+        // only copy of the work being replaced.
+        Path rollback = Paths.get(backupDir).resolve("pigpurchases-rollback-"
                 + java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmmss").format(LocalDateTime.now()) + ".sql");
         try (Connection c = live.getConnection(); Statement st = c.createStatement()) {
             st.execute("SCRIPT TO '" + sqlPath(rollback) + "'");
@@ -421,6 +428,18 @@ public class RestoreService {
         if (orphans > 0) {
             return "Auto-review: WARNING - this backup has " + orphans + " mapping(s) pointing at rows that "
                     + "don't exist, so it is structurally inconsistent. Do not commit without investigating.";
+        }
+        // Ahead of everything else, because this is the one problem the reader cannot see by
+        // browsing. buildValidation reports it and this note did not, so the panel showed
+        // "PROBLEM - older than this version of the app" above "no integrity problems" —
+        // and the reassuring line is the one written to be the decision aid.
+        @SuppressWarnings("unchecked")
+        List<String> missing = (List<String>) b.getOrDefault("missingColumns", List.of());
+        if (!missing.isEmpty()) {
+            return "Auto-review: WARNING - this backup was written by an OLDER version of the app and is"
+                    + " missing " + String.join(", ", missing) + ". Committing it will break the screens that"
+                    + " read those tables, and the backup system itself, until you restart the app. Restart"
+                    + " immediately after committing, or pick a newer backup.";
         }
         if (tx == 0 || entries == 0) {
             return "Auto-review: this backup looks empty (" + entries + " budget entries, " + tx

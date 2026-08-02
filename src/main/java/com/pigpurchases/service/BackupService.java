@@ -127,7 +127,13 @@ public class BackupService {
 
     @PreDestroy
     public void onShutdown() {
-        if (enabled) runBackup("shutdown", false);
+        // Forced, which the change-signature javadoc has always claimed and the code did not
+        // do. The fingerprint has one acknowledged blind spot — a rename to the same length
+        // with the same first letter — and without a forced run at least once per session,
+        // such an edit is never backed up at all: the shutdown run skipped it, and so did
+        // the next startup, because seedFromNewestBackup restored the matching signature.
+        // Once per session is a cheap price for closing that.
+        if (enabled) runBackup("shutdown", true);
     }
 
     /** Manual "Back up now" — forces a write even if nothing changed. */
@@ -310,8 +316,8 @@ public class BackupService {
      * <p>Text columns contribute their length and first-character code rather than a real
      * hash, which is cheap and catches every realistic edit. The one edit it cannot see is
      * a rename to a string of identical length whose first letter is unchanged, with no
-     * other field touched; the startup and shutdown backups run with {@code force} and so
-     * are unaffected.
+     * other field touched. The shutdown backup runs with {@code force}, so such an edit is
+     * captured once per session even though no scheduled run notices it.
      */
     private String computeSignature(Connection c) throws SQLException {
         StringBuilder sb = new StringBuilder();
@@ -341,6 +347,11 @@ public class BackupService {
                 + " + COALESCE(backup_retention_count,0)),0) FROM app_settings")).append(';');
         sb.append("months=").append(scalar(c,
                 "SELECT COUNT(*) FROM month_status WHERE complete=TRUE")).append(';');
+        // Dismissing duplicate groups was invisible to the fingerprint, so a session spent
+        // clearing the Duplicates screen and doing nothing else was never backed up — and
+        // the next startup skipped too, because the sidecar restored the same signature.
+        // Losing the live db then brought every dismissed group back as unresolved.
+        sb.append("dismissed=").append(scalar(c, "SELECT COUNT(*) FROM dismissed_duplicates")).append(';');
         return sb.toString();
     }
 
@@ -446,14 +457,22 @@ public class BackupService {
         }
     }
 
-    /** Normal (non-suspect) daily backups, newest first by filename (date-named ⇒ chronological). */
+    /**
+     * Normal (non-suspect) daily backups, newest first by filename (date-named ⇒
+     * chronological). This is what {@link #prune} deletes from and what seeds the
+     * anti-clobber baseline, so two kinds of file are deliberately excluded:
+     * {@code .SUSPECT} snapshots, and {@code -rollback-} snapshots taken before a restore
+     * commit. Neither should ever be auto-deleted, and neither represents "normal" state.
+     * They are still listed for the restore picker — see {@link #listBackups()}.
+     */
     private List<Path> normalBackups(Path dir) throws IOException {
         List<Path> out = new ArrayList<>();
         if (!Files.isDirectory(dir)) return out;
         try (var stream = Files.list(dir)) {
             stream.filter(p -> {
                 String n = p.getFileName().toString();
-                return n.startsWith(PREFIX) && n.endsWith(".sql") && !n.contains(".SUSPECT.");
+                return n.startsWith(PREFIX) && n.endsWith(".sql")
+                        && !n.contains(".SUSPECT.") && !n.startsWith(PREFIX + "rollback-");
             }).forEach(out::add);
         }
         out.sort(Comparator.comparing((Path p) -> p.getFileName().toString()).reversed());
@@ -477,6 +496,10 @@ public class BackupService {
                     m.put("name", p.getFileName().toString());
                     m.put("bytes", Files.size(p));
                     m.put("suspect", p.getFileName().toString().contains(".SUSPECT."));
+                    // Flagged so the picker can label it: this is the state that existed
+                    // immediately before a restore commit, which is what you want if the
+                    // commit turned out to be a mistake.
+                    m.put("rollback", p.getFileName().toString().startsWith(PREFIX + "rollback-"));
                     out.add(m);
                 }
             }

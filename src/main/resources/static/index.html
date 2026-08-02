@@ -1297,7 +1297,7 @@
           list.innerHTML = files.map((f, i) => `
             <label class="browse-row" style="display:flex;gap:0.6rem;align-items:center;cursor:pointer;">
               <input type="radio" name="restorePick" value="${escapeHtml(f.name)}" />
-              <span>${escapeHtml(f.name)}${f.suspect ? ' ⚠ (flagged)' : ''} — ${Math.round(f.bytes / 1024)} KB</span>
+              <span>${escapeHtml(f.name)}${f.suspect ? ' ⚠ (flagged)' : ''}${f.rollback ? ' ↩ (state just before a restore)' : ''} — ${Math.round(f.bytes / 1024)} KB</span>
             </label>`).join('');
           list.querySelectorAll('input[name="restorePick"]').forEach((rb) =>
             rb.addEventListener('change', () => { previewBtn.disabled = false; }));

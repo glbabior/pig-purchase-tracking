@@ -198,6 +198,40 @@ class MappingServiceTest {
                 "undoing a one-off must return the row to the default, not pin it as parked");
     }
 
+    /**
+     * The money consequence of the reason marker, end to end.
+     *
+     * <p>The Bayside parser has no CREDIT type — every positive line is a DEPOSIT — so a
+     * refund is money-in, and {@code inSpendBuckets} lets it into a category only when the
+     * user put it there by hand, identified by the reason. Pass 2 rebuilds such a row from
+     * the merchant cache with the reason "Remembered — …", so before the carry-over a
+     * hand-assigned refund silently left its category on the next re-map and that
+     * category's total rose — including on the re-map ingest performs by itself.
+     */
+    @Test
+    void aHandAssignedRefundStaysInItsCategoryAcrossAReMap() {
+        mappingService.mapUnmapped();
+        Long runId = runFor(mayImportId);
+        Long txnId = mappingRepo.findByAnalysisRunId(runId).get(0).getTransactionId();
+
+        // Make it money-in, as a Bayside refund arrives.
+        com.pigpurchases.model.Transaction txn = txnRepo.findById(txnId).orElseThrow();
+        txn.setType("DEPOSIT");
+        txnRepo.save(txn);
+
+        Long metroId = entryRepo.findAll().stream()
+                .filter(e -> "Metro Station".equals(e.getName())).findFirst().orElseThrow().getId();
+        mappingService.assign(runId, txnId, metroId);
+
+        mappingService.remapImports(List.of(mayImportId));
+
+        TransactionMapping after = mappingRepo
+                .findByAnalysisRunIdAndTransactionId(runId, txnId).orElseThrow();
+        assertEquals(metroId, after.getBudgetEntryId(), "the category must survive the re-map");
+        assertEquals(MappingService.ASSIGNED_BY_HAND, after.getReason(),
+                "and so must the marker, or the refund drops out of the category's total");
+    }
+
     /** The same rule for a re-categorization, which is the commoner case. */
     @Test
     void aManualRecategorizationOfAHintMatchedTransactionSurvivesAReMap() {
@@ -395,16 +429,25 @@ class MappingServiceTest {
         mappingService.assign(run.getId(), parked.getTransactionId(), coffeeId);
         assertEquals(1, merchantRepo.count(), "the manual correction should be remembered");
 
-        // Re-run: the same merchant now resolves from the cache, no AI call, nothing parked.
+        // Re-run: nothing parked, no AI call, and the correction still stands.
         MappingService.MapResult result = mappingService.map(run.getId());
         assertEquals(0, result.parked());
-        assertEquals(1, result.cached(), "the payment is remembered from the manual correction");
-        assertEquals(0, result.aiMapped(), "no live API call — the answer was cached");
+        assertEquals(0, result.aiMapped(), "no live API call — the answer was already known");
         assertEquals(3, result.mapped());
+        // ...but NOT via the cache any more. A row the user assigned by hand is now carried
+        // across the rebuild as a per-transaction decision, because pass 2 rebuilds the
+        // status and entry while overwriting the reason with "Remembered — …" — and
+        // AnalysisService.inSpendBuckets needs that reason to tell a decision about THIS row
+        // from a pattern that merely matched it. Losing it took a hand-assigned refund back
+        // out of its category on every re-map. The cache is still written, and still applies
+        // to other transactions from the same merchant.
+        assertEquals(0, result.cached(), "carried as a per-transaction decision, not re-derived");
 
         TransactionMapping reapplied = mappingRepo
                 .findByAnalysisRunIdAndTransactionId(run.getId(), parked.getTransactionId()).orElseThrow();
         assertEquals(TransactionMapping.Status.MAPPED_MANUAL, reapplied.getStatus());
+        assertEquals(MappingService.ASSIGNED_BY_HAND, reapplied.getReason(),
+                "the marker that makes this a per-row decision must survive the re-map");
         assertEquals(coffeeId, reapplied.getBudgetEntryId());
     }
 

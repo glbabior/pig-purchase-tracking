@@ -105,6 +105,37 @@ public class MappingService {
      */
     static final String ASSIGNED_BY_HAND = "Categorized by hand";
 
+    /** A decision the user made about one specific transaction, carried across a rebuild. */
+    private record CarriedDecision(TransactionMapping.Status status, Long budgetEntryId, String reason) {}
+
+    /**
+     * True for a decision that applies to THIS transaction and cannot be rebuilt by any
+     * pass, so {@code doMap} has to carry it across the rebuild itself.
+     *
+     * <p>Three qualify, and the third was missed until it cost money. A one-off exclusion
+     * writes no merchant rule by design. A deliberate park writes none either — it deletes
+     * one. And a hand-assigned row <i>does</i> write a rule, but the rule is keyed on the
+     * merchant, not the row: pass 2 rebuilds it as {@code MAPPED_MANUAL} with the reason
+     * "Remembered — your earlier categorization", which is exactly what
+     * {@code AnalysisService.inSpendBuckets} refuses to treat as a per-row decision. So a
+     * refund the user had put into a category silently left it again on the next re-map —
+     * including the re-map ingest performs by itself — and that category's total rose.
+     *
+     * <p>The reason string is the discriminator in two of the three cases because the
+     * status alone cannot tell a decision about this row from a pattern that happened to
+     * match it.
+     */
+    private static boolean isPerTransactionDecision(TransactionMapping m) {
+        if (m.getStatus() == TransactionMapping.Status.EXCLUDED_ONCE) {
+            return true;
+        }
+        if (m.getStatus() == TransactionMapping.Status.PARKED) {
+            return PARKED_BY_HAND.equals(m.getReason());
+        }
+        return m.getStatus() == TransactionMapping.Status.MAPPED_MANUAL
+                && ASSIGNED_BY_HAND.equals(m.getReason());
+    }
+
     /** One source's contribution to a run, as chosen in the UI. */
     public record SourceSelection(Long sourceId, Long importId) {}
 
@@ -375,15 +406,11 @@ public class MappingService {
         // off, putting its amount back into that category. Only a deliberate park counts:
         // PARKED is also the status of everything no pass could place, and those must stay
         // free for a newly added hint to claim.
-        Map<Long, TransactionMapping.Status> carriedStatus = new LinkedHashMap<>();
-        Map<Long, String> carriedReason = new LinkedHashMap<>();
+        Map<Long, CarriedDecision> carried = new LinkedHashMap<>();
         for (TransactionMapping prior : mappingRepository.findByAnalysisRunId(runId)) {
-            boolean oneOff = prior.getStatus() == TransactionMapping.Status.EXCLUDED_ONCE;
-            boolean parkedByHand = prior.getStatus() == TransactionMapping.Status.PARKED
-                    && PARKED_BY_HAND.equals(prior.getReason());
-            if (oneOff || parkedByHand) {
-                carriedStatus.put(prior.getTransactionId(), prior.getStatus());
-                carriedReason.put(prior.getTransactionId(), prior.getReason());
+            if (isPerTransactionDecision(prior)) {
+                carried.put(prior.getTransactionId(), new CarriedDecision(
+                        prior.getStatus(), prior.getBudgetEntryId(), prior.getReason()));
             }
         }
 
@@ -396,6 +423,15 @@ public class MappingService {
         List<BudgetEntry> entries = budgetEntryRepository.findAll();
         HintMatcher matcher = new HintMatcher(entries);
 
+        // Needed before the loop below, not just by pass 2: a carried decision skips every
+        // pass, so without checking it here a hand-assigned row would keep pointing at a
+        // budget entry that no longer exists — reintroducing the dangling reference whose
+        // whole point was that the money silently leaves every total.
+        Set<Long> validEntryIds = new HashSet<>();
+        for (BudgetEntry entry : entries) {
+            validEntryIds.add(entry.getId());
+        }
+
         // Pass 1 — deterministic. Build every mapping in memory first so the AI pass
         // can see the whole parked set at once and de-duplicate repeated merchants.
         List<TransactionMapping> mappings = new ArrayList<>();
@@ -407,13 +443,19 @@ public class MappingService {
 
         for (AnalysisRunSource link : runSourceRepository.findByAnalysisRunId(runId)) {
             for (Transaction txn : transactionRepository.findByStatementImportId(link.getStatementImportId())) {
-                if (carriedStatus.containsKey(txn.getId())) {
+                CarriedDecision decision = carried.get(txn.getId());
+                if (decision != null && decision.budgetEntryId() != null
+                        && !validEntryIds.contains(decision.budgetEntryId())) {
+                    decision = null; // the category is gone; let the passes place it afresh
+                }
+                if (decision != null) {
                     // The user's call on this exact transaction outranks every pass below —
                     // it is the most specific decision there is. Deliberately not added to
                     // parkedTransactions either, so neither the merchant cache nor the AI
-                    // can reclaim something the user just set aside.
-                    mappings.add(new TransactionMapping(runId, txn.getId(), null,
-                            carriedStatus.get(txn.getId()), carriedReason.get(txn.getId())));
+                    // can reclaim something the user just set aside. The entry id rides
+                    // along so a hand-assigned row keeps its category, not just its status.
+                    mappings.add(new TransactionMapping(runId, txn.getId(), decision.budgetEntryId(),
+                            decision.status(), decision.reason()));
                     continue;
                 }
                 if (txn.isExcludeFromSpend()) {
@@ -439,14 +481,12 @@ public class MappingService {
             }
         }
 
-        Set<Long> validEntryIds = new HashSet<>();
-        for (BudgetEntry entry : entries) {
-            validEntryIds.add(entry.getId());
-        }
-
-        int hintCount = hintMatched.size();
-        int carriedCount = carriedStatus.size();
-        int afterPassOne = parkedTransactions.size();
+        int carriedCount = carried.size();
+        // Both counted BEFORE pass 2, which is why neither can be reported as a final tally:
+        // pass 2 overrides some hint matches with a MANUAL cache answer, so reporting
+        // hintMatched.size() double-counted those rows against `cached`, and pass 2 reads
+        // hint-matched rows too, so parkedTransactions.size() understated what reached it.
+        int reachedPassTwo = parkedTransactions.size() + hintMatched.size();
 
         // Pass 2 — remembered answers. Every parked transaction whose merchant was
         // categorized on a previous run (by AI, or by the user during review) is
@@ -461,10 +501,19 @@ public class MappingService {
         int mapped = 0;
         int parked = 0;
         int excluded = 0;
+        // Counted from the FINAL statuses, so the figures reported below add up to the row
+        // count. Snapshotting them per pass double-counted every hint match that pass 2
+        // later overrode with a remembered answer.
+        int byHint = 0;
+        int byManual = 0;
+        int byAi = 0;
         for (TransactionMapping mapping : mappings) {
             switch (mapping.getStatus()) {
                 case PARKED -> parked++;
                 case EXCLUDED, EXCLUDED_ONCE -> excluded++;
+                case MAPPED_HINT -> { byHint++; mapped++; }
+                case MAPPED_MANUAL -> { byManual++; mapped++; }
+                case MAPPED_AI -> { byAi++; mapped++; }
                 default -> mapped++;
             }
             mappingRepository.save(mapping);
@@ -481,11 +530,13 @@ public class MappingService {
         // API calls, so a run that categorized nothing looked the same whether the hints
         // matched everything, the cache answered everything, or the AI never ran.
         debugLog.info("mapping", "Mapped " + describe(run) + ": " + mappings.size()
-                + " transaction(s) — " + hintCount + " by hint, " + cached + " from remembered"
-                + " answers, " + aiMapped + " by AI, " + parked + " parked, " + excluded
-                + " not spend"
-                + (carriedCount > 0 ? ", " + carriedCount + " kept from your earlier decisions" : "")
-                + ". " + afterPassOne + " reached the remembered-answer pass.");
+                + " transaction(s) — " + byHint + " by hint, " + byManual + " by your own"
+                + " decisions or remembered answers, " + byAi + " by AI, " + parked + " parked, "
+                + excluded + " not spend"
+                + (carriedCount > 0 ? " (" + carriedCount + " kept from decisions you made"
+                                            + " about specific transactions)" : "")
+                + ". " + reachedPassTwo + " row(s) reached the remembered-answer pass, which"
+                + " resolved " + cached + ".");
 
         return new MapResult(runId, run.getMonth(), mapped, parked, excluded, aiMapped, cached);
     }

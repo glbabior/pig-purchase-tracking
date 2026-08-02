@@ -5,6 +5,7 @@ import com.pigpurchases.repository.BudgetEntryRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -15,7 +16,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
+/**
+ * Not active under the test profile. {@code @SpringBootTest} runs every
+ * {@code ApplicationRunner}, so running the suite imported the legacy budget into a
+ * throwaway in-memory database and then renamed the real migration file as done —
+ * consuming a one-time migration from a test.
+ */
 @Component
+@Profile("!test")
 public class DataInitializer implements ApplicationRunner {
     @Autowired
     private BudgetEntryRepository budgetEntryRepository;
