@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -192,10 +193,26 @@ public class BackupService {
                     ? dir.resolve(PREFIX + STAMP.format(now) + ".SUSPECT.sql")
                     : dir.resolve(PREFIX + DAY.format(now) + ".sql");
 
+            // Dump to a temp file, then move it into place. SCRIPT TO truncates its target
+            // and streams into it, so writing straight to the daily file destroyed the
+            // previous good copy before knowing the new one would complete — a kill during
+            // the shutdown dump, a full disk, or a scanner lock left a truncated .sql that
+            // RUNSCRIPT loads partway before erroring. The .meta was written only on
+            // success, so the previous sidecar survived and went on vouching for the
+            // wreckage, and nothing in the Settings list distinguishes the two.
+            Path staging = dir.resolve(target.getFileName() + ".part");
             try (Connection c = liveConnection(); Statement st = c.createStatement()) {
-                st.execute("SCRIPT TO '" + target.toAbsolutePath().toString().replace("\\", "/") + "'");
+                st.execute("SCRIPT TO '" + staging.toAbsolutePath().toString().replace("\\", "/") + "'");
+            } catch (SQLException | RuntimeException e) {
+                Files.deleteIfExists(staging);
+                throw e;
             }
-            writeMeta(target, signature, richness, now, trigger);
+            // Sidecar first, then both into place: the .meta must never outlive the dump it
+            // describes, which is how a stale sidecar came to vouch for a truncated file.
+            writeMeta(staging, signature, richness, now, trigger);
+            Files.move(metaPath(staging), metaPath(target),
+                    StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            Files.move(staging, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
 
             lastSignature = signature;
             lastBackupAt = now;

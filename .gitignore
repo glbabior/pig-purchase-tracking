@@ -15,6 +15,7 @@ apache-maven.zip
 
 # Local personal budget data — your amounts stay off git
 pig-purchases-data.txt
+pig-purchases-data.txt.imported
 budget-import.json
 
 # OS / shortcut noise

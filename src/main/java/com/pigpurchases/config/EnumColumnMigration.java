@@ -96,7 +96,13 @@ public class EnumColumnMigration implements ApplicationRunner {
     private void convertIfNeeded(Connection connection, EnumColumn column) {
         try {
             String type = columnType(connection, column);
-            if (type == null || type.toUpperCase().contains("CHAR")) {
+            // Test what it IS, not what its text contains. H2 returns the whole literal for
+            // a native enum — ENUM('EXCLUDED','MAPPED_AI',...) — so a substring test for
+            // "CHAR" was reading the constant names: the day someone added CHARGEBACK or
+            // CHARITY, every database created afterwards would report a type containing
+            // CHAR, this column would be skipped forever, and the NEXT constant added
+            // would fail to save on exactly the databases this class exists to protect.
+            if (type == null || !type.toUpperCase().startsWith("ENUM")) {
                 return; // absent (fresh db, Hibernate will create it) or already VARCHAR
             }
             try (Statement st = connection.createStatement()) {

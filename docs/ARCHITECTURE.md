@@ -60,7 +60,7 @@ Two deliberate facts about this picture:
 | `parser` | Turn one issuer's PDF into `ParsedStatement`/`ParsedTransaction`. Strategy pattern. | `StatementParser` (interface), `DepositStatementParser`, `CardStatementParser`, `PropertyStatementParser`, `ExclusionRule` |
 | `model` | JPA entities — the persistent domain. | `Transaction`, `BudgetEntry`, `AnalysisRun`, `TransactionMapping`, `MerchantCategory`, … (12 total) |
 | `repository` | Spring Data JPA interfaces, one per aggregate. | `TransactionRepository`, `AnalysisRunRepository`, … |
-| `service` | All business logic. Ingest, the categorization pipeline, analysis math, AI, backup/restore. | `IngestService`, `MappingService`, `AnalysisService`, `AiCategorizationService`, `HintMatcher`, `BackupService`, `RestoreService` |
+| `service` | All business logic. Ingest, the categorization pipeline, analysis math, AI, backup/restore. | `IngestService`, `MappingService`, `AnalysisService`, `AiCategorizationService`, `HintMatcher`, `BackupService`, `RestoreService`, `ManualEntryService`, `DebugLogService` |
 | `server` | `@RestController`s (the `/api` surface) + `DataInitializer`. Thin — they marshal JSON and delegate. | `BudgetController`, `MappingController`, `AnalysisController`, `ManualEntryController`, `BackupController`, `RestoreController` |
 | `config` | Switchable-datasource plumbing, plus startup schema fixes. | `DataSourceConfig`, `SwitchableDataSource`, `EnumColumnMigration` |
 
@@ -492,6 +492,13 @@ erDiagram
   `EXCLUDED_ONCE` be stored on a database created before it existed. Its column
   list is verified against the entities by test, because a missing column is
   invisible until the day someone adds a constant to it.
+- **A statement is reconciled before it is stored.** `IngestService` checks the parse
+  against the control totals the statement itself prints — Bayside's signed transactions
+  must equal ending minus beginning balance; Crestline's positives and negatives must equal
+  the printed purchases and credits — and refuses the import when they disagree. A
+  parser that cannot determine a statement date, a year, or (Ridgeline) which rows
+  belong to this cycle throws rather than guessing. Every outcome is written to the
+  debug log, success included, so silence there means the ingest never ran.
 - **A decision you made by hand outranks a hint.** Pass 2 considers hint-matched rows,
   but only a `MANUAL` merchant rule may override one; an `AI` answer may not, because
   the pattern is the user's own explicit rule and a guess is not. Without this, a

@@ -1242,9 +1242,14 @@
           // Can't start another restore or take a backup mid-preview.
           if (restoreBtn) restoreBtn.disabled = true;
           if (backupNowBtn) backupNowBtn.disabled = true;
+          // "Nothing is committed yet" read as *pending*, when the truth is *doomed*: every
+          // screen stays writable and writes into the throwaway preview database, which
+          // Cancel deletes and Commit replaces from the backup file. Either way the work is
+          // gone, and nothing said so.
           document.getElementById('restoreBannerText').innerHTML =
             `<strong>Previewing backup ${escapeHtml(restore.file || '')}</strong> — you're browsing restored data. `
-            + `Nothing is committed yet.`;
+            + `<strong>Any changes you make now are discarded</strong> when you commit or cancel, `
+            + `so look, don't edit.`;
           banner.style.display = 'flex';
         } else {
           panel.style.display = 'none';
@@ -1370,7 +1375,13 @@
       // Fire a Windows notification at most once per day while the reminder is due.
       function maybeWindowsNotify(message) {
         if (!('Notification' in window) || Notification.permission !== 'granted') return;
-        const todayKey = new Date().toISOString().slice(0, 10);
+        // Local date parts, not toISOString() — that returns the UTC date, which rolls over
+        // at 5pm in Riverton, so a reminder seen in the morning fired a second time the
+        // same evening under tomorrow's key.
+        const now = new Date();
+        const todayKey = now.getFullYear() + '-'
+          + String(now.getMonth() + 1).padStart(2, '0') + '-'
+          + String(now.getDate()).padStart(2, '0');
         if (localStorage.getItem('pigLastNotified') === todayKey) return;
         localStorage.setItem('pigLastNotified', todayKey);
         try {
@@ -2029,6 +2040,10 @@
           const r = await fetch(`/api/transactions/${id}`, { method: 'DELETE' });
           if (!r.ok) throw new Error('HTTP ' + r.status);
           await renderDuplicates();
+          // The dialog opens over the Mapping screen (and automatically after every run),
+          // so without this the statement card behind it kept its old transaction count and
+          // mapped/parked badges until the next navigation.
+          refreshRuns();
         } catch (err) {
           alert('Could not delete: ' + err.message);
         }
@@ -2472,7 +2487,24 @@
       async function loadMonth(month) {
         currentAnalysisMonth = month;
         document.getElementById('monthlyTitleMonth').textContent = formatMonthLong(month);
-        const data = await (await fetch(`/api/analysis/month/${encodeURIComponent(month)}`)).json();
+
+        // The heading is written before the fetch, so a failure here used to leave the
+        // PREVIOUS month's tiles and table sitting under the new month's name, looking
+        // exactly as authoritative as a moment earlier. Clear them and say so instead.
+        let data;
+        try {
+          const response = await fetch(`/api/analysis/month/${encodeURIComponent(month)}`);
+          if (!response.ok) throw new Error('HTTP ' + response.status);
+          data = await response.json();
+          if (!data || !Array.isArray(data.categories)) throw new Error('unexpected response');
+        } catch (err) {
+          document.getElementById('monthStats').innerHTML = '';
+          document.getElementById('monthTableWrap').innerHTML =
+            '<p class="empty">Could not load this month. Is the server running?</p>';
+          renderMonthStatusControls(month);
+          return;
+        }
+
         document.getElementById('monthStats').innerHTML =
           statTiles(data.totalBudget, data.totalActual, data.variance)
           // Gate on the COUNT, not the net. A card payment nets against the withdrawal that
@@ -2703,18 +2735,26 @@
         }
         const sampleRow = reviewAllRows.find((r) => String(r.transactionId) === checked[0].dataset.txn);
         showBusy(`Updating ${checked.length} transaction${checked.length > 1 ? 's' : ''}…`);
+        let applied = 0;
         try {
           for (const cb of checked) {
             await putJson(`/api/analysis-runs/${reviewAllRunId}/mappings/${cb.dataset.txn}`, catPayload(value));
             const row = reviewAllRows.find((r) => String(r.transactionId) === cb.dataset.txn);
             if (row) applyRowValue(row, value);
+            applied++;
           }
-          refreshRuns();
-          renderReviewAll();
           offerHint(value, sampleRow ? sampleRow.description : ''); // offer one rule for the batch
         } catch (err) {
-          alert('Could not apply to all selected: ' + err.message);
+          alert('Could not apply to all selected: ' + err.message
+            + (applied ? `\n\n${applied} of ${checked.length} were applied before the failure.` : ''));
         } finally {
+          // As in bulkReassignCat: applyRowValue has already updated the rows that succeeded,
+          // so skipping the re-render on failure left the dropdowns showing the old category
+          // until an unrelated keystroke in the search box made them jump.
+          if (applied) {
+            refreshRuns();
+            renderReviewAll();
+          }
           hideBusy();
           bulk.value = '';
         }
@@ -2772,17 +2812,25 @@
         }
         const payload = catPayload(value);
         showBusy(`Updating ${checked.length} transaction${checked.length > 1 ? 's' : ''}…`);
+        let applied = 0;
         try {
           for (const cb of checked) {
             await putJson(`/api/analysis-runs/${cb.dataset.run}/mappings/${cb.dataset.txn}`, payload);
+            applied++;
           }
-          const sampleDesc = checked[0].dataset.desc;
-          await loadMonth(catMonth);
-          await renderCategoryDetail(); // moved rows drop off the list
-          offerHint(value, sampleDesc); // offer one rule for the whole batch
+          offerHint(value, checked[0].dataset.desc); // offer one rule for the whole batch
         } catch (err) {
-          alert('Could not apply to all selected: ' + err.message);
+          alert('Could not apply to all selected: ' + err.message
+            + (applied ? `\n\n${applied} of ${checked.length} were applied before the failure.` : ''));
         } finally {
+          // Re-read from the server whether or not the batch finished. The refresh used to
+          // sit inside the try, so a failure part-way left rows already moved on the server
+          // while the month total and the category list still described the old state — and
+          // closing the dialog did not repair it either.
+          if (applied) {
+            await loadMonth(catMonth);
+            await renderCategoryDetail(); // moved rows drop off the list
+          }
           hideBusy();
           bulk.value = '';
         }

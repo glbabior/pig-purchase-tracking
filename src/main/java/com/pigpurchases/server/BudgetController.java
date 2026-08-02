@@ -12,9 +12,7 @@ import com.pigpurchases.repository.StatementImportRepository;
 import com.pigpurchases.repository.StatementSourceRepository;
 import com.pigpurchases.repository.TransactionMappingRepository;
 import com.pigpurchases.repository.TransactionRepository;
-import com.pigpurchases.service.BudgetService;
 import com.pigpurchases.service.IngestService;
-import com.pigpurchases.service.MonthlyHistoryEntry;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -68,9 +66,6 @@ public class BudgetController {
 
     @Autowired
     private IngestService ingestService;
-
-    @Autowired
-    private BudgetService budgetService;
 
     @Autowired
     private ApplicationContext applicationContext;
@@ -609,33 +604,5 @@ public class BudgetController {
         return response;
     }
 
-    @PostMapping("/summary")
-    public Map<String, Object> summary(@RequestBody Map<String, Object> payload) {
-        BudgetService.BudgetState state = new BudgetService.BudgetState();
-        List<Map<String, Object>> entries = (List<Map<String, Object>>) payload.get("entries");
-        for (Map<String, Object> entry : entries) {
-            state.getBudgetEntries().add(new BudgetEntry(
-                    (String) entry.get("name"),
-                    new BigDecimal(String.valueOf(entry.get("allowance")))
-            ));
-        }
-        List<String> statements = new ArrayList<>();
-        for (Object item : (List<Object>) payload.get("statements")) {
-            statements.add(String.valueOf(item));
-        }
-        BudgetService.BudgetSummary summary = budgetService.calculateSummary(state, statements);
-        List<MonthlyHistoryEntry> history = new ArrayList<>();
-        history.add(new MonthlyHistoryEntry(YearMonth.now(), summary.getTotalBudget(), summary.getTotalSpend()));
-        BudgetService.RollingAverageSummary rolling = budgetService.calculateRollingAverage(history);
-
-        Map<String, Object> response = new HashMap<>();
-        response.put("totalBudget", summary.getTotalBudget());
-        response.put("totalSpend", summary.getTotalSpend());
-        response.put("variance", summary.getVariance());
-        response.put("percentUsed", summary.getPercentUsed());
-        response.put("rollingAverageBudget", rolling.getAverageBudget());
-        response.put("rollingAverageSpend", rolling.getAverageSpend());
-        return response;
-    }
 }
 

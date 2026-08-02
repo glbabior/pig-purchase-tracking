@@ -365,17 +365,17 @@ checked 2026-07-22._
   A source created through the UI therefore has no parser and ingest fails with
   `No parser configured for id: ''`. Set them via
   `PUT /api/statement-sources/{id}/parser-rules` until this is surfaced.
-- **Spend semantics are type-based, not reconciled to statement totals.** Spend nets
-  by transaction type (purchases add; refunds, payments, and deposits subtract) and
-  drops excluded transfers, but nothing checks that a month's computed spend ties
-  back to the statements' own totals.
+- **Spend semantics are type-based.** Spend nets by transaction type — purchases add,
+  refunds subtract, and payments and deposits are money-in and never counted at all —
+  and drops excluded transfers. Each *statement* is now reconciled against its own
+  printed control totals at ingest and refused if it doesn't tie out, but nothing
+  checks a whole month's computed spend against the statements that fed it.
 - **Only PDF is supported.** CSV and OFX are not implemented.
 - **No transaction-management screen.** Stored transactions can be recategorized
   from the Mapping and Spend screens, but there's no general view/edit surface.
 - **No export.** Reports can't be downloaded.
 - **Dead code**: `MappingService.createRun` / `map(runId)` are the pre-per-file
-  month-run path. No controller reaches them; only the tests do. `POST /api/summary`
-  is likewise a legacy placeholder the UI no longer calls.
+  month-run path. No controller reaches them; only the tests do.
 
 ### Planned
 
@@ -435,7 +435,9 @@ completeness and unmapped counts), `PUT /api/analysis/months/{month}/complete`,
 `GET /api/restore/status`, `POST /api/restore/preview` `{file}`,
 `POST /api/restore/commit`, `POST /api/restore/cancel`, `POST /api/restore/comment`
 
-**Debug log** — `GET /api/debug-log` (newest first), `DELETE /api/debug-log`
+**Debug log** — `GET /api/debug-log` (newest first), `DELETE /api/debug-log`. Every
+ingest records its outcome here — reconciled, unreconcilable, or refused — so silence
+means the ingest never ran rather than that it was fine.
 
 **Housekeeping** — `GET /api/health` (liveness, used by the restart flow),
 `POST /api/restart` (recompile + DevTools reload),
