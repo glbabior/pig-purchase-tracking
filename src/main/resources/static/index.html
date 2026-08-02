@@ -909,8 +909,9 @@
     </div>
 
     <!-- The pure money/date/escaping functions, kept separate so they can be tested from
-         the Maven build (AppMathTest). Plain <script>, no bundler: the browser gets the
-         file exactly as written and editing it still needs only a refresh. -->
+         the Maven build (AppMathTest). An ordinary script tag, no bundler: the browser gets
+         the file exactly as written and editing it still needs only a refresh.
+         Must stay ABOVE the inline block, which calls into it. -->
     <script src="app-math.js"></script>
     <script>
       let entries = [];
