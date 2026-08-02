@@ -492,6 +492,28 @@ erDiagram
   `EXCLUDED_ONCE` be stored on a database created before it existed. Its column
   list is verified against the entities by test, because a missing column is
   invisible until the day someone adds a constant to it.
+- **A decision you made by hand outranks a hint.** Pass 2 considers hint-matched rows,
+  but only a `MANUAL` merchant rule may override one; an `AI` answer may not, because
+  the pattern is the user's own explicit rule and a guess is not. Without this, a
+  remembered decision about a merchant the hint pass could match was written and never
+  read back, so excluding or re-categorizing such a row was silently undone by the next
+  re-map.
+- **Re-ingest carries a statement's mappings onto the replacement rows**, matched by
+  content (date + absolute amount + normalized description) rather than by row id, and
+  re-points the consuming `AnalysisRunSource`. Deleting the old transactions without
+  this left mappings pointing at rows that no longer existed: the statement contributed
+  nothing to any month, its run vanished from the Mapping screen, and `EXCLUDED_ONCE`
+  was unrecoverable.
+- **Payments and deposits are never spend**, whatever their mapping status. `signedSpend`
+  negates them, so a parked one would *subtract* from the month. Only `CREDIT` nets
+  against spend, because a refund genuinely reverses a purchase.
+- **Backups always read the live database**, never the restore preview. `BackupService`
+  holds the `SwitchableDataSource` itself and calls `getLive()`; taking the `@Primary`
+  `DataSource` routed dumps through the switch, so a scheduled backup during a preview
+  overwrote the day's real backup and poisoned the anti-clobber baseline.
+- **A budget entry cannot be deleted while transactions are mapped to it.** Analysis
+  buckets spend by entry id and builds its rows from the surviving entries, so an
+  orphaned key is never read and that money leaves every total at once.
 - **A one-off exclusion survives a re-map.** `EXCLUDED_ONCE` deliberately writes no
   `merchant_categories` rule, so it is the one manual decision `doMap` cannot
   rebuild from the cache; it snapshots those rows before deleting and re-applies

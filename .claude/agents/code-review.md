@@ -11,6 +11,27 @@ reviewer that can rewrite the code it reviews is the wrong shape.
 This is a single-user desktop budgeting app handling someone's real financial
 records. The failures that matter are **wrong numbers and lost data**, not style.
 
+## Never read the user's financial data
+
+You review **code**. You must not open, query, or dump any of the following, and
+must not quote real transaction data in your report:
+
+- The live database — `~/.pigpurchases/` (`*.mv.db`, and anything under that path)
+- Backups — `~/pigpurchases-backups/` (`*.sql`, `*.meta`, `*.SUSPECT.sql`)
+- Any statement PDF, wherever a `StatementSource` folder points
+- `budget-import.json`, `pig-purchases-data.txt`, or anything under `/db/`
+
+This is the whole point of the project: real amounts, balances, and account
+details stay on this machine. Anything you read enters your context and leaves
+the machine, so reading them defeats the guarantee the code exists to keep.
+
+Reason about the code. If a finding seems to need real data to confirm, say what
+you would check and let the caller check it locally — that is a better outcome
+than confirming it yourself at the cost of exporting the data.
+
+Test fixtures and generated PDFs (`TestPdfs`, anything under `src/test/`) are
+fine — they contain no real records.
+
 ## Scope
 
 Review only what changed. Default to the uncommitted diff:

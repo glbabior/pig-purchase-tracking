@@ -126,6 +126,34 @@ class AnalysisServiceTest {
         assertEquals(0, BigDecimal.ZERO.compareTo(other.actual()));
     }
 
+    /**
+     * A card payment is money-in, not negative spend, and was only ever kept out of the
+     * total by being EXCLUDED — a merchant-cache rule rather than a property of the
+     * transaction. Un-categorizing one sent it through signedSpend into the parked
+     * "Other" bucket as a negative, so the month dropped by its full amount and Other
+     * showed a large negative figure. Parked money must count as spend or not at all;
+     * it must never count as *negative* spend.
+     */
+    @Test
+    void aParkedCardPaymentDoesNotSubtractFromTheMonth() {
+        TransactionMapping payment = mappingRepo.findByAnalysisRunId(runId).stream()
+                .filter(m -> "PAYMENT".equals(
+                        txnRepo.findById(m.getTransactionId()).orElseThrow().getType()))
+                .findFirst().orElseThrow();
+
+        // Un-categorize it — back to PARKED, and the remembered exclusion is forgotten.
+        mappingService.assign(runId, payment.getTransactionId(), null);
+
+        AnalysisService.MonthSummary ms = analysisService.month("2026-05");
+        assertEquals(0, new BigDecimal("4.45").compareTo(ms.totalActual()),
+                "coffee 4.10 + metro 0.35, unchanged — the 150 payment is not negative spend");
+
+        AnalysisService.CategoryRow other = ms.categories().stream()
+                .filter(c -> c.entryId() == null).findFirst().orElseThrow();
+        assertEquals(0, BigDecimal.ZERO.compareTo(other.actual()),
+                "and it must not appear as a negative Other");
+    }
+
     @Test
     void rollingCountsOnlyCompleteMonths() {
         // A month must be flagged complete to feed the rolling average.

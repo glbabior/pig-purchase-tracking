@@ -13,6 +13,8 @@ public interface TransactionMappingRepository extends JpaRepository<TransactionM
     List<TransactionMapping> findByAnalysisRunIdAndStatus(Long analysisRunId, TransactionMapping.Status status);
     Optional<TransactionMapping> findByAnalysisRunIdAndTransactionId(Long analysisRunId, Long transactionId);
     List<TransactionMapping> findByTransactionId(Long transactionId);
+    /** How much spend still points at a budget entry — guards deleting one out from under it. */
+    long countByBudgetEntryId(Long budgetEntryId);
     void deleteByAnalysisRunId(Long analysisRunId);
     void deleteByTransactionId(Long transactionId);
 }

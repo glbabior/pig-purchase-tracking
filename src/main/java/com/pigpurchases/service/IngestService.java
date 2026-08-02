@@ -2,9 +2,11 @@ package com.pigpurchases.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.pigpurchases.model.AnalysisRunSource;
 import com.pigpurchases.model.StatementImport;
 import com.pigpurchases.model.StatementSource;
 import com.pigpurchases.model.Transaction;
+import com.pigpurchases.model.TransactionMapping;
 import com.pigpurchases.parser.DepositStatementParser;
 import com.pigpurchases.parser.CardStatementParser;
 import com.pigpurchases.parser.ExclusionRule;
@@ -12,18 +14,23 @@ import com.pigpurchases.parser.PropertyStatementParser;
 import com.pigpurchases.parser.ParsedStatement;
 import com.pigpurchases.parser.ParsedTransaction;
 import com.pigpurchases.parser.StatementParser;
+import com.pigpurchases.repository.AnalysisRunSourceRepository;
 import com.pigpurchases.repository.StatementImportRepository;
+import com.pigpurchases.repository.TransactionMappingRepository;
 import com.pigpurchases.repository.TransactionRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Parses a statement file for a source and stores its transactions. The parser
@@ -40,7 +47,31 @@ public class IngestService {
     @Autowired
     private StatementImportRepository statementImportRepository;
 
+    // Re-ingest has to carry the prior import's mappings onto the replacement rows.
+    @Autowired
+    private TransactionMappingRepository mappingRepository;
+
+    @Autowired
+    private AnalysisRunSourceRepository runSourceRepository;
+
+    @Autowired
+    private MappingService mappingService;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    /** A prior mapping, held by transaction *content* so it can outlive the row's id. */
+    private record CarriedMapping(Long runId, TransactionMapping.Status status,
+                                  Long budgetEntryId, String reason) {}
+
+    /**
+     * Identifies a transaction by what it is rather than by its id: date, absolute
+     * amount, and normalized description. Re-ingesting the same statement produces the
+     * same key for the same line, which is what lets a mapping survive the replacement.
+     */
+    private static String contentKey(LocalDate date, BigDecimal amount, String description) {
+        return date + "|" + (amount == null ? "" : amount.abs().toPlainString())
+                + "|" + HintMatcher.normalize(description);
+    }
 
     public record IngestResult(Long importId, LocalDate statementDate, String fileName,
                                int transactionCount, int excludedCount) {}
@@ -62,8 +93,31 @@ public class IngestService {
                 ? base.relativize(absFile).toString() : file.getFileName().toString();
 
         // Idempotent: drop any prior import for this source + statement date.
+        //
+        // Deleting the old transactions used to leave their mappings behind, pointing at
+        // rows that no longer existed. Analysis skips a mapping whose transaction is gone,
+        // so the statement silently contributed *zero* to every month; the old run became
+        // invisible on the Mapping screen (which lists runs by walking imports) and so
+        // could never be re-run or deleted; and EXCLUDED_ONCE — carried across a re-map by
+        // transaction id, with no merchant rule to rebuild it from — was lost for good.
+        // The in-app guide tells the user re-loading is safe and to do it freely.
+        //
+        // So carry the mappings over by content instead. A line that re-parses identically
+        // keeps its categorization; one that changed loses it and simply maps again.
+        Map<String, CarriedMapping> carried = new LinkedHashMap<>();
+        List<AnalysisRunSource> consumingLinks = new ArrayList<>();
         statementImportRepository.findByStatementSourceIdAndStatementDate(source.getId(), statementDate)
                 .ifPresent(prev -> {
+                    for (Transaction old : transactionRepository.findByStatementImportId(prev.getId())) {
+                        for (TransactionMapping m : mappingRepository.findByTransactionId(old.getId())) {
+                            carried.putIfAbsent(
+                                    contentKey(old.getTransactionDate(), old.getAmount(), old.getDescription()),
+                                    new CarriedMapping(m.getAnalysisRunId(), m.getStatus(),
+                                            m.getBudgetEntryId(), m.getReason()));
+                        }
+                        mappingRepository.deleteByTransactionId(old.getId());
+                    }
+                    consumingLinks.addAll(runSourceRepository.findByStatementImportId(prev.getId()));
                     transactionRepository.deleteByStatementImportId(prev.getId());
                     statementImportRepository.delete(prev);
                 });
@@ -85,6 +139,20 @@ public class IngestService {
             txn.setType(pt.getType().name());
             txn.setExcludeFromSpend(excluded);
             transactionRepository.save(txn);
+
+            CarriedMapping prior = carried.get(contentKey(txn.getTransactionDate(), txn.getAmount(), txn.getDescription()));
+            if (prior != null) {
+                mappingRepository.save(new TransactionMapping(prior.runId(), txn.getId(),
+                        prior.budgetEntryId(), prior.status(), prior.reason()));
+            }
+        }
+
+        // Re-point the run that consumed the old import, so it stays reachable from the
+        // Mapping screen and can be re-run or deleted like any other.
+        for (AnalysisRunSource link : consumingLinks) {
+            link.setStatementImportId(imp.getId());
+            runSourceRepository.save(link);
+            mappingService.recount(link.getAnalysisRunId());
         }
 
         return new IngestResult(imp.getId(), statementDate, imp.getFileName(),

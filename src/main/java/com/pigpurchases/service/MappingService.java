@@ -361,6 +361,10 @@ public class MappingService {
         // can see the whole parked set at once and de-duplicate repeated merchants.
         List<TransactionMapping> mappings = new ArrayList<>();
         Map<Long, Transaction> parkedTransactions = new LinkedHashMap<>();
+        // Hint-matched rows are kept too, so pass 2 can let an explicit manual decision
+        // override the pattern. Deliberately separate from parkedTransactions, which the
+        // AI pass consumes — these already have an answer and must never be sent.
+        Map<Long, Transaction> hintMatched = new LinkedHashMap<>();
 
         for (AnalysisRunSource link : runSourceRepository.findByAnalysisRunId(runId)) {
             for (Transaction txn : transactionRepository.findByStatementImportId(link.getStatementImportId())) {
@@ -383,6 +387,7 @@ public class MappingService {
                     mappings.add(new TransactionMapping(runId, txn.getId(), match.get().entry().getId(),
                             TransactionMapping.Status.MAPPED_HINT,
                             "Matched on \"" + match.get().matchedOn() + "\""));
+                    hintMatched.put(txn.getId(), txn);
                 } else {
                     // Parked for now: shows as "Other" and still counts as spend.
                     TransactionMapping parkedMapping = new TransactionMapping(runId, txn.getId(), null,
@@ -401,7 +406,7 @@ public class MappingService {
         // Pass 2 — remembered answers. Every parked transaction whose merchant was
         // categorized on a previous run (by AI, or by the user during review) is
         // resolved from the cache, for free. This is what stops re-runs re-paying.
-        int cached = applyRememberedCategories(mappings, parkedTransactions, validEntryIds);
+        int cached = applyRememberedCategories(mappings, parkedTransactions, hintMatched, validEntryIds);
 
         // Pass 3 — AI, on whatever's left. Its answers are written back to the cache
         // so this is the only run that pays for them. Skipped silently with no
@@ -431,20 +436,35 @@ public class MappingService {
     }
 
     /**
-     * Resolve parked transactions from the merchant cache, removing the ones it
-     * handles from {@code parkedTransactions} so the AI pass never sees them. A
-     * cached answer pointing at a since-deleted budget entry is dropped (the row
-     * is purged), leaving the transaction parked.
+     * Resolve transactions from the merchant cache, removing the ones it handles from
+     * {@code parkedTransactions} so the AI pass never sees them. A cached answer
+     * pointing at a since-deleted budget entry is dropped (the row is purged), leaving
+     * the transaction parked.
+     *
+     * <p><b>Hint-matched rows are considered too, but only a {@code MANUAL} rule may
+     * override them.</b> This pass used to skip everything that was not {@code PARKED},
+     * which meant a remembered decision about a merchant the hint pass could match was
+     * written and never read back — so excluding, re-categorizing or parking such a row
+     * during review was silently undone by the next re-map, and the month's total moved
+     * with it. {@code exclude()} promises the opposite in its own javadoc.
+     *
+     * <p>An {@code AI} answer deliberately does <i>not</i> override a hint: the pattern
+     * is the user's own explicit rule and outranks a guess. Only a decision the user
+     * made by hand is more specific than a pattern they wrote by hand.
      */
     private int applyRememberedCategories(List<TransactionMapping> mappings,
                                           Map<Long, Transaction> parkedTransactions,
+                                          Map<Long, Transaction> hintMatched,
                                           Set<Long> validEntryIds) {
         int applied = 0;
         for (TransactionMapping mapping : mappings) {
-            if (mapping.getStatus() != TransactionMapping.Status.PARKED) {
+            boolean parked = mapping.getStatus() == TransactionMapping.Status.PARKED;
+            boolean hinted = mapping.getStatus() == TransactionMapping.Status.MAPPED_HINT;
+            if (!parked && !hinted) {
                 continue;
             }
-            Transaction txn = parkedTransactions.get(mapping.getTransactionId());
+            Transaction txn = parked ? parkedTransactions.get(mapping.getTransactionId())
+                                     : hintMatched.get(mapping.getTransactionId());
             if (txn == null) {
                 continue;
             }
@@ -454,6 +474,10 @@ public class MappingService {
                 continue;
             }
             MerchantCategory mc = remembered.get();
+            boolean manual = mc.getSource() == MerchantCategory.Source.MANUAL;
+            if (hinted && !manual) {
+                continue; // an AI guess never beats the user's own pattern
+            }
             if (mc.isExcluded()) {
                 // A remembered "not spend" decision (card payment, deposit, transfer).
                 mapping.setBudgetEntryId(null);
@@ -466,7 +490,6 @@ public class MappingService {
                 merchantCategoryRepository.delete(mc); // entry gone; forget the stale answer
                 continue;
             }
-            boolean manual = mc.getSource() == MerchantCategory.Source.MANUAL;
             mapping.setBudgetEntryId(mc.getBudgetEntryId());
             mapping.setStatus(manual ? TransactionMapping.Status.MAPPED_MANUAL
                                      : TransactionMapping.Status.MAPPED_AI);
@@ -656,8 +679,14 @@ public class MappingService {
         return mapping;
     }
 
-    /** Keep the run's counts in step after a manual change. */
-    private void recount(Long runId) {
+    /**
+     * Keep the run's counts in step after a manual change.
+     *
+     * <p>Public because re-ingest also disturbs them: it replaces a statement's
+     * transactions and carries the surviving mappings onto the new rows, which can drop
+     * any line the re-parse no longer produces.
+     */
+    public void recount(Long runId) {
         int mapped = 0;
         int parked = 0;
         int excluded = 0;

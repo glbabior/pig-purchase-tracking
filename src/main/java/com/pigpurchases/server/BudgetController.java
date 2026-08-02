@@ -7,8 +7,10 @@ import com.pigpurchases.model.StatementSource;
 import com.pigpurchases.model.Transaction;
 import com.pigpurchases.repository.AppSettingsRepository;
 import com.pigpurchases.repository.BudgetEntryRepository;
+import com.pigpurchases.repository.MerchantCategoryRepository;
 import com.pigpurchases.repository.StatementImportRepository;
 import com.pigpurchases.repository.StatementSourceRepository;
+import com.pigpurchases.repository.TransactionMappingRepository;
 import com.pigpurchases.repository.TransactionRepository;
 import com.pigpurchases.service.BudgetService;
 import com.pigpurchases.service.IngestService;
@@ -56,6 +58,13 @@ public class BudgetController {
 
     @Autowired
     private StatementImportRepository statementImportRepository;
+
+    // Both only for deleteEntry, which has to know what still points at an entry.
+    @Autowired
+    private TransactionMappingRepository mappingRepository;
+
+    @Autowired
+    private MerchantCategoryRepository merchantCategoryRepository;
 
     @Autowired
     private IngestService ingestService;
@@ -439,6 +448,17 @@ public class BudgetController {
         return Map.of("error", ex.getMessage() != null ? ex.getMessage() : "Bad request");
     }
 
+    /**
+     * A refused operation the user can resolve -> 409, so the message reaches them
+     * instead of surfacing as a 500. Currently deleting a budget entry that still has
+     * transactions mapped to it.
+     */
+    @ExceptionHandler(IllegalStateException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public Map<String, String> handleConflict(IllegalStateException ex) {
+        return Map.of("error", ex.getMessage() != null ? ex.getMessage() : "Conflict");
+    }
+
     /** Resolve relPath under base, rejecting anything that escapes the source folder. */
     private Path resolveWithin(Path base, String relPath) {
         String rel = (relPath == null || relPath.equals("null")) ? "" : relPath;
@@ -527,8 +547,30 @@ public class BudgetController {
         return budgetEntryRepository.save(entry);
     }
 
+    /**
+     * Delete a budget entry, but refuse while transactions are still mapped to it.
+     *
+     * <p>A bare delete left those mappings carrying a dangling {@code budgetEntryId} and a
+     * {@code MAPPED_*} status. Analysis buckets spend by entry id and then builds its rows
+     * from the <i>surviving</i> entries, so the orphaned key was never read: that money left
+     * every month total, the rolling average and the trend chart at once — in no category,
+     * not in "Other", not in excluded — and no drill-down could reach it. Nothing repaired it
+     * later, and the review screen rendered those rows as "Other (parked)" while the Other
+     * tile excluded their amounts.
+     *
+     * <p>So make the user re-map first. The alternative — silently re-parking the affected
+     * transactions here — moves someone's categorization work without asking, and this way
+     * the count tells them exactly how much is at stake.
+     */
     @DeleteMapping("/entries/{id}")
     public void deleteEntry(@PathVariable Long id) {
+        long mapped = mappingRepository.countByBudgetEntryId(id);
+        if (mapped > 0) {
+            throw new IllegalStateException(mapped + " transaction" + (mapped == 1 ? " is" : "s are")
+                    + " still mapped to this category. Reassign them first — open Spend: Monthly,"
+                    + " click the category, and move them to another one.");
+        }
+        merchantCategoryRepository.findByBudgetEntryId(id).forEach(merchantCategoryRepository::delete);
         budgetEntryRepository.deleteById(id);
     }
 

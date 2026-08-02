@@ -1,5 +1,6 @@
 package com.pigpurchases.service;
 
+import com.pigpurchases.config.SwitchableDataSource;
 import com.pigpurchases.repository.AppSettingsRepository;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
@@ -63,7 +64,19 @@ public class BackupService {
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmmss");
     private static final String PREFIX = "pigpurchases-";
 
-    private final DataSource dataSource;
+    /**
+     * Deliberately the switch itself rather than the {@code @Primary} {@link DataSource},
+     * so every read below can go to {@link SwitchableDataSource#getLive()}.
+     *
+     * <p>Injecting the plain DataSource routed backups through the switch, which means a
+     * scheduled or shutdown backup taken while a restore preview was open dumped the
+     * <i>preview</i> database over the day's real backup — and, when the preview was richer
+     * than live, poisoned {@link #lastGoodRichness} so every later backup tripped the
+     * anti-clobber guard and was filed {@code .SUSPECT} indefinitely, surviving restarts via
+     * the sidecar. Reading live keeps real backups running normally throughout a preview,
+     * which is better than suppressing them for its duration.
+     */
+    private final SwitchableDataSource dataSource;
     private final AppSettingsRepository appSettingsRepository;
 
     @Value("${pigpurchases.backup.enabled:true}")
@@ -80,9 +93,17 @@ public class BackupService {
     private volatile String lastBackupFile = null;
     private volatile String lastWarning = null;
 
-    public BackupService(DataSource dataSource, AppSettingsRepository appSettingsRepository) {
+    public BackupService(SwitchableDataSource dataSource, AppSettingsRepository appSettingsRepository) {
         this.dataSource = dataSource;
         this.appSettingsRepository = appSettingsRepository;
+    }
+
+    /**
+     * A connection to the live database, never the restore preview. Every backup read
+     * goes through here — see the field comment for why.
+     */
+    private Connection liveConnection() throws SQLException {
+        return dataSource.getLive().getConnection();
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -153,7 +174,7 @@ public class BackupService {
 
             String signature;
             int richness;
-            try (Connection c = dataSource.getConnection()) {
+            try (Connection c = liveConnection()) {
                 signature = computeSignature(c);
                 richness = mappedCount(c);
             }
@@ -171,7 +192,7 @@ public class BackupService {
                     ? dir.resolve(PREFIX + STAMP.format(now) + ".SUSPECT.sql")
                     : dir.resolve(PREFIX + DAY.format(now) + ".sql");
 
-            try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
+            try (Connection c = liveConnection(); Statement st = c.createStatement()) {
                 st.execute("SCRIPT TO '" + target.toAbsolutePath().toString().replace("\\", "/") + "'");
             }
             writeMeta(target, signature, richness, now, trigger);

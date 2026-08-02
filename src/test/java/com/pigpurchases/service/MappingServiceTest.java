@@ -26,6 +26,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -53,9 +54,11 @@ class MappingServiceTest {
     private Long sourceId;
     private Long juneImportId;
     private Long mayImportId;
+    private Path tempDir;
 
     @BeforeEach
     void reset(@TempDir Path dir) throws IOException {
+        tempDir = dir;
         mappingRepo.deleteAll();
         merchantRepo.deleteAll();
         runSourceRepo.deleteAll();
@@ -91,6 +94,77 @@ class MappingServiceTest {
 
     private List<MappingService.SourceSelection> select(Long importId) {
         return List.of(new MappingService.SourceSelection(sourceId, importId));
+    }
+
+    private Long runFor(Long importId) {
+        return runSourceRepo.findByStatementImportId(importId).get(0).getAnalysisRunId();
+    }
+
+    /**
+     * Pass 2 used to skip everything that was not PARKED, so a remembered decision about
+     * a merchant the hint pass could match was written and never read back — the next
+     * re-map silently put the transaction back where the hint said, and the month's total
+     * moved with it. "COFFEE SHOP ANYTOWN CA" name-matches the "Coffee Shop" entry, so it
+     * takes the hint path.
+     */
+    @Test
+    void anExclusionOfAHintMatchedTransactionSurvivesAReMap() {
+        mappingService.mapUnmapped();
+        Long runId = runFor(mayImportId);
+        TransactionMapping hinted = mappingRepo
+                .findByAnalysisRunIdAndStatus(runId, TransactionMapping.Status.MAPPED_HINT).get(0);
+        Long txnId = hinted.getTransactionId();
+
+        mappingService.exclude(runId, txnId);
+        mappingService.remapImports(List.of(mayImportId));
+
+        assertEquals(TransactionMapping.Status.EXCLUDED,
+                mappingRepo.findByAnalysisRunIdAndTransactionId(runId, txnId).orElseThrow().getStatus(),
+                "a remembered exclusion must outrank the hint that would otherwise re-map it");
+    }
+
+    /** The same rule for a re-categorization, which is the commoner case. */
+    @Test
+    void aManualRecategorizationOfAHintMatchedTransactionSurvivesAReMap() {
+        mappingService.mapUnmapped();
+        Long runId = runFor(mayImportId);
+        TransactionMapping hinted = mappingRepo
+                .findByAnalysisRunIdAndStatus(runId, TransactionMapping.Status.MAPPED_HINT).get(0);
+        Long txnId = hinted.getTransactionId();
+        Long metroId = entryRepo.findAll().stream()
+                .filter(e -> "Metro Station".equals(e.getName())).findFirst().orElseThrow().getId();
+
+        mappingService.assign(runId, txnId, metroId);
+        mappingService.remapImports(List.of(mayImportId));
+
+        TransactionMapping after = mappingRepo.findByAnalysisRunIdAndTransactionId(runId, txnId).orElseThrow();
+        assertEquals(metroId, after.getBudgetEntryId(), "the hint must not reclaim a hand-categorized row");
+        assertEquals(TransactionMapping.Status.MAPPED_MANUAL, after.getStatus());
+    }
+
+    /**
+     * Re-ingest deletes the statement's transactions and creates new ones with new ids.
+     * The mappings used to be left pointing at the deleted rows: the statement then
+     * contributed nothing to any month, its run vanished from the Mapping screen, and
+     * EXCLUDED_ONCE — which has no merchant rule to be rebuilt from — was gone for good.
+     * The in-app guide tells the user re-loading is safe.
+     */
+    @Test
+    void reIngestingAStatementCarriesItsOneOffExclusionOntoTheNewRows() throws IOException {
+        mappingService.mapUnmapped();
+        Long runId = runFor(mayImportId);
+        Long oldTxnId = mappingRepo.findByAnalysisRunId(runId).get(0).getTransactionId();
+        mappingService.excludeOnce(runId, oldTxnId);
+
+        StatementSource source = sourceRepo.findById(sourceId).orElseThrow();
+        Long newImportId = ingestService.ingest(source, tempDir.resolve("may.pdf")).importId();
+
+        assertEquals(runId, runFor(newImportId), "the run must follow the replacement import");
+        List<TransactionMapping> after = mappingRepo.findByAnalysisRunId(runId);
+        assertEquals(1, after.size(), "exactly one mapping, on the new row");
+        assertNotEquals(oldTxnId, after.get(0).getTransactionId(), "the transaction really was replaced");
+        assertEquals(TransactionMapping.Status.EXCLUDED_ONCE, after.get(0).getStatus(),
+                "a one-off exclusion cannot be rebuilt from any rule, so re-ingest must carry it");
     }
 
     @Test

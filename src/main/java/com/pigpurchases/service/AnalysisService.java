@@ -227,7 +227,9 @@ public class AnalysisService {
             if (txn == null || txn.getTransactionDate() == null || !month.equals(yyyymm(txn.getTransactionDate()))) {
                 continue;
             }
-            boolean isExcluded = !m.countsAsSpend();
+            // Same split as aggregateByActualMonth, so the drill-down always lists exactly
+            // the transactions behind the figure the user clicked.
+            boolean isExcluded = !m.countsAsSpend() || isMoneyIn(txn);
             if (excluded) {
                 if (!isExcluded) continue;
             } else {
@@ -239,7 +241,7 @@ public class AnalysisService {
             lines.add(new TxnLine(txn.getId(), m.getAnalysisRunId(),
                     txn.getTransactionDate().toString(),
                     txn.getDescription(), txn.getVendor(), round(signedSpend(txn)), txn.getType(),
-                    m.getStatus().name()));
+                    m.getStatus() == null ? null : m.getStatus().name()));
         }
         lines.sort(Comparator.comparing(l -> l.date() == null ? "" : l.date()));
         return lines;
@@ -267,7 +269,7 @@ public class AnalysisService {
             }
             MonthAgg agg = byMonth.computeIfAbsent(yyyymm(txn.getTransactionDate()), k -> new MonthAgg());
             BigDecimal spend = signedSpend(txn);
-            if (!m.countsAsSpend()) {
+            if (!m.countsAsSpend() || isMoneyIn(txn)) {
                 agg.excluded = agg.excluded.add(spend);
             } else if (m.getStatus() == TransactionMapping.Status.PARKED || m.getBudgetEntryId() == null) {
                 agg.other = agg.other.add(spend);
@@ -392,6 +394,25 @@ public class AnalysisService {
 
     private static String yyyymm(LocalDate date) {
         return YearMonth.from(date).toString(); // e.g. "2026-06"
+    }
+
+    /**
+     * A card payment or an account deposit, which is not spend at all and must never
+     * reach a category or the parked "Other" bucket.
+     *
+     * <p>Both were only ever kept out by being marked {@code EXCLUDED} — a merchant-cache
+     * rule, not a property of the transaction. The moment one was parked or categorized
+     * instead, {@link #signedSpend} negated it and it <i>subtracted</i> from the month:
+     * un-categorizing a single card payment dropped the total by its full amount and
+     * showed a large negative "Other". That inverts the "parked still counts as spend"
+     * invariant rather than merely bending it — money-in became negative spend.
+     *
+     * <p>A {@code CREDIT} is deliberately not included. A refund genuinely reverses a
+     * purchase in the same category, so netting it against spend is correct.
+     */
+    private static boolean isMoneyIn(Transaction txn) {
+        String type = txn.getType();
+        return "PAYMENT".equals(type) || "DEPOSIT".equals(type);
     }
 
     /** Money out adds to spend; money in (refunds, payments, deposits) subtracts. */

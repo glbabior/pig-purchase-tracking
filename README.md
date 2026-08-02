@@ -74,7 +74,10 @@ Three passes, cheapest first, so the expensive one only sees what's left:
    transaction against budget entry names and explicit `match:` hints.
 3. **Remembered answers** (`merchant_categories`) — once a merchant has been
    categorized, by the AI or by you, that answer is reused on every later run with
-   **no API call**. A merchant is paid for at most once, ever.
+   **no API call**. A merchant is paid for at most once, ever. A decision *you* made
+   by hand also overrides a hint match from step 2 — otherwise excluding or
+   re-categorizing a hint-matched charge would be undone by the next re-map. An AI
+   answer does not: your own pattern outranks a guess.
 4. **The Claude API** on whatever is left, then anything still unresolved is
    **parked**.
 
