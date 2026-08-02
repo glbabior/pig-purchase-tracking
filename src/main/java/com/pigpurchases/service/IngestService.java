@@ -57,6 +57,14 @@ public class IngestService {
     @Autowired
     private MappingService mappingService;
 
+    /**
+     * Every ingest leaves a trail on the Debug screen — reconciled, unreconcilable, or
+     * refused. Success is logged too, so an empty Debug screen means the ingest never ran
+     * rather than that it was fine.
+     */
+    @Autowired
+    private DebugLogService debugLog;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** A prior mapping, held by transaction *content* so it can outlive the row's id. */
@@ -84,7 +92,22 @@ public class IngestService {
 
         ParsedStatement statement = parser.parse(file);
         LocalDate statementDate = statement.getStatementDate();
-        String month = statementDate != null ? statementDate.toString().substring(0, 7) : null;
+
+        if (statementDate == null) {
+            // Every month is grouped by a transaction's actual date, so a statement with no
+            // date is unusable. Worse, the null became the idempotency key below, and Spring
+            // Data turns a null derived-query argument into IS NULL — so ingesting a SECOND
+            // undated statement matched the first and deleted its transactions.
+            debugLog.error("ingest", "No statement date parsed from " + file.getFileName()
+                    + " — refusing the import. The header line the parser looks for is missing"
+                    + " or in an unexpected format.");
+            throw new IllegalStateException("Could not read a statement date from "
+                    + file.getFileName() + ". The file may not match the source's parser.");
+        }
+
+        reconcile(statement, file.getFileName().toString(), rules.path("parser").asText(""));
+
+        String month = statementDate.toString().substring(0, 7);
 
         // Path relative to the source folder, so the exact file stays locatable.
         Path base = Path.of(source.getFolderPath()).toAbsolutePath().normalize();
@@ -157,6 +180,95 @@ public class IngestService {
 
         return new IngestResult(imp.getId(), statementDate, imp.getFileName(),
                 statement.getTransactions().size(), excludedCount);
+    }
+
+    /**
+     * Check the parse against the control totals the statement itself prints, and refuse
+     * the import when they disagree.
+     *
+     * <p>These checks already existed, but only inside {@code *ValidationTest}, which
+     * {@code assumeTrue}s itself away unless the personal PDF folder is present — so they
+     * ran on one machine, when someone remembered, and never in the running app.
+     * {@link ParsedStatement} has carried the totals for exactly this purpose the whole
+     * time and nothing read them. A parser that dropped or mis-signed a line produced a
+     * quietly wrong month and still reported "Loaded — Transactions: N".
+     *
+     * <p>Every outcome is written to the debug log, including success: a run that
+     * reconciles says so, so silence on the Debug screen means the ingest never happened
+     * rather than that it was fine.
+     */
+    private void reconcile(ParsedStatement statement, String fileName, String parserId) {
+        BigDecimal net = statement.getTransactions().stream()
+                .map(ParsedTransaction::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        if (statement.getTransactions().isEmpty()) {
+            // Not fatal — a genuinely empty cycle exists — but it is nearly always a parser
+            // that stopped matching, so it must not pass unremarked.
+            debugLog.warn("ingest", "No transactions parsed from " + fileName
+                    + " (parser " + parserId + "). If the statement is not genuinely empty,"
+                    + " the parser no longer matches this layout.");
+            return;
+        }
+
+        BigDecimal beginning = statement.control("beginningBalance");
+        BigDecimal ending = statement.control("endingBalance");
+        if (beginning != null && ending != null) {
+            BigDecimal expected = ending.subtract(beginning);
+            if (expected.compareTo(net) != 0) {
+                fail(fileName, "signed transactions total " + net + " but the statement's own"
+                        + " balances require " + expected + " (ending " + ending
+                        + " minus beginning " + beginning + ")");
+            }
+            debugLog.info("ingest", "Reconciled " + fileName + ": " + statement.getTransactions().size()
+                    + " transactions net " + net + ", matching ending minus beginning balance.");
+            return;
+        }
+
+        // Checked independently: a statement with no credits in the cycle prints no credits
+        // line at all, and requiring both would skip the check entirely on exactly the
+        // simplest statements.
+        BigDecimal purchases = statement.control("purchases");
+        BigDecimal credits = statement.control("credits");
+        if (purchases != null || credits != null) {
+            BigDecimal parsedPurchases = sumWhere(statement, true);
+            BigDecimal parsedCredits = sumWhere(statement, false);
+            if (purchases != null && parsedPurchases.compareTo(purchases) != 0) {
+                fail(fileName, "purchases total " + parsedPurchases
+                        + " but the statement prints " + purchases);
+            }
+            if (credits != null && parsedCredits.compareTo(credits) != 0) {
+                fail(fileName, "credits total " + parsedCredits
+                        + " but the statement prints " + credits);
+            }
+            debugLog.info("ingest", "Reconciled " + fileName + ": " + statement.getTransactions().size()
+                    + " transactions, purchases " + parsedPurchases + " and credits " + parsedCredits
+                    + ", matching every total the statement prints.");
+            return;
+        }
+
+        // Ridgeline prints no independent total — utilitiesTotal is derived from the very
+        // rows being checked, so it cannot catch anything. Its guard is the divider check in
+        // the parser instead. Say so rather than implying the parse was verified.
+        debugLog.warn("ingest", "No independent control totals for " + fileName
+                + " (parser " + parserId + "), so the parse could not be reconciled. "
+                + statement.getTransactions().size() + " transactions totalling " + net + ".");
+    }
+
+    private void fail(String fileName, String detail) {
+        String message = "Parse of " + fileName + " does not reconcile: " + detail
+                + ". Refusing the import — loading it would make that month's spend wrong"
+                + " with no other sign of a problem.";
+        debugLog.error("ingest", message);
+        throw new IllegalStateException(message);
+    }
+
+    /** Sum of the positive (purchase) or negative (credit) amounts. */
+    private static BigDecimal sumWhere(ParsedStatement statement, boolean positive) {
+        return statement.getTransactions().stream()
+                .map(ParsedTransaction::getAmount)
+                .filter(a -> positive ? a.signum() > 0 : a.signum() < 0)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     private StatementParser parserFor(String parserId) {

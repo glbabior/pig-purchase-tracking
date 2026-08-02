@@ -31,8 +31,20 @@ public class DebugLogService {
     private static final int PRUNE_EVERY = 20;
     private int writesSincePrune = 0;
 
+    // REQUIRES_NEW belongs on THESE three, not only on record(). Every caller in the app
+    // reaches the log through them, and `record(...)` from inside this class is a plain
+    // this-call that never touches the Spring proxy — so the annotation below it never
+    // applied and log writes silently joined the caller's transaction. A mapping batch or
+    // an ingest that rolled back took its own explanation down with it, which is precisely
+    // the moment the durable log exists for. Annotating here puts the new transaction on
+    // the path callers actually use; record() keeps its own for any direct caller.
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void info(String category, String message) { record(AppLogEntry.Level.INFO, category, message); }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void warn(String category, String message) { record(AppLogEntry.Level.WARN, category, message); }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void error(String category, String message) { record(AppLogEntry.Level.ERROR, category, message); }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)

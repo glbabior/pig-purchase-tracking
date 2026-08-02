@@ -20,6 +20,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -71,5 +72,50 @@ class IngestServiceIntegrationTest {
         ingestService.ingest(source, pdf);
         assertEquals(4, txnRepo.findByStatementSourceId(source.getId()).size());
         assertEquals(1, importRepo.findByStatementSourceIdOrderByStatementDateDesc(source.getId()).size());
+    }
+
+    /**
+     * A parse that does not tie back to the statement's own printed totals must not be
+     * stored. The checks existed only in *ValidationTest, which skips itself away without
+     * the personal PDF folder — so in the running app a dropped or mis-signed line became
+     * a quietly wrong month, reported as "Loaded — Transactions: N".
+     */
+    @Test
+    void anImportThatDoesNotReconcileIsRefused(@TempDir Path dir) throws IOException {
+        Path pdf = dir.resolve("crestline-bad.pdf");
+        TestPdfs.write(pdf, List.of(
+                "Opening/Closing Date 05/12/26 - 06/11/26",
+                "Purchases +$99.99",                       // what the statement prints
+                "05/20 COFFEE SHOP ANYTOWN CA 4.10"));     // what the parser found
+
+        StatementSource source = sourceRepo.save(withRules("Crestline Mismatch", dir));
+
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> ingestService.ingest(source, pdf));
+        assertTrue(e.getMessage().contains("does not reconcile"), e.getMessage());
+        assertTrue(txnRepo.findByStatementSourceId(source.getId()).isEmpty(),
+                "nothing may be stored from a statement that does not reconcile");
+    }
+
+    /**
+     * No statement date means no month to group by, and the null used to become the
+     * idempotency key — where Spring Data turns it into IS NULL, so a second undated
+     * statement matched the first and deleted its transactions.
+     */
+    @Test
+    void anImportWithNoStatementDateIsRefused(@TempDir Path dir) throws IOException {
+        Path pdf = dir.resolve("crestline-undated.pdf");
+        TestPdfs.write(pdf, List.of("05/20 COFFEE SHOP ANYTOWN CA 4.10"));
+
+        StatementSource source = sourceRepo.save(withRules("Crestline Undated", dir));
+
+        assertThrows(IllegalStateException.class, () -> ingestService.ingest(source, pdf));
+        assertTrue(txnRepo.findByStatementSourceId(source.getId()).isEmpty());
+    }
+
+    private static StatementSource withRules(String name, Path dir) {
+        StatementSource source = new StatementSource(name, dir.toString());
+        source.setParserRules("{\"parser\":\"card-pdf\"}");
+        return source;
     }
 }
