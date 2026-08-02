@@ -69,6 +69,15 @@ public class IngestService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    /**
+     * Parsers whose statements print control totals, so having none means the summary box
+     * did not match and the parse cannot be verified. Ridgeline is deliberately absent:
+     * its only "total" is derived from the rows being checked, so it can never reconcile
+     * and is guarded by the divider check in the parser instead.
+     */
+    private static final java.util.Set<String> MUST_RECONCILE = java.util.Set.of(
+            "card-pdf", "deposit-checking-pdf", "deposit-business-pdf");
+
     /** A prior mapping, held by transaction *content* so it can outlive the row's id. */
     private record CarriedMapping(Long runId, TransactionMapping.Status status,
                                   Long budgetEntryId, String reason) {}
@@ -299,6 +308,36 @@ public class IngestService {
                     + " transactions, purchases " + parsedPurchases + " and credits " + parsedCredits
                     + ", matching every total the statement prints.");
             return;
+        }
+
+        // Fallback for Bayside when the balance pair did not parse. Both totals are printed on
+        // the statement and were already being extracted; nothing read them, so a summary
+        // line that failed to match silently downgraded the whole check to nothing — and a
+        // summary line fails for the same reason a transaction row does, a layout change.
+        BigDecimal totalDeposits = statement.control("totalDeposits");
+        BigDecimal totalDebits = statement.control("totalDebits");
+        if (totalDeposits != null || totalDebits != null) {
+            BigDecimal parsedIn = sumWhere(statement, true);
+            BigDecimal parsedOut = sumWhere(statement, false);
+            if (totalDeposits != null && parsedIn.compareTo(totalDeposits) != 0) {
+                fail(fileName, "deposits total " + parsedIn + " but the statement prints " + totalDeposits);
+            }
+            if (totalDebits != null && parsedOut.compareTo(totalDebits) != 0) {
+                fail(fileName, "withdrawals total " + parsedOut + " but the statement prints " + totalDebits);
+            }
+            debugLog.info("ingest", "Reconciled " + fileName + ": " + statement.getTransactions().size()
+                    + " transactions against the printed deposit and withdrawal totals"
+                    + " (the balance pair was unavailable).");
+            return;
+        }
+
+        if (MUST_RECONCILE.contains(parserId)) {
+            // This parser prints totals and none of them parsed, which means the summary box
+            // did not match either — the same layout change that makes transaction rows go
+            // missing. Refusing beats storing an unverifiable parse from a format that is
+            // supposed to be verifiable.
+            fail(fileName, "none of the statement's control totals could be read, so the parse"
+                    + " cannot be verified. The layout has probably changed");
         }
 
         // Ridgeline prints no independent total — utilitiesTotal is derived from the very

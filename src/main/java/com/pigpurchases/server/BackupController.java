@@ -38,4 +38,15 @@ public class BackupController {
     public Map<String, Object> now() {
         return backupService.backupNow();
     }
+
+    /**
+     * "That drop was intentional." Clears the anti-clobber baseline and backs up normally.
+     * Without it, deliberately deleting an analysis run wedged every future backup into a
+     * .SUSPECT file — permanently, since a restart re-seeded the old baseline — and the
+     * warning told the user to investigate while offering no way to resolve it.
+     */
+    @PostMapping("/accept-baseline")
+    public Map<String, Object> acceptBaseline() {
+        return backupService.acceptCurrentAsNormal();
+    }
 }

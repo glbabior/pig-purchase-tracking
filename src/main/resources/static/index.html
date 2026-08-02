@@ -1212,8 +1212,19 @@
             info.innerHTML = `Backups are saved to <code>${escapeHtml(s.dir)}</code> (outside OneDrive). `
               + `Keeping the newest <strong>${s.retention}</strong> daily files. Last backup: <strong>${escapeHtml(last)}</strong>.`;
           }
-          if (s.warning) { warn.textContent = '⚠ ' + s.warning; warn.style.display = 'block'; }
-          else { warn.style.display = 'none'; }
+          if (s.warning) {
+            // The warning used to say "investigate" and stop there, leaving no way out: a
+            // deliberate drop (deleting an analysis run halves the mapped count in a click)
+            // wedged every later backup into a .SUSPECT file, stopped pruning, and survived
+            // restarts. Offer the other half — "this was intentional".
+            warn.innerHTML = '⚠ ' + escapeHtml(s.warning)
+              + '<div style="margin-top:0.5rem;">'
+              + '<button id="acceptBaselineBtn" type="button">This drop was intentional</button>'
+              + '<span class="hint" style="margin-left:0.5rem;">'
+              + 'Accepts the current data as normal and backs it up.</span></div>';
+            warn.style.display = 'block';
+            document.getElementById('acceptBaselineBtn').addEventListener('click', acceptBaseline);
+          } else { warn.style.display = 'none'; }
           const files = s.files || [];
           listEl.innerHTML = files.length
             ? '<strong>' + files.length + ' file(s):</strong> ' + files.slice(0, 12).map((f) =>
@@ -1327,6 +1338,25 @@
           setTimeout(() => location.reload(), 600);
         } catch (err) {
           msg.textContent = 'Cancel failed: ' + err.message;
+        }
+      }
+
+      // "That drop was intentional." Clears the anti-clobber baseline so backups stop being
+      // filed as .SUSPECT and pruning resumes. Confirmed first, because saying it wrongly
+      // after a genuine data loss removes the guard that would have flagged it.
+      async function acceptBaseline() {
+        if (!confirm('Accept the current data as normal?\n\n'
+            + 'Do this only if you know why the number of mapped transactions dropped — '
+            + 'deleting a mapping run, for example. If you did not expect the drop, restore '
+            + 'a backup instead.')) {
+          return;
+        }
+        try {
+          const r = await fetch('/api/backup/accept-baseline', { method: 'POST' });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          await loadBackupStatus();
+        } catch (err) {
+          alert('Could not accept the current data as normal: ' + err.message);
         }
       }
 

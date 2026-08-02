@@ -20,8 +20,10 @@ import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Non-destructive backup restore with a preview step.
@@ -110,6 +112,7 @@ public class RestoreService {
 
         // Validate the loaded backup and route the app at it.
         Map<String, Object> previewSummary = summarize(preview);
+        previewSummary.put("missingColumns", missingColumns(preview));
         String report = buildValidation(fileName, previewSummary, liveSummary);
 
         this.previewDataSource = preview;
@@ -283,6 +286,53 @@ public class RestoreService {
         return m;
     }
 
+    /**
+     * Columns the live database has that this backup's schema does not.
+     *
+     * <p>{@code ddl-auto=update} runs once, at startup, against whatever the datasource
+     * pointed at then — so neither a preview nor a committed restore is ever brought up to
+     * the current entity schema. {@code EnumColumnMigration} closes the enum-widening half
+     * of that; a column added since the backup was written is the other half, and every
+     * read of the affected table then fails until the app restarts. During a preview that
+     * is the whole preview, which is precisely when the user is meant to be browsing to
+     * validate it.
+     *
+     * <p>Generic on purpose: comparing the two schemas needs no list of "recent" columns to
+     * keep up to date. Reported so the validation panel can say the backup is older than
+     * the running app rather than declaring it healthy and letting the screens break.
+     */
+    private List<String> missingColumns(DataSource preview) {
+        List<String> missing = new ArrayList<>();
+        try (Connection previewConn = preview.getConnection();
+             Connection liveConn = switchableDataSource.getLive().getConnection()) {
+            for (Map.Entry<String, Set<String>> table : columnsByTable(liveConn).entrySet()) {
+                Set<String> here = columnsByTable(previewConn).getOrDefault(table.getKey(), Set.of());
+                if (here.isEmpty()) {
+                    continue; // whole table absent: a new table, not a missing column
+                }
+                for (String column : table.getValue()) {
+                    if (!here.contains(column)) {
+                        missing.add(table.getKey() + "." + column);
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            log.warn("Could not compare the backup's schema against the live one.", e);
+        }
+        return missing;
+    }
+
+    private Map<String, Set<String>> columnsByTable(Connection c) throws SQLException {
+        Map<String, Set<String>> byTable = new HashMap<>();
+        try (ResultSet rs = c.getMetaData().getColumns(null, "PUBLIC", "%", "%")) {
+            while (rs.next()) {
+                byTable.computeIfAbsent(rs.getString("TABLE_NAME").toUpperCase(), k -> new HashSet<>())
+                        .add(rs.getString("COLUMN_NAME").toUpperCase());
+            }
+        }
+        return byTable;
+    }
+
     private long scalar(Connection c, String sql) throws SQLException {
         try (Statement st = c.createStatement(); ResultSet rs = st.executeQuery(sql)) {
             return rs.next() ? rs.getLong(1) : 0L;
@@ -302,6 +352,13 @@ public class RestoreService {
         List<String> issues = new ArrayList<>();
         if (orphanTxn > 0) issues.add(orphanTxn + " mapping(s) reference a missing transaction");
         if (orphanEntry > 0) issues.add(orphanEntry + " mapping(s) reference a missing budget entry");
+        @SuppressWarnings("unchecked")
+        List<String> missing = (List<String>) b.getOrDefault("missingColumns", List.of());
+        if (!missing.isEmpty()) {
+            issues.add("older than this version of the app - missing column(s) "
+                    + String.join(", ", missing)
+                    + ". Screens reading those tables will fail until the app is restarted");
+        }
         boolean integrityOk = issues.isEmpty();
 
         StringBuilder sb = new StringBuilder();

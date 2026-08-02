@@ -499,6 +499,12 @@ erDiagram
   parser that cannot determine a statement date, a year, or (Ridgeline) which rows
   belong to this cycle throws rather than guessing. Every outcome is written to the
   debug log, success included, so silence there means the ingest never ran.
+- **Every per-transaction decision with no rule behind it survives a re-map.** Two have
+  that shape: a one-off exclusion, and parking a row by hand. Neither writes a
+  `merchant_categories` rule — parking actively deletes one — so neither can be rebuilt
+  from the cache, and `doMap` carries both across the rebuild. Only a *deliberate* park
+  qualifies, distinguished by its reason string: `PARKED` is also the status of everything
+  no pass could place, and those must stay free for a newly added hint to claim.
 - **A decision you made by hand outranks a hint.** Pass 2 considers hint-matched rows,
   but only a `MANUAL` merchant rule may override one; an `AI` answer may not, because
   the pattern is the user's own explicit rule and a guess is not. Without this, a

@@ -140,6 +140,29 @@ public class BackupService {
      * baseline so the next backup records the restored state normally instead of
      * flagging it as a suspicious drop.
      */
+    /**
+     * Accept the current database as the new normal, then back it up.
+     *
+     * <p>The anti-clobber guard is right to fire on an unexplained collapse in mapped rows,
+     * but it could not tell one from a deliberate one — and deleting an analysis run is a
+     * supported action that halves the count in a click. From then on every backup was
+     * filed {@code .SUSPECT}, the day's real file was never refreshed, pruning stopped
+     * entirely, and a restart re-seeded the same high baseline from the last normal
+     * sidecar. A restore commit was the only thing that cleared it.
+     *
+     * <p>So give the user the other half of the warning: a way to say the drop was
+     * intended. Deliberately separate from {@link #backupNow()}, which still respects the
+     * guard, so accepting a collapse stays an explicit act rather than something a routine
+     * "Back up now" does by accident.
+     */
+    public synchronized Map<String, Object> acceptCurrentAsNormal() {
+        lastSignature = null;
+        lastGoodRichness = -1;
+        lastWarning = null;
+        runBackup("baseline-accepted", true);
+        return status();
+    }
+
     public synchronized void resetBaselineAfterRestore() {
         lastSignature = null;
         lastGoodRichness = -1;
