@@ -179,7 +179,7 @@ public class HintMatcher {
      * or the best match was ambiguous.
      */
     public java.util.Optional<Match> match(String description, String vendor) {
-        String haystack = normalize(description) + "" + normalize(vendor);
+        String haystack = normalize(description) + "\0" + normalize(vendor);
 
         Pattern best = null;
         boolean ambiguous = false;
