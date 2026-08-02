@@ -55,9 +55,13 @@ chart and a per-category spend-over-time line chart.
 retention, mapping-reminder day of month, database backup retention, back up now,
 and restore.
 
-**Debug** — a durable log of what the app did behind the scenes: every outbound
-Claude API call with its result or error. This is where you look when a mapping
-run categorizes nothing.
+**Debug** — a durable log of what the app did behind the scenes. Every ingest
+(which file, which parser, whether it reconciled against the statement's own
+totals, what a re-load carried over or lost), every mapping run (how many
+transactions each pass placed, and how many were left parked), every manual
+decision you made during review, and every outbound Claude API call with its
+result or error. This is where you look when a total moved and you don't know why,
+or when a mapping run categorizes nothing.
 
 **Help is built in.** The sidebar **? Help** button opens a usage guide — an
 overview plus a section per screen — and every screen's own **? Help** button opens

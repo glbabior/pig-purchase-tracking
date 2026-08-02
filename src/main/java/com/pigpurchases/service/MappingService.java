@@ -55,6 +55,14 @@ public class MappingService {
     @Autowired private AiCategorizationService aiCategorizationService;
 
     /**
+     * Every run and every manual decision leaves a trail on the Debug screen. Mapping is
+     * where a month's numbers are actually decided, and most of what it does is invisible:
+     * which pass placed a transaction, what the cache already knew, what the AI was asked.
+     * When a total looks wrong, this is the record of how it got that way.
+     */
+    @Autowired private DebugLogService debugLog;
+
+    /**
      * Set while any mapping is running. Mapping makes real (slow) API calls and
      * rewrites shared state — the run's mappings, and the merchant cache — so a
      * second request (an impatient double-click, or a second browser tab) would
@@ -436,6 +444,10 @@ public class MappingService {
             validEntryIds.add(entry.getId());
         }
 
+        int hintCount = hintMatched.size();
+        int carriedCount = carriedStatus.size();
+        int afterPassOne = parkedTransactions.size();
+
         // Pass 2 — remembered answers. Every parked transaction whose merchant was
         // categorized on a previous run (by AI, or by the user during review) is
         // resolved from the cache, for free. This is what stops re-runs re-paying.
@@ -465,7 +477,39 @@ public class MappingService {
         run.setMappedAt(LocalDateTime.now());
         runRepository.save(run);
 
+        // Which pass placed what. Without this the Debug screen recorded only the outbound
+        // API calls, so a run that categorized nothing looked the same whether the hints
+        // matched everything, the cache answered everything, or the AI never ran.
+        debugLog.info("mapping", "Mapped " + describe(run) + ": " + mappings.size()
+                + " transaction(s) — " + hintCount + " by hint, " + cached + " from remembered"
+                + " answers, " + aiMapped + " by AI, " + parked + " parked, " + excluded
+                + " not spend"
+                + (carriedCount > 0 ? ", " + carriedCount + " kept from your earlier decisions" : "")
+                + ". " + afterPassOne + " reached the remembered-answer pass.");
+
         return new MapResult(runId, run.getMonth(), mapped, parked, excluded, aiMapped, cached);
+    }
+
+    /**
+     * Record a manual decision against the transaction it was made about.
+     *
+     * <p>These are the choices that outrank every automatic pass and, for a one-off
+     * exclusion or a deliberate park, the ones with no rule behind them to explain later.
+     * A month total that moved between two glances is usually one of these.
+     */
+    private void logDecision(Long transactionId, String what) {
+        String description = transactionRepository.findById(transactionId)
+                .map(Transaction::getDescription).orElse("transaction " + transactionId);
+        debugLog.info("mapping", "You " + what + ": " + description);
+    }
+
+    /** A run named the way the user sees it: the statement, not the internal token. */
+    private String describe(AnalysisRun run) {
+        return runSourceRepository.findByAnalysisRunId(run.getId()).stream()
+                .findFirst()
+                .flatMap(link -> importRepository.findById(link.getStatementImportId()))
+                .map(imp -> imp.getFileName() + " (" + imp.getStatementDate() + ")")
+                .orElse("run " + run.getId());
     }
 
     /**
@@ -660,15 +704,19 @@ public class MappingService {
                     .orElseThrow(() -> new IllegalArgumentException("No such budget entry: " + budgetEntryId));
             mapping.setBudgetEntryId(entry.getId());
             mapping.setStatus(TransactionMapping.Status.MAPPED_MANUAL);
-            mapping.setReason("Categorized by hand");
+            mapping.setReason(ASSIGNED_BY_HAND);
             if (merchantKey != null) {
                 Transaction txn = transactionRepository.findById(transactionId).orElse(null);
                 remember(merchantKey, entry.getId(), MerchantCategory.Source.MANUAL,
-                        txn != null ? txn.getDescription() : null, "Categorized by hand", false);
+                        txn != null ? txn.getDescription() : null, ASSIGNED_BY_HAND, false);
             }
         }
         mappingRepository.save(mapping);
         recount(runId);
+        logDecision(transactionId, budgetEntryId == null
+                ? "un-categorized — back to Other"
+                : "categorized as \"" + budgetEntryRepository.findById(budgetEntryId)
+                        .map(BudgetEntry::getName).orElse("?") + "\", and remembered for that merchant");
         return mapping;
     }
 
@@ -695,6 +743,8 @@ public class MappingService {
                         "Excluded from spend", true));
 
         recount(runId);
+        logDecision(transactionId, "excluded from spend, and remembered so this merchant is"
+                + " excluded on every future run");
         return mapping;
     }
 
@@ -723,6 +773,8 @@ public class MappingService {
         mappingRepository.save(mapping);
 
         recount(runId);
+        logDecision(transactionId, "excluded just this one from spend — no rule created, so"
+                + " this merchant still counts normally next time");
         return mapping;
     }
 

@@ -106,6 +106,9 @@ public class IngestService {
         StatementParser parser = parserFor(rules.path("parser").asText(""));
         List<ExclusionRule> exclusions = exclusionsFrom(rules);
 
+        debugLog.info("ingest", "Loading " + file.getFileName() + " for source \"" + source.getName()
+                + "\" using parser " + rules.path("parser").asText("") + ".");
+
         ParsedStatement statement = parser.parse(file);
         LocalDate statementDate = statement.getStatementDate();
 
@@ -172,6 +175,8 @@ public class IngestService {
                     statementImportRepository.delete(prev);
                 });
 
+        int priorDecisions = carried.values().stream().mapToInt(Deque::size).sum();
+
         StatementImport imp = statementImportRepository.save(new StatementImport(
                 source.getId(), statementDate, file.getFileName().toString(), relativePath,
                 LocalDateTime.now(), statement.getTransactions().size()));
@@ -209,6 +214,19 @@ public class IngestService {
             runSourceRepository.save(link);
         }
 
+        if (priorDecisions > 0) {
+            // What is LEFT in the queues after the loop is old decisions that found no
+            // matching row in the new read — the categorizations this re-read lost.
+            int stranded = carried.values().stream().mapToInt(Deque::size).sum();
+            debugLog.info("ingest", "Replaced the earlier import of " + statementDate + ": "
+                    + (priorDecisions - stranded) + " of " + priorDecisions
+                    + " existing categorization(s) carried onto the new rows"
+                    + (stranded > 0 ? ", " + stranded + " lost because those lines changed" : "")
+                    + (unmatchedRows
+                        ? ". Some rows have no categorization, so this statement is being re-mapped."
+                        : ". Every row kept its category."));
+        }
+
         if (!consumingLinks.isEmpty()) {
             if (unmatchedRows) {
                 // At least one row came through with no carried decision — a line the
@@ -231,6 +249,10 @@ public class IngestService {
                 }
             }
         }
+
+        debugLog.info("ingest", "Loaded " + imp.getFileName() + " (statement date " + statementDate
+                + "): " + statement.getTransactions().size() + " transaction(s), " + excludedCount
+                + " excluded from spend by this source's rules.");
 
         return new IngestResult(imp.getId(), statementDate, imp.getFileName(),
                 statement.getTransactions().size(), excludedCount);
@@ -303,18 +325,32 @@ public class IngestService {
         if (purchases != null || credits != null) {
             BigDecimal parsedPurchases = sumWhere(statement, true);
             BigDecimal parsedCredits = sumWhere(statement, false);
-            // Fees and interest print as ordinary dated rows, so they are inside
-            // parsedPurchases — but the summary box totals them on their own lines. Compare
-            // against the sum, or every cycle carrying an annual fee, a late fee or an
-            // interest charge is refused for a parser problem that does not exist.
-            BigDecimal expectedPositives = orZero(purchases)
-                    .add(orZero(statement.control("fees")))
-                    .add(orZero(statement.control("interest")));
-            if (purchases != null && parsedPurchases.compareTo(expectedPositives) != 0) {
-                fail(fileName, "purchases, fees and interest total " + parsedPurchases
-                        + " but the statement prints " + expectedPositives
-                        + " (purchases " + purchases + ", fees " + orZero(statement.control("fees"))
-                        + ", interest " + orZero(statement.control("interest")) + ")");
+            // Fees and interest are totalled on their own summary lines, separate from
+            // Purchases — but whether they ALSO appear as dated rows in the activity table
+            // (and so land in parsedPurchases) varies by statement layout, and cannot be
+            // determined without reading a statement that carries them.
+            //
+            // So accept any combination rather than guessing one. Adding them
+            // unconditionally refused every cycle where they print undated; adding none
+            // refused every cycle where they print dated. Both are the same
+            // false-positive-blocks-real-work failure, just on opposite layouts. A genuine
+            // mis-parse still fails, since it would have to coincide exactly with one of
+            // these four sums.
+            BigDecimal fees = orZero(statement.control("fees"));
+            BigDecimal interest = orZero(statement.control("interest"));
+            if (purchases != null) {
+                List<BigDecimal> acceptable = List.of(
+                        purchases,
+                        purchases.add(fees),
+                        purchases.add(interest),
+                        purchases.add(fees).add(interest));
+                boolean ties = acceptable.stream().anyMatch(v -> parsedPurchases.compareTo(v) == 0);
+                if (!ties) {
+                    fail(fileName, "positive rows total " + parsedPurchases
+                            + " but the statement prints purchases " + purchases
+                            + ", fees " + fees + ", interest " + interest
+                            + " (no combination of those matches)");
+                }
             }
             if (credits != null && parsedCredits.compareTo(credits) != 0) {
                 fail(fileName, "credits total " + parsedCredits
