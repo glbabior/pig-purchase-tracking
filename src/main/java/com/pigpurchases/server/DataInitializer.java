@@ -21,22 +21,42 @@ public class DataInitializer implements ApplicationRunner {
     /** Renamed to this once imported, so the migration is a one-time event. */
     private static final String DONE_SUFFIX = ".imported";
 
+    /**
+     * One-time migration from the old flat file.
+     *
+     * <p>The guard was "the table is empty", which is not the same question as "have I
+     * already migrated": delete every budget entry on the Items screen and restart, or
+     * commit a restore of a backup taken before any entries existed, and 32 entries you
+     * did not create reappear with fresh ids that no mapping links to.
+     *
+     * <p>The two questions are now separated, and the order matters. Importing only when
+     * the table is empty is the same condition as before — but renaming happens whenever
+     * the file is present, so an installation that migrated long ago (where the table is
+     * emphatically not empty) still records the fact and stops being vulnerable. Putting
+     * the rename inside the import block, as the first attempt did, left the bug live on
+     * exactly the machines that already had it.
+     *
+     * <p>The rename is also deliberately outside the transaction that does the import: a
+     * filesystem move cannot roll back, so marking the migration done before knowing it
+     * committed would skip it forever after a commit failure.
+     */
     @Override
-    @Transactional
     public void run(ApplicationArguments args) throws Exception {
-        // One-time migration from the old flat file.
-        //
-        // The guard used to be "the table is empty", which is not the same question as
-        // "have I already migrated". Delete every budget entry on the Items screen and
-        // restart, or commit a restore of a backup taken before any entries existed, and
-        // 32 entries you did not create reappeared with fresh ids that no mapping links to.
-        // Renaming the file records the fact of the migration instead of inferring it.
-        //
-        // @Transactional so a malformed amount part-way down cannot leave a half-imported
-        // budget committed — an ApplicationRunner that throws aborts startup, and the next
-        // start would then skip the migration because the table is no longer empty.
         Path dataFile = Path.of("pig-purchases-data.txt");
-        if (Files.exists(dataFile) && budgetEntryRepository.count() == 0) {
+        if (!Files.exists(dataFile)) {
+            return;
+        }
+        if (budgetEntryRepository.count() == 0) {
+            importFrom(dataFile);
+        }
+        Files.move(dataFile, dataFile.resolveSibling(dataFile.getFileName() + DONE_SUFFIX),
+                StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    /** @Transactional so a malformed amount part-way down cannot commit half a budget. */
+    @Transactional
+    protected void importFrom(Path dataFile) throws Exception {
+        {
             String content = Files.readString(dataFile, StandardCharsets.UTF_8);
             String[] lines = content.split("\\R");
             boolean inBudgetSection = false;
@@ -58,9 +78,6 @@ public class DataInitializer implements ApplicationRunner {
                     budgetEntryRepository.save(entry);
                 }
             }
-            // Mark it done so an empty entries table never triggers this again.
-            Files.move(dataFile, dataFile.resolveSibling(dataFile.getFileName() + DONE_SUFFIX),
-                    StandardCopyOption.REPLACE_EXISTING);
         }
     }
 }

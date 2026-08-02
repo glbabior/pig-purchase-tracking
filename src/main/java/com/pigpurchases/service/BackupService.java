@@ -158,11 +158,21 @@ public class BackupService {
         return m;
     }
 
+    /**
+     * How many daily backups to keep, read from the <b>live</b> database.
+     *
+     * <p>This used to go through {@code appSettingsRepository}, which is an ordinary Spring
+     * Data repository on the {@code @Primary} switch — so during a restore preview it read
+     * the <i>previewed backup's</i> retention count and {@code prune} then deleted real
+     * backup files accordingly. Routing the dump to live was not enough; every read has to
+     * go to live, and this was the one left behind. {@code Files.deleteIfExists} does not
+     * come back.
+     */
     private int effectiveKeep() {
-        try {
-            return appSettingsRepository.findById(1L)
-                    .map(s -> Math.max(1, s.getBackupRetentionCount()))
-                    .orElse(defaultKeep);
+        try (Connection c = liveConnection()) {
+            long keep = scalar(c,
+                    "SELECT COALESCE(backup_retention_count, 0) FROM app_settings WHERE id = 1");
+            return keep > 0 ? (int) keep : defaultKeep;
         } catch (Exception e) {
             return defaultKeep;
         }
