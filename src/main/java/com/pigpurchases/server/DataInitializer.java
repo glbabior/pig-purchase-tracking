@@ -6,8 +6,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -17,6 +19,12 @@ import java.nio.file.StandardCopyOption;
 public class DataInitializer implements ApplicationRunner {
     @Autowired
     private BudgetEntryRepository budgetEntryRepository;
+
+    private final TransactionTemplate transactionTemplate;
+
+    public DataInitializer(PlatformTransactionManager transactionManager) {
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
+    }
 
     /** Renamed to this once imported, so the migration is a one-time event. */
     private static final String DONE_SUFFIX = ".imported";
@@ -47,16 +55,22 @@ public class DataInitializer implements ApplicationRunner {
             return;
         }
         if (budgetEntryRepository.count() == 0) {
-            importFrom(dataFile);
+            // Through a TransactionTemplate, NOT an @Transactional method on this bean.
+            // Spring's transaction advice lives on a proxy, so `this.importFrom(...)` would
+            // bypass it entirely — the annotation would be inert and each repository save
+            // would commit on its own. A malformed amount half-way down would then leave
+            // every entry above it committed, abort startup, and be skipped forever after,
+            // because the table is no longer empty. Which is precisely what moving the
+            // annotation off run() had quietly done.
+            transactionTemplate.executeWithoutResult(status -> importFrom(dataFile));
         }
         Files.move(dataFile, dataFile.resolveSibling(dataFile.getFileName() + DONE_SUFFIX),
                 StandardCopyOption.REPLACE_EXISTING);
     }
 
-    /** @Transactional so a malformed amount part-way down cannot commit half a budget. */
-    @Transactional
-    protected void importFrom(Path dataFile) throws Exception {
-        {
+    /** Runs inside the caller's TransactionTemplate, so a bad line commits nothing. */
+    private void importFrom(Path dataFile) {
+        try {
             String content = Files.readString(dataFile, StandardCharsets.UTF_8);
             String[] lines = content.split("\\R");
             boolean inBudgetSection = false;
@@ -78,6 +92,8 @@ public class DataInitializer implements ApplicationRunner {
                     budgetEntryRepository.save(entry);
                 }
             }
+        } catch (IOException e) {
+            throw new IllegalStateException("Could not read " + dataFile, e);
         }
     }
 }

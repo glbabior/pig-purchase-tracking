@@ -257,12 +257,28 @@ public class IngestService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         if (statement.getTransactions().isEmpty()) {
-            // Not fatal — a genuinely empty cycle exists — but it is nearly always a parser
-            // that stopped matching, so it must not pass unremarked.
+            // Warn, but DO NOT return: the control-total checks below must still run.
+            //
+            // Returning here inverted the whole guarantee. One row out of forty failing to
+            // match made the totals disagree and refused the import; all forty failing —
+            // the worse case, and the likelier one, since a layout change breaks every row
+            // at once — produced an empty list that skipped every check and was accepted.
+            // The summary box is plain label-and-value text and keeps parsing long after
+            // the multi-column activity rows stop, so the exact scenario reconciliation
+            // exists for was the one it did not cover.
+            //
+            // Worse than a wrong number: control flow then reached the idempotency block,
+            // which deleted the previous good import and its transactions and replaced them
+            // with nothing. That account's spend silently became zero for the month and the
+            // UI reported success with "Transactions: 0".
+            //
+            // A genuinely empty cycle still passes: Crestline prints Purchases +$0.00 and Bayside's
+            // ending equals its beginning, so the expected totals are zero and match an
+            // empty sum. Only a non-zero printed total against zero parsed rows now refuses,
+            // which is precisely the case that should.
             debugLog.warn("ingest", "No transactions parsed from " + fileName
                     + " (parser " + parserId + "). If the statement is not genuinely empty,"
                     + " the parser no longer matches this layout.");
-            return;
         }
 
         BigDecimal beginning = statement.control("beginningBalance");

@@ -86,6 +86,17 @@ public class MappingService {
      */
     static final String PARKED_BY_HAND = "Un-categorized by hand";
 
+    /**
+     * The reason written when the user assigns THIS transaction to a category by hand.
+     *
+     * <p>Distinct from the cache's "Remembered — your earlier categorization", which also
+     * carries {@code MAPPED_MANUAL} but was applied to a different transaction by pattern.
+     * {@code AnalysisService.inSpendBuckets} needs the difference: a money-in row counts in
+     * a category only when a human put that exact row there, and testing the status alone
+     * let one hand-assignment spread to every future transaction sharing its description.
+     */
+    static final String ASSIGNED_BY_HAND = "Categorized by hand";
+
     /** One source's contribution to a run, as chosen in the UI. */
     public record SourceSelection(Long sourceId, Long importId) {}
 
@@ -630,7 +641,14 @@ public class MappingService {
 
             mapping.setBudgetEntryId(null);
             mapping.setStatus(TransactionMapping.Status.PARKED);
-            mapping.setReason(PARKED_BY_HAND);
+            // This one method serves two intents, and only one of them is a decision worth
+            // carrying across a re-map. Parking a CATEGORIZED row says "not this category" —
+            // deliberate, so doMap must not let a hint reclaim it. Undoing a one-off
+            // exclusion says "never mind", which means back to the default: it must stay
+            // free for the passes to place, or reversing an exclusion pinned the row in
+            // "Other" permanently, unreachable by any hint, cache answer or AI pass ever
+            // again. Only the first gets PARKED_BY_HAND.
+            mapping.setReason(wasOneOff ? "One-off exclusion reversed" : PARKED_BY_HAND);
             // Deliberately parking a *categorized* row means "this was wrong" — forget the
             // remembered answer. Parking a one-off exclusion means only "never mind".
             if (merchantKey != null && !wasOneOff) {

@@ -449,8 +449,14 @@ public class AnalysisService {
         if (!isMoneyIn(txn)) {
             return true;
         }
+        // The REASON, not just the status. A cached MANUAL rule also writes MAPPED_MANUAL,
+        // onto whatever transaction matches its description — so testing the status alone
+        // let one hand-assigned refund turn every future money-in row sharing that
+        // description into negative spend, a paycheck under "MOBILE DEPOSIT" included.
+        // Only a decision made about this exact row qualifies.
         return m.getStatus() == TransactionMapping.Status.MAPPED_MANUAL
-                && m.getBudgetEntryId() != null;
+                && m.getBudgetEntryId() != null
+                && MappingService.ASSIGNED_BY_HAND.equals(m.getReason());
     }
 
     /** Money out adds to spend; money in (refunds, payments, deposits) subtracts. */

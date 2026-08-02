@@ -38,6 +38,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -66,6 +68,9 @@ public class BudgetController {
 
     @Autowired
     private MerchantCategoryRepository merchantCategoryRepository;
+
+    @Autowired
+    private com.pigpurchases.service.MappingService mappingService;
 
     @Autowired
     private IngestService ingestService;
@@ -592,12 +597,18 @@ public class BudgetController {
                     + " still mapped to this category. Reassign them first — open Spend: Monthly,"
                     + " click the category, and move them to another one.");
         }
+        Set<Long> touchedRuns = new HashSet<>();
         for (TransactionMapping m : invisible) {
             m.setBudgetEntryId(null);
             m.setStatus(TransactionMapping.Status.PARKED);
             m.setReason("Category deleted");
             mappingRepository.save(m);
+            touchedRuns.add(m.getAnalysisRunId());
         }
+        // The runs' mapped/parked counts are denormalized and served straight to the
+        // Mapping screen, so re-parking without recounting left those statements reporting
+        // rows as mapped that no longer were, until something else happened to re-map them.
+        touchedRuns.forEach(mappingService::recount);
         merchantCategoryRepository.findByBudgetEntryId(id).forEach(merchantCategoryRepository::delete);
         budgetEntryRepository.deleteById(id);
     }

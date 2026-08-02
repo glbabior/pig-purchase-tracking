@@ -93,6 +93,8 @@ public class BackupService {
     private volatile LocalDateTime lastBackupAt = null;
     private volatile String lastBackupFile = null;
     private volatile String lastWarning = null;
+    /** Last backup failure, surfaced in status() so it is not console-only. */
+    private volatile String lastFailure = null;
 
     public BackupService(SwitchableDataSource dataSource, AppSettingsRepository appSettingsRepository) {
         this.dataSource = dataSource;
@@ -177,6 +179,7 @@ public class BackupService {
         m.put("lastBackupAt", lastBackupAt == null ? null : lastBackupAt.toString());
         m.put("lastBackupFile", lastBackupFile);
         m.put("warning", lastWarning);
+        m.put("failure", lastFailure);
         m.put("files", listBackups());
         return m;
     }
@@ -277,9 +280,17 @@ public class BackupService {
 
             lastGoodRichness = richness;
             lastWarning = null;
+            lastFailure = null;
             prune(dir, effectiveKeep());
             log.info("Database backup written: {} (trigger={}, mappings={})", target.getFileName(), trigger, richness);
         } catch (Exception e) {
+            // Record it, don't just log it. Every failure here was previously console-only:
+            // Settings went on displaying the last SUCCESSFUL timestamp with no error state,
+            // and "Back up now" reported success on a run that wrote nothing. An unwritable
+            // folder, a full disk, a scanner holding the daily file open, or a missing table
+            // after restoring an old backup all looked identical to everything being fine —
+            // in the one subsystem whose whole job is to be trustworthy.
+            lastFailure = LocalDateTime.now() + " (" + trigger + "): " + e.getMessage();
             log.error("Database backup ({}) failed", trigger, e);
         }
     }
@@ -355,9 +366,22 @@ public class BackupService {
                 "SELECT COUNT(*) FROM transaction_mappings WHERE status IN ('MAPPED_HINT','MAPPED_AI','MAPPED_MANUAL')");
     }
 
-    private long scalar(Connection c, String sql) throws SQLException {
+    /**
+     * One term of the fingerprint, or {@code -1} when the query cannot run.
+     *
+     * <p>Deliberately swallows a failure per term rather than aborting the dump. A restore
+     * of a backup predating a table leaves live without it until the next startup, and
+     * {@code computeSignature} reads {@code month_status} — so one missing table threw out
+     * of the whole method, {@code runBackup} caught it, and <b>no backup was written again
+     * for the rest of the session</b>, including the one the restore itself triggers. A
+     * coarser fingerprint is a far better failure than a dead backup subsystem.
+     */
+    private long scalar(Connection c, String sql) {
         try (Statement st = c.createStatement(); ResultSet rs = st.executeQuery(sql)) {
             return rs.next() ? rs.getLong(1) : 0L;
+        } catch (SQLException e) {
+            log.warn("Backup fingerprint term unavailable ({}): {}", sql, e.getMessage());
+            return -1L;
         }
     }
 

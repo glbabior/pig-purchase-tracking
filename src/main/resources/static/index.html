@@ -455,6 +455,7 @@
                 <div class="field">
                   <div class="label">Database backups</div>
                   <div class="hint" id="backupInfo">Loading backup status…</div>
+                  <div id="backupFailure" class="run-error" style="display:none;margin:0.4rem 0;"></div>
                   <div id="backupWarning" class="run-error" style="display:none;margin:0.4rem 0;"></div>
                   <div class="modal-actions" style="justify-content:flex-start;">
                     <button class="secondary" id="backupNowBtn">Back up now</button>
@@ -1212,6 +1213,13 @@
             info.innerHTML = `Backups are saved to <code>${escapeHtml(s.dir)}</code> (outside OneDrive). `
               + `Keeping the newest <strong>${s.retention}</strong> daily files. Last backup: <strong>${escapeHtml(last)}</strong>.`;
           }
+          // A failed backup used to be console-only: this panel kept showing the last
+          // SUCCESSFUL timestamp, so an unwritable folder or a full disk looked identical
+          // to everything being fine.
+          const fail = document.getElementById('backupFailure');
+          if (s.failure) { fail.textContent = '⚠ Last backup attempt failed — ' + s.failure; fail.style.display = 'block'; }
+          else { fail.style.display = 'none'; }
+
           if (s.warning) {
             // The warning used to say "investigate" and stop there, leaving no way out: a
             // deliberate drop (deleting an analysis run halves the mapped count in a click)

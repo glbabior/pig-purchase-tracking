@@ -173,6 +173,31 @@ class MappingServiceTest {
                 "a new hint must be able to claim a transaction nothing had placed");
     }
 
+    /**
+     * Undoing a "just this one" exclusion means "never mind" — back to the default — not
+     * "park this forever". Both intents route through assign(runId, txnId, null), and
+     * giving them the same reason let doMap's new deliberate-park carry-over pin the row in
+     * "Other" permanently: no hint, no cache answer and no AI pass could ever reclaim it,
+     * and the only escape was assigning a category, which writes a merchant rule affecting
+     * every other month.
+     */
+    @Test
+    void reversingAOneOffExclusionLetsTheHintReclaimTheRow() {
+        mappingService.mapUnmapped();
+        Long runId = runFor(mayImportId);
+        TransactionMapping hinted = mappingRepo
+                .findByAnalysisRunIdAndStatus(runId, TransactionMapping.Status.MAPPED_HINT).get(0);
+        Long txnId = hinted.getTransactionId();
+
+        mappingService.excludeOnce(runId, txnId);
+        mappingService.assign(runId, txnId, null);   // "never mind"
+        mappingService.remapImports(List.of(mayImportId));
+
+        assertEquals(TransactionMapping.Status.MAPPED_HINT,
+                mappingRepo.findByAnalysisRunIdAndTransactionId(runId, txnId).orElseThrow().getStatus(),
+                "undoing a one-off must return the row to the default, not pin it as parked");
+    }
+
     /** The same rule for a re-categorization, which is the commoner case. */
     @Test
     void aManualRecategorizationOfAHintMatchedTransactionSurvivesAReMap() {

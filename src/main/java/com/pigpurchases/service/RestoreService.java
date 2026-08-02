@@ -309,7 +309,19 @@ public class RestoreService {
             for (Map.Entry<String, Set<String>> table : columnsByTable(liveConn).entrySet()) {
                 Set<String> here = previewSchema.getOrDefault(table.getKey(), Set.of());
                 if (here.isEmpty()) {
-                    continue; // whole table absent: a new table, not a missing column
+                    // A whole table live has and the backup does not. Skipping this was the
+                    // single worst thing about the first version of this check: since
+                    // backups began, EVERY schema change to this app has been a new table
+                    // (MONTH_STATUS, DISMISSED_DUPLICATES) and never a new column — so the
+                    // check returned empty for every backup on disk and the panel said
+                    // "safe to commit" for all of them.
+                    //
+                    // Committing one is worse than a broken screen: computeSignature reads
+                    // month_status, so it throws, runBackup swallows it, and NO further
+                    // backup is written until the app restarts — including the one the
+                    // restore itself triggers.
+                    missing.add(table.getKey() + " (whole table)");
+                    continue;
                 }
                 for (String column : table.getValue()) {
                     if (!here.contains(column)) {

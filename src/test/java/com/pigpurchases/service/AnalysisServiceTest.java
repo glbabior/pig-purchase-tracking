@@ -160,6 +160,34 @@ class AnalysisServiceTest {
     }
 
     /**
+     * The money-in exception must be per TRANSACTION, not per merchant. A cached MANUAL
+     * rule also writes MAPPED_MANUAL — onto whatever row matches its description — so
+     * testing the status alone let one hand-assigned refund turn every future money-in row
+     * sharing that description into negative spend. On a checking account, where the
+     * descriptions are generic ("MOBILE DEPOSIT", "Counter Credit"), that is a paycheck
+     * subtracting itself from a category nobody assigned it to.
+     */
+    @Test
+    void aRememberedAnswerDoesNotMakeOtherDepositsNetAgainstTheirCategory() {
+        Long coffeeId = entryRepo.findAll().stream()
+                .filter(e -> "Coffee Shop".equals(e.getName())).findFirst().orElseThrow().getId();
+
+        // The cache's own wording, as applyRememberedCategories writes it — a decision made
+        // about some other transaction that merely shares this description.
+        Transaction deposit = new Transaction(LocalDate.of(2026, 5, 22), "MOBILE DEPOSIT",
+                "MOBILE DEPOSIT", new BigDecimal("2500.00"), "2026-05");
+        deposit.setType("DEPOSIT");
+        txnRepo.save(deposit);
+        mappingRepo.save(new TransactionMapping(runId, deposit.getId(), coffeeId,
+                TransactionMapping.Status.MAPPED_MANUAL, "Remembered — your earlier categorization"));
+
+        AnalysisService.CategoryRow coffee = analysisService.month("2026-05").categories().stream()
+                .filter(c -> "Coffee Shop".equals(c.name())).findFirst().orElseThrow();
+        assertEquals(0, new BigDecimal("4.10").compareTo(coffee.actual()),
+                "a remembered answer must not drag a 2500 deposit into the category");
+    }
+
+    /**
      * A card payment is money-in, not negative spend, and was only ever kept out of the
      * total by being EXCLUDED — a merchant-cache rule rather than a property of the
      * transaction. Un-categorizing one sent it through signedSpend into the parked

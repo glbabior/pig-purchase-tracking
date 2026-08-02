@@ -57,7 +57,15 @@ public class DebugLogService {
         }
         if (++writesSincePrune >= PRUNE_EVERY) {
             writesSincePrune = 0;
-            pruneOld();
+            try {
+                pruneOld();
+            } catch (Exception ignored) {
+                // Same contract as the save above, and it was outside the guard: pruneOld
+                // is a this-call, so it runs in the caller-facing transaction and anything
+                // it threw propagated out of info()/warn()/error() into the service that
+                // was merely trying to log. Retention is housekeeping; it must never take
+                // down a mapping run or an ingest.
+            }
         }
     }
 
