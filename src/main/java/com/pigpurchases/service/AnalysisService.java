@@ -442,7 +442,7 @@ public class AnalysisService {
      * <p>Only {@code MAPPED_MANUAL} qualifies. A parked or AI-guessed card payment still
      * cannot reach the spend buckets, which is what the exclusion was added for.
      */
-    private static boolean inSpendBuckets(TransactionMapping m, Transaction txn) {
+    public static boolean inSpendBuckets(TransactionMapping m, Transaction txn) {
         if (!m.countsAsSpend()) {
             return false;
         }

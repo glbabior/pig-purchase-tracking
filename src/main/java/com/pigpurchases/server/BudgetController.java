@@ -12,7 +12,11 @@ import com.pigpurchases.repository.StatementImportRepository;
 import com.pigpurchases.repository.StatementSourceRepository;
 import com.pigpurchases.repository.TransactionMappingRepository;
 import com.pigpurchases.repository.TransactionRepository;
+import com.pigpurchases.model.Transaction;
+import com.pigpurchases.model.TransactionMapping;
+import com.pigpurchases.service.AnalysisService;
 import com.pigpurchases.service.IngestService;
+import org.springframework.transaction.annotation.Transactional;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,7 +35,6 @@ import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -562,14 +565,38 @@ public class BudgetController {
      * <p>So make the user re-map first. The alternative — silently re-parking the affected
      * transactions here — moves someone's categorization work without asking, and this way
      * the count tells them exactly how much is at stake.
+     *
+     * <p>It only blocks on rows the category actually <b>shows</b>. Counting every mapping
+     * pointing at the entry included money-in rows — a card payment the AI promoted to a
+     * category, say — which analysis routes to the excluded bucket before the entry-id test,
+     * so they never appear in the drill-down the error message tells the user to open. The
+     * count said three, the screen showed one, and there was no way to reach the rest.
+     * Those rows carry no spend by definition, so re-parking them moves no number and is
+     * done here rather than demanded of the user.
      */
     @DeleteMapping("/entries/{id}")
+    @Transactional
     public void deleteEntry(@PathVariable Long id) {
-        long mapped = mappingRepository.countByBudgetEntryId(id);
-        if (mapped > 0) {
-            throw new IllegalStateException(mapped + " transaction" + (mapped == 1 ? " is" : "s are")
+        List<TransactionMapping> invisible = new ArrayList<>();
+        long visible = 0;
+        for (TransactionMapping m : mappingRepository.findByBudgetEntryId(id)) {
+            Transaction txn = transactionRepository.findById(m.getTransactionId()).orElse(null);
+            if (txn != null && AnalysisService.inSpendBuckets(m, txn)) {
+                visible++;
+            } else {
+                invisible.add(m);
+            }
+        }
+        if (visible > 0) {
+            throw new IllegalStateException(visible + " transaction" + (visible == 1 ? " is" : "s are")
                     + " still mapped to this category. Reassign them first — open Spend: Monthly,"
                     + " click the category, and move them to another one.");
+        }
+        for (TransactionMapping m : invisible) {
+            m.setBudgetEntryId(null);
+            m.setStatus(TransactionMapping.Status.PARKED);
+            m.setReason("Category deleted");
+            mappingRepository.save(m);
         }
         merchantCategoryRepository.findByBudgetEntryId(id).forEach(merchantCategoryRepository::delete);
         budgetEntryRepository.deleteById(id);

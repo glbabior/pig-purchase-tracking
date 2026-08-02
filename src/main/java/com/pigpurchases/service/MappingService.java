@@ -78,6 +78,14 @@ public class MappingService {
      */
     private final AtomicBoolean mappingInProgress = new AtomicBoolean();
 
+    /**
+     * The reason written when the user parks a row by hand, which is what tells a
+     * deliberate park apart from the PARKED status every unplaced transaction gets.
+     * {@code doMap} carries the deliberate ones across a rebuild; the rest stay free for
+     * a newly added hint to claim.
+     */
+    static final String PARKED_BY_HAND = "Un-categorized by hand";
+
     /** One source's contribution to a run, as chosen in the UI. */
     public record SourceSelection(Long sourceId, Long importId) {}
 
@@ -337,14 +345,26 @@ public class MappingService {
         AnalysisRun run = runRepository.findById(runId)
                 .orElseThrow(() -> new IllegalArgumentException("No such run: " + runId));
 
-        // One-off exclusions are per-transaction decisions with no rule behind them,
-        // so unlike every other manual choice they can't be rebuilt from the merchant
-        // cache. Carry them over the rebuild explicitly, or re-running a statement
-        // would silently turn a deliberately-excluded charge back into spend.
-        Map<Long, String> excludedOnce = new LinkedHashMap<>();
+        // Per-transaction decisions with no rule behind them. Unlike every other manual
+        // choice they cannot be rebuilt from the merchant cache, so they are carried over
+        // the rebuild explicitly — otherwise re-running a statement silently undoes them
+        // and the month's total moves with no user action.
+        //
+        // Two shapes qualify. A one-off exclusion writes no rule by design. And parking a
+        // row by hand writes no rule either — worse, it DELETES any the merchant had — so a
+        // hand-parked hint match was reclaimed by the very hint the user had just taken it
+        // off, putting its amount back into that category. Only a deliberate park counts:
+        // PARKED is also the status of everything no pass could place, and those must stay
+        // free for a newly added hint to claim.
+        Map<Long, TransactionMapping.Status> carriedStatus = new LinkedHashMap<>();
+        Map<Long, String> carriedReason = new LinkedHashMap<>();
         for (TransactionMapping prior : mappingRepository.findByAnalysisRunId(runId)) {
-            if (prior.getStatus() == TransactionMapping.Status.EXCLUDED_ONCE) {
-                excludedOnce.put(prior.getTransactionId(), prior.getReason());
+            boolean oneOff = prior.getStatus() == TransactionMapping.Status.EXCLUDED_ONCE;
+            boolean parkedByHand = prior.getStatus() == TransactionMapping.Status.PARKED
+                    && PARKED_BY_HAND.equals(prior.getReason());
+            if (oneOff || parkedByHand) {
+                carriedStatus.put(prior.getTransactionId(), prior.getStatus());
+                carriedReason.put(prior.getTransactionId(), prior.getReason());
             }
         }
 
@@ -368,11 +388,13 @@ public class MappingService {
 
         for (AnalysisRunSource link : runSourceRepository.findByAnalysisRunId(runId)) {
             for (Transaction txn : transactionRepository.findByStatementImportId(link.getStatementImportId())) {
-                if (excludedOnce.containsKey(txn.getId())) {
-                    // The user's one-off call on this exact transaction outranks every
-                    // pass below — it is the most specific decision there is.
+                if (carriedStatus.containsKey(txn.getId())) {
+                    // The user's call on this exact transaction outranks every pass below —
+                    // it is the most specific decision there is. Deliberately not added to
+                    // parkedTransactions either, so neither the merchant cache nor the AI
+                    // can reclaim something the user just set aside.
                     mappings.add(new TransactionMapping(runId, txn.getId(), null,
-                            TransactionMapping.Status.EXCLUDED_ONCE, excludedOnce.get(txn.getId())));
+                            carriedStatus.get(txn.getId()), carriedReason.get(txn.getId())));
                     continue;
                 }
                 if (txn.isExcludeFromSpend()) {
@@ -608,7 +630,7 @@ public class MappingService {
 
             mapping.setBudgetEntryId(null);
             mapping.setStatus(TransactionMapping.Status.PARKED);
-            mapping.setReason("Un-categorized by hand");
+            mapping.setReason(PARKED_BY_HAND);
             // Deliberately parking a *categorized* row means "this was wrong" — forget the
             // remembered answer. Parking a one-off exclusion means only "never mind".
             if (merchantKey != null && !wasOneOff) {

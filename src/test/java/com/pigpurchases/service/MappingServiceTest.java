@@ -123,6 +123,56 @@ class MappingServiceTest {
                 "a remembered exclusion must outrank the hint that would otherwise re-map it");
     }
 
+    /**
+     * Parking by hand writes no merchant rule — it deletes any the merchant had — so unlike
+     * excluding and re-categorizing there is nothing for pass 2 to read back. The hint then
+     * reclaimed the row the user had just taken off it, and that category's total went back
+     * up. It is the same shape as EXCLUDED_ONCE and needs the same carry-over.
+     */
+    @Test
+    void parkingAHintMatchedTransactionByHandSurvivesAReMap() {
+        mappingService.mapUnmapped();
+        Long runId = runFor(mayImportId);
+        TransactionMapping hinted = mappingRepo
+                .findByAnalysisRunIdAndStatus(runId, TransactionMapping.Status.MAPPED_HINT).get(0);
+        Long txnId = hinted.getTransactionId();
+
+        mappingService.assign(runId, txnId, null); // "Other (parked)"
+        mappingService.remapImports(List.of(mayImportId));
+
+        assertEquals(TransactionMapping.Status.PARKED,
+                mappingRepo.findByAnalysisRunIdAndTransactionId(runId, txnId).orElseThrow().getStatus(),
+                "a deliberate park must outrank the hint that would otherwise reclaim it");
+    }
+
+    /**
+     * ...but only a DELIBERATE park. Everything no pass could place is also PARKED, and
+     * those must stay free for a newly added hint to claim — otherwise writing a hint would
+     * never take effect on the transactions it was written for.
+     */
+    @Test
+    void aTransactionParkedByNoMatchIsStillClaimedByANewHint() {
+        mappingService.mapUnmapped();
+        Long runId = runFor(juneImportId);
+        List<TransactionMapping> parked = mappingRepo
+                .findByAnalysisRunIdAndStatus(runId, TransactionMapping.Status.PARKED);
+        assertFalse(parked.isEmpty(), "the June fixture should leave something unplaced");
+        Long txnId = parked.get(0).getTransactionId();
+        String description = txnRepo.findById(txnId).orElseThrow().getDescription();
+
+        // Write a hint that matches it, exactly as the review flow offers to do.
+        BudgetEntry coffee = entryRepo.findAll().stream()
+                .filter(e -> "Coffee Shop".equals(e.getName())).findFirst().orElseThrow();
+        coffee.setHints("match: " + description);
+        entryRepo.save(coffee);
+
+        mappingService.remapImports(List.of(juneImportId));
+
+        assertEquals(TransactionMapping.Status.MAPPED_HINT,
+                mappingRepo.findByAnalysisRunIdAndTransactionId(runId, txnId).orElseThrow().getStatus(),
+                "a new hint must be able to claim a transaction nothing had placed");
+    }
+
     /** The same rule for a re-categorization, which is the commoner case. */
     @Test
     void aManualRecategorizationOfAHintMatchedTransactionSurvivesAReMap() {
