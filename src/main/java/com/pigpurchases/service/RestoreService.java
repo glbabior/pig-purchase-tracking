@@ -305,8 +305,9 @@ public class RestoreService {
         List<String> missing = new ArrayList<>();
         try (Connection previewConn = preview.getConnection();
              Connection liveConn = switchableDataSource.getLive().getConnection()) {
+            Map<String, Set<String>> previewSchema = columnsByTable(previewConn);
             for (Map.Entry<String, Set<String>> table : columnsByTable(liveConn).entrySet()) {
-                Set<String> here = columnsByTable(previewConn).getOrDefault(table.getKey(), Set.of());
+                Set<String> here = previewSchema.getOrDefault(table.getKey(), Set.of());
                 if (here.isEmpty()) {
                     continue; // whole table absent: a new table, not a missing column
                 }
