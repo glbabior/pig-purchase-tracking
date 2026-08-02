@@ -627,8 +627,8 @@
                 already has for that source and date replaces the old copy rather than duplicating
                 it, so you can re-load freely if something looked wrong. Your categorizations are
                 kept: any line that re-reads identically keeps its category, including anything you
-                marked “just this one”. A line the new read changes loses its category and simply
-                maps again.</p>
+                marked “just this one”. If the new read changes or adds a line, that statement is
+                re-mapped automatically so nothing is left uncategorized.</p>
               <p><strong>Manual transactions</strong> are for spend that never appears on any
                 statement — a Venmo balance, cash. They're checked against same-day, same-amount
                 transactions as you enter them so you don't double-count something that will also
@@ -1699,14 +1699,23 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ relPath })
           });
-          if (!r.ok) throw new Error('HTTP ' + r.status);
+          if (!r.ok) {
+            // Surface the server's reason. An import is now refused when the parse does not
+            // tie back to the statement's own printed totals, or when no statement date
+            // could be read — each with a specific message. Replacing them all with "is it
+            // a valid statement" makes a reconciliation failure indistinguishable from the
+            // wrong parser being configured.
+            const payload = await r.json().catch(() => null);
+            throw new Error(payload && payload.error ? payload.error : 'HTTP ' + r.status);
+          }
           const res = await r.json();
           closeBrowseModal();
           const excl = res.excludedCount ? `\nExcluded from spend: ${res.excludedCount}` : '';
           alert(`Loaded ${res.fileName}\nStatement date: ${formatMmDdYy(res.statementDate)}\nTransactions: ${res.transactionCount}${excl}`);
           await refreshIngest();
         } catch (err) {
-          alert('Could not load that file. Is it a valid statement for this source?');
+          alert('Could not load that file.\n\n' + err.message
+            + '\n\nThe Debug screen has the full record of what was tried.');
           if (btn) { btn.disabled = false; btn.textContent = 'Load'; }
         }
       }
@@ -2272,10 +2281,17 @@
         if (!confirm(`Delete "${label}"?`)) return;
         try {
           const response = await fetch(`/api/entries/${id}`, { method: 'DELETE' });
-          if (!response.ok) throw new Error('HTTP ' + response.status);
+          if (!response.ok) {
+            // Read the body. The server refuses a delete while transactions are still
+            // mapped to the category and says how many and where to reassign them; throwing
+            // on the status alone replaced that with "is the server running?", so the user
+            // had no way to learn why, and would retry and restart to no effect.
+            const payload = await response.json().catch(() => null);
+            throw new Error(payload && payload.error ? payload.error : 'HTTP ' + response.status);
+          }
           await loadEntries();
         } catch (err) {
-          alert('Could not delete the item. Is the server running?');
+          alert('Could not delete: ' + err.message);
           console.error(err);
         }
       }

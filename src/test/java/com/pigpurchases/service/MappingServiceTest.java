@@ -168,6 +168,77 @@ class MappingServiceTest {
     }
 
     /**
+     * A statement can print the same date, description and amount twice — two identical
+     * fares, two identical parking charges — and deciding differently about them is exactly
+     * what "just this one" is for. Carrying one decision per content key copied it to both
+     * replacement rows: either the deliberate exclusion spread to its twin and a real charge
+     * left spend, or it was lost and the excluded charge came back as spend.
+     */
+    @Test
+    void reIngestingKeepsSeparateDecisionsForTwoIdenticalLines() throws IOException {
+        StatementSource source = sourceRepo.findById(sourceId).orElseThrow();
+        Path twins = tempDir.resolve("twins.pdf");
+        List<String> lines = List.of(
+                "Opening/Closing Date 03/12/26 - 04/11/26",
+                "Purchases +$8.20",
+                "03/22 COFFEE SHOP ANYTOWN CA 4.10",
+                "03/22 COFFEE SHOP ANYTOWN CA 4.10");
+        TestPdfs.write(twins, lines);
+        Long importId = ingestService.ingest(source, twins).importId();
+
+        mappingService.mapUnmapped();
+        Long runId = runFor(importId);
+        List<TransactionMapping> before = mappingRepo.findByAnalysisRunId(runId);
+        assertEquals(2, before.size());
+        mappingService.excludeOnce(runId, before.get(0).getTransactionId());
+
+        TestPdfs.write(twins, lines);
+        ingestService.ingest(source, twins);
+
+        List<TransactionMapping> after = mappingRepo.findByAnalysisRunId(runFor(
+                importRepo.findByStatementSourceIdOrderByStatementDateDesc(sourceId).stream()
+                        .filter(i -> i.getStatementDate().equals(java.time.LocalDate.of(2026, 4, 11)))
+                        .findFirst().orElseThrow().getId()));
+        assertEquals(2, after.size(), "both lines still present");
+        assertEquals(1, after.stream()
+                        .filter(m -> m.getStatus() == TransactionMapping.Status.EXCLUDED_ONCE).count(),
+                "exactly one of the twins stays excluded — the decision must not spread or vanish");
+    }
+
+    /**
+     * A line the re-parse changes, or produces for the first time, matches nothing to carry
+     * and used to end up with no mapping at all. Analysis iterates mappings rather than
+     * transactions, so that money was absent from every total — and the import still counted
+     * as consumed, so "Map Transactions" would not pick it up either. Fixing a parser to
+     * catch a line it used to miss is precisely why someone re-loads.
+     */
+    @Test
+    void reIngestingWithAnAddedLineLeavesNothingUnmapped() throws IOException {
+        StatementSource source = sourceRepo.findById(sourceId).orElseThrow();
+        Path grew = tempDir.resolve("grew.pdf");
+        TestPdfs.write(grew, List.of(
+                "Opening/Closing Date 02/12/26 - 03/11/26",
+                "Purchases +$4.10",
+                "02/22 COFFEE SHOP ANYTOWN CA 4.10"));
+        Long importId = ingestService.ingest(source, grew).importId();
+        mappingService.mapUnmapped();
+        assertEquals(1, mappingRepo.findByAnalysisRunId(runFor(importId)).size());
+
+        // The re-parse now finds a second line it previously missed.
+        TestPdfs.write(grew, List.of(
+                "Opening/Closing Date 02/12/26 - 03/11/26",
+                "Purchases +$4.45",
+                "02/22 COFFEE SHOP ANYTOWN CA 4.10",
+                "02/23 METRO STATION CITY CA .35"));
+        Long newImportId = ingestService.ingest(source, grew).importId();
+
+        for (com.pigpurchases.model.Transaction txn : txnRepo.findByStatementImportId(newImportId)) {
+            assertFalse(mappingRepo.findByTransactionId(txn.getId()).isEmpty(),
+                    "every transaction must be mapped after a re-ingest: " + txn.getDescription());
+        }
+    }
+
+    /**
      * Re-ingest deletes the statement's transactions and creates new ones with new ids.
      * The mappings used to be left pointing at the deleted rows: the statement then
      * contributed nothing to any month, its run vanished from the Mapping screen, and

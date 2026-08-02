@@ -27,7 +27,9 @@ import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -72,12 +74,17 @@ public class IngestService {
                                   Long budgetEntryId, String reason) {}
 
     /**
-     * Identifies a transaction by what it is rather than by its id: date, absolute
-     * amount, and normalized description. Re-ingesting the same statement produces the
-     * same key for the same line, which is what lets a mapping survive the replacement.
+     * Identifies a transaction by what it is rather than by its id: date, signed amount,
+     * type, and normalized description. Re-ingesting the same statement produces the same
+     * key for the same line, which is what lets a mapping survive the replacement.
+     *
+     * <p>Signed, and with the type, deliberately. The absolute amount collided a charge
+     * with the same-day refund that reversed it, so one inherited the other's decision —
+     * the same mistake duplicate detection made before it started grouping by direction.
      */
-    private static String contentKey(LocalDate date, BigDecimal amount, String description) {
-        return date + "|" + (amount == null ? "" : amount.abs().toPlainString())
+    private static String contentKey(LocalDate date, BigDecimal amount, String type, String description) {
+        return date + "|" + (amount == null ? "" : amount.toPlainString())
+                + "|" + (type == null ? "" : type)
                 + "|" + HintMatcher.normalize(description);
     }
 
@@ -126,16 +133,27 @@ public class IngestService {
         // The in-app guide tells the user re-loading is safe and to do it freely.
         //
         // So carry the mappings over by content instead. A line that re-parses identically
-        // keeps its categorization; one that changed loses it and simply maps again.
-        Map<String, CarriedMapping> carried = new LinkedHashMap<>();
+        // keeps its categorization; one the re-parse changed or newly produced gets none,
+        // and is re-mapped below so it cannot sit unmapped and invisible.
+        //
+        // A QUEUE per key, not a single value. A statement can print the same date,
+        // description and amount twice — two identical fares, two identical parking
+        // charges — and deciding differently about them is exactly what "just this one"
+        // is for. Collapsing both to one carried decision copied it to both replacement
+        // rows: either the deliberate exclusion spread to its twin and a real charge left
+        // spend, or it was lost and the excluded charge came back. Push and poll in row
+        // order so the nth old row feeds the nth new one.
+        Map<String, Deque<CarriedMapping>> carried = new LinkedHashMap<>();
         List<AnalysisRunSource> consumingLinks = new ArrayList<>();
         statementImportRepository.findByStatementSourceIdAndStatementDate(source.getId(), statementDate)
                 .ifPresent(prev -> {
                     for (Transaction old : transactionRepository.findByStatementImportId(prev.getId())) {
                         for (TransactionMapping m : mappingRepository.findByTransactionId(old.getId())) {
-                            carried.putIfAbsent(
-                                    contentKey(old.getTransactionDate(), old.getAmount(), old.getDescription()),
-                                    new CarriedMapping(m.getAnalysisRunId(), m.getStatus(),
+                            carried.computeIfAbsent(
+                                    contentKey(old.getTransactionDate(), old.getAmount(),
+                                            old.getType(), old.getDescription()),
+                                    k -> new ArrayDeque<>())
+                                .add(new CarriedMapping(m.getAnalysisRunId(), m.getStatus(),
                                             m.getBudgetEntryId(), m.getReason()));
                         }
                         mappingRepository.deleteByTransactionId(old.getId());
@@ -150,6 +168,7 @@ public class IngestService {
                 LocalDateTime.now(), statement.getTransactions().size()));
 
         int excludedCount = 0;
+        boolean unmatchedRows = false;
         for (ParsedTransaction pt : statement.getTransactions()) {
             boolean excluded = pt.isExcludeFromSpend()
                     || exclusions.stream().anyMatch(r -> r.matches(pt.getDescription()));
@@ -163,10 +182,14 @@ public class IngestService {
             txn.setExcludeFromSpend(excluded);
             transactionRepository.save(txn);
 
-            CarriedMapping prior = carried.get(contentKey(txn.getTransactionDate(), txn.getAmount(), txn.getDescription()));
+            Deque<CarriedMapping> queue = carried.get(contentKey(txn.getTransactionDate(),
+                    txn.getAmount(), txn.getType(), txn.getDescription()));
+            CarriedMapping prior = queue == null ? null : queue.poll();
             if (prior != null) {
                 mappingRepository.save(new TransactionMapping(prior.runId(), txn.getId(),
                         prior.budgetEntryId(), prior.status(), prior.reason()));
+            } else {
+                unmatchedRows = true;
             }
         }
 
@@ -175,7 +198,29 @@ public class IngestService {
         for (AnalysisRunSource link : consumingLinks) {
             link.setStatementImportId(imp.getId());
             runSourceRepository.save(link);
-            mappingService.recount(link.getAnalysisRunId());
+        }
+
+        if (!consumingLinks.isEmpty()) {
+            if (unmatchedRows) {
+                // At least one row came through with no carried decision — a line the
+                // re-parse changed, or one it produced for the first time (fixing a parser
+                // to catch a line it used to miss is precisely why someone re-loads). Such
+                // a row otherwise had NO mapping at all: analysis iterates mappings rather
+                // than transactions, so that money was absent from the month, the rolling
+                // average and the trend chart — while the import still counted as consumed,
+                // so "Map Transactions" would not pick it up either. Recounting alone left
+                // the run claiming MAPPED over rows it had never mapped.
+                //
+                // Safe to re-map on top of the rows just carried: doMap snapshots
+                // EXCLUDED_ONCE before rebuilding, and every other manual decision is
+                // rebuilt from the merchant cache. Carrying first is what gives doMap the
+                // EXCLUDED_ONCE rows to find — without it they died with the old ids.
+                mappingService.remapImports(List.of(imp.getId()));
+            } else {
+                for (AnalysisRunSource link : consumingLinks) {
+                    mappingService.recount(link.getAnalysisRunId());
+                }
+            }
         }
 
         return new IngestResult(imp.getId(), statementDate, imp.getFileName(),

@@ -217,12 +217,27 @@ public class BackupService {
                 Files.deleteIfExists(staging);
                 throw e;
             }
-            // Sidecar first, then both into place: the .meta must never outlive the dump it
-            // describes, which is how a stale sidecar came to vouch for a truncated file.
+            // Dump first, sidecar second. The previous order moved the .meta into place
+            // ahead of the .sql, which guaranteed the very thing the comment claimed to
+            // prevent: if the second move failed — and on Windows ATOMIC_MOVE fails with a
+            // sharing violation when an indexer or scanner holds the target open — the new
+            // sidecar was left vouching for yesterday's dump, and seedFromNewestBackup
+            // trusted it on the next start.
+            //
+            // This way round fails safe: a complete dump with a stale sidecar understates
+            // richness, which costs at most one redundant backup. A sidecar without its
+            // dump is a lie.
             writeMeta(staging, signature, richness, now, trigger);
-            Files.move(metaPath(staging), metaPath(target),
-                    StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            Files.move(staging, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            try {
+                Files.move(staging, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                Files.move(metaPath(staging), metaPath(target),
+                        StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } finally {
+                // A crash or a failed move otherwise leaves a full dump's worth of bytes
+                // behind, invisible to prune (which only walks *.sql).
+                Files.deleteIfExists(metaPath(staging));
+                Files.deleteIfExists(staging);
+            }
 
             lastSignature = signature;
             lastBackupAt = now;

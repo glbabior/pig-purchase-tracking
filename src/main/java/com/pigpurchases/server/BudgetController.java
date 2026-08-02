@@ -444,9 +444,15 @@ public class BudgetController {
     }
 
     /**
-     * A refused operation the user can resolve -> 409, so the message reaches them
-     * instead of surfacing as a 500. Currently deleting a budget entry that still has
-     * transactions mapped to it.
+     * A refused operation the user can resolve -> 409, so the message reaches them instead
+     * of surfacing as a 500. Covers deleting a budget entry that still has transactions
+     * mapped to it, and every ingest refusal — a parse that does not tie back to the
+     * statement's printed totals, a statement with no readable date, and the parser guards
+     * for a missing Crestline header or Ridgeline ledger row.
+     *
+     * <p>The message only helps if the client reads the body: both call sites in
+     * {@code index.html} do, having previously thrown on the status alone and replaced
+     * every one of these with "is the server running?".
      */
     @ExceptionHandler(IllegalStateException.class)
     @ResponseStatus(HttpStatus.CONFLICT)
