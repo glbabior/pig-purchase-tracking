@@ -362,6 +362,7 @@
                 <button class="secondary" id="checkDupsBtn">Check for duplicates</button>
                 <button class="secondary" id="reviewManualBtn">Review manual entries</button>
               </div>
+              <div id="aiModeNote" class="hint" style="margin:0.4rem 0;"></div>
               <div id="runsList"></div>
               <div id="runsEmptyState" class="empty">No statements ingested yet. Load statements on the Ingest screen, then map them here.</div>
             </section>
@@ -1775,6 +1776,21 @@
         document.getElementById('mapTransactionsBtn').textContent =
           pending ? `Map Transactions (${pending} new)` : 'Map Transactions';
 
+        // Which mode a run will use. The README has always said this screen shows it; it
+        // never did — the flag was returned by the API and rendered nowhere. Without it,
+        // "why did nothing get categorized?" has no answer on screen.
+        const ai = document.getElementById('aiModeNote');
+        if (ai) {
+          ai.innerHTML = mappingFilesData.aiAvailable
+            ? '✓ AI categorization is <strong>on</strong>. Merchants no rule can place are sent'
+              + ' to Claude — descriptions and vendor names only, never amounts — and each'
+              + ' answer is remembered, so a merchant is paid for at most once.'
+            : '⚠ AI categorization is <strong>off</strong> (no API key found). Only your hints'
+              + ' and previously remembered answers will place anything; everything else parks'
+              + ' as “Other”.';
+          ai.className = mappingFilesData.aiAvailable ? 'hint' : 'run-error';
+        }
+
         container.innerHTML = files.map((f) => {
           const label = `${escapeHtml(f.sourceName || '')} · ${formatMmDdYy(f.statementDate)}`;
           const status = f.mapped
@@ -1787,9 +1803,14 @@
                <button class="secondary" data-remap-one="${f.importId}">Re-map</button>
                <button class="secondary" data-del-run="${f.runId}">Delete</button>`
             : `<button class="secondary" data-map-one="${f.importId}">Map this file</button>`;
+          // When it was last mapped. Without it you cannot tell whether a statement has
+          // been mapped since you changed a hint, added a category, or turned AI on.
+          const lastRun = f.mapped && f.mappedAt
+            ? ` · mapped ${formatLogTime(f.mappedAt)}`
+            : '';
           return `<div class="run-card">
             <h3>${label}</h3>
-            <div class="muted">${escapeHtml(f.fileName || '')} · ${f.transactionCount} txns</div>
+            <div class="muted">${escapeHtml(f.fileName || '')} · ${f.transactionCount} txns${lastRun}</div>
             <div class="counts">${status}</div>
             <div class="actions">${actions}</div>
           </div>`;
@@ -2356,6 +2377,28 @@
       // parseDollarAmount, formatCurrency, signedSpend and escapeHtml now live in
       // app-math.js, loaded above, so they can be tested. See the note at the top of it.
 
+      /**
+       * Why this row ended up where it is, in plain words.
+       *
+       * The server has recorded a reason on every mapping since the beginning and no screen
+       * ever showed it — so a transaction nothing could place and one you deliberately set
+       * aside looked identical, and only one of those is worth doing anything about. The
+       * distinction that matters most: a row parked BY HAND is held there deliberately and
+       * no hint, remembered answer or AI pass will reclaim it, so it stays in "Other" until
+       * you move it yourself.
+       */
+      function mappingReason(row) {
+        const reason = row.reason || '';
+        if (!reason) return '';
+        if (reason === 'Un-categorized by hand') {
+          return '📌 you parked this by hand — nothing will re-categorize it automatically';
+        }
+        if (reason === 'No hint or name matched') {
+          return 'nothing matched it — a hint, or the AI pass, would place it';
+        }
+        return reason;
+      }
+
       function showView(viewName) {
         // Leave a clean slate: never carry an open dialog or a stuck busy overlay
         // across a screen switch (they'd sit on top and swallow clicks).
@@ -2574,6 +2617,7 @@
             <div class="cat-desc">
               <div>${escapeHtml(l.description || '')}</div>
               <div class="cat-date">${formatMmDdYy(l.date)}${l.vendor && l.vendor !== l.description ? ' · ' + escapeHtml(l.vendor) : ''}${l.status === 'EXCLUDED_ONCE' ? ' · <span class="once-tag">one-off</span>' : ''}</div>
+              <div class="cat-date">${escapeHtml(mappingReason(l))}</div>
             </div>
             <div class="cat-amt">${formatCurrency(l.amount)}</div>
             <select data-txn="${l.transactionId}" data-run="${l.analysisRunId}" data-desc="${escapeHtml(l.description || '')}">${reassignRowOptions(rowCatValue(l, curVal))}</select>
@@ -2683,6 +2727,7 @@
             <div class="cat-desc">
               <div>${escapeHtml(r.description || '')}</div>
               <div class="cat-date">${formatMmDdYy(r.date)}${r.vendor && r.vendor !== r.description ? ' · ' + escapeHtml(r.vendor) : ''}</div>
+              <div class="cat-date">${escapeHtml(mappingReason(r))}</div>
             </div>
             <div class="cat-amt">${formatCurrency(signedSpend(r))}</div>
             <select data-txn="${r.transactionId}">${reassignRowOptions(currentCatValue(r))}</select>

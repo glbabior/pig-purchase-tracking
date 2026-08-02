@@ -80,11 +80,21 @@ public class AnalysisService {
     /** One month's actual (and constant budget) for a single category, for its trend line. */
     public record CategoryTrendPoint(String month, BigDecimal actual, BigDecimal budget) {}
 
-    /** One transaction behind a category's total, for the click-through detail (and reassigning it).
-     *  {@code status} is the mapping status, so the detail list can tell a standing
-     *  exclusion apart from a one-off one rather than showing both the same way. */
+    /**
+     * One transaction behind a category's total, for the click-through detail (and
+     * reassigning it). {@code status} is the mapping status, so the detail list can tell a
+     * standing exclusion apart from a one-off one rather than showing both the same way.
+     *
+     * <p>{@code reason} says WHY the row ended up here — "No hint or name matched",
+     * "Un-categorized by hand", "Remembered — your earlier categorization". It has been
+     * recorded on every mapping since the beginning and shown nowhere, which made
+     * "why is this merchant still in Other?" unanswerable from the screen: a row nothing
+     * could place and a row deliberately set aside look identical without it, and only one
+     * of those is worth acting on.
+     */
     public record TxnLine(Long transactionId, Long analysisRunId, String date, String description,
-                          String vendor, BigDecimal amount, String type, String status) {}
+                          String vendor, BigDecimal amount, String type, String status,
+                          String reason) {}
 
     /** A calendar month that has mapped transactions, with its completeness state. */
     public record MonthInfo(String month, boolean complete, boolean suggested, int unmapped) {}
@@ -249,7 +259,7 @@ public class AnalysisService {
             lines.add(new TxnLine(txn.getId(), m.getAnalysisRunId(),
                     txn.getTransactionDate().toString(),
                     txn.getDescription(), txn.getVendor(), round(signedSpend(txn)), txn.getType(),
-                    m.getStatus() == null ? null : m.getStatus().name()));
+                    m.getStatus() == null ? null : m.getStatus().name(), m.getReason()));
         }
         lines.sort(Comparator.comparing(l -> l.date() == null ? "" : l.date()));
         return lines;

@@ -73,6 +73,10 @@ public class MappingController {
                     f.put("mappedCount", r.getMappedCount());
                     f.put("parkedCount", r.getParkedCount());
                     f.put("excludedCount", r.getExcludedCount());
+                    // When this statement was last mapped. Stored since the beginning and
+                    // never shown, so "have I mapped this since I changed my hints?" was
+                    // unanswerable from the screen.
+                    f.put("mappedAt", r.getMappedAt() != null ? r.getMappedAt().toString() : null);
                 } else {
                     f.put("mapped", false);
                 }

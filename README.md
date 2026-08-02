@@ -189,6 +189,9 @@ itself once the server is back.
 
 ### Enabling AI categorization
 
+The Mapping screen states which mode a run will use, above the statement list — including
+a warning when no key is found, since that is the usual reason a run categorizes nothing.
+
 Set the key once for your user account, then restart the app:
 
 ```powershell
@@ -216,6 +219,11 @@ never calls the API even if your shell has a key exported.
 **If a run categorizes nothing**, open the **Debug** screen — every outbound call
 is logged there with its result or error (a rejected key, no credits), so you never
 have to dig through the console.
+
+Each transaction in a category drill-down also shows **why** it is there — nothing matched
+it, you parked it by hand, it was remembered from an earlier decision. A row you parked by
+hand is held there deliberately: no hint, remembered answer or AI pass will reclaim it, so
+it stays in "Other" until you move it yourself.
 
 ### Testing
 
