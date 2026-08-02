@@ -59,6 +59,37 @@ class ManualEntryServiceTest {
                 runRepo.findById(maps.get(0).getAnalysisRunId()).orElseThrow().getMonth());
     }
 
+    /**
+     * A refund is not a duplicate of the purchase it reverses — both are real and both
+     * belong in the total. Keying on the absolute amount grouped them, so the duplicates
+     * dialog offered the pair for deletion and removing the refund raised the month by its
+     * amount; it also blocked a manual entry with a spurious 409 against an unrelated
+     * same-day refund.
+     */
+    @Test
+    void aRefundIsNotADuplicateOfTheChargeItReverses() {
+        Transaction purchase = new Transaction(LocalDate.of(2026, 6, 15), "BIG STORE", "BIG STORE",
+                new BigDecimal("89.99"), "2026-06");
+        purchase.setType("PURCHASE");
+        txnRepo.save(purchase);
+
+        Transaction refund = new Transaction(LocalDate.of(2026, 6, 15), "BIG STORE REFUND", "BIG STORE",
+                new BigDecimal("-89.99"), "2026-06");
+        refund.setType("CREDIT");
+        txnRepo.save(refund);
+
+        assertTrue(manualEntryService.findDuplicateGroups().isEmpty(),
+                "money in and money out are never the same charge recorded twice");
+        assertEquals(0, manualEntryService.findPotentialDuplicates(
+                        LocalDate.of(2026, 6, 15), new BigDecimal("89.99")).stream()
+                        .filter(t -> "CREDIT".equals(t.getType())).count(),
+                "a refund must not block an unrelated manual entry of the same size");
+
+        // The purchase itself is still a real duplicate candidate, so the check still works.
+        assertEquals(1, manualEntryService.findPotentialDuplicates(
+                LocalDate.of(2026, 6, 15), new BigDecimal("89.99")).size());
+    }
+
     @Test
     void duplicateChecksMatchOnSameDateAndAbsoluteAmount() {
         manualEntryService.addManual(LocalDate.of(2026, 6, 15), "Venmo",

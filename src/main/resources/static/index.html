@@ -2306,6 +2306,20 @@
         return '$' + numericValue.toFixed(2);
       }
 
+      // Mirrors AnalysisService.signedSpend: money out is positive, money in negative.
+      // The parsers disagree on stored sign for the same direction — a Bayside withdrawal is
+      // negative, a Crestline purchase positive — so the TYPE decides, not the sign.
+      //
+      // Review all used to render Math.abs(amount), so a 150 refund read as a 150 charge
+      // there and as -150 in the category drill-down: the same transaction, opposite signs,
+      // on the two screens where it gets acted on. Assigning that "charge" to Groceries
+      // made Groceries go down.
+      function signedSpend(row) {
+        const magnitude = Math.abs(Number(row.amount || 0));
+        const moneyIn = row.type === 'PAYMENT' || row.type === 'CREDIT' || row.type === 'DEPOSIT';
+        return moneyIn ? -magnitude : magnitude;
+      }
+
       function escapeHtml(value) {
         return String(value)
           .replace(/&/g, '&amp;')
@@ -2634,7 +2648,7 @@
               <div>${escapeHtml(r.description || '')}</div>
               <div class="cat-date">${formatMmDdYy(r.date)}${r.vendor && r.vendor !== r.description ? ' · ' + escapeHtml(r.vendor) : ''}</div>
             </div>
-            <div class="cat-amt">${formatCurrency(Math.abs(Number(r.amount || 0)))}</div>
+            <div class="cat-amt">${formatCurrency(signedSpend(r))}</div>
             <select data-txn="${r.transactionId}">${reassignRowOptions(currentCatValue(r))}</select>
           </div>
         `).join('');

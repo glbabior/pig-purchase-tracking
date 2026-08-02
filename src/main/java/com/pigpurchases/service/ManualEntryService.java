@@ -58,11 +58,13 @@ public class ManualEntryService {
      *  Excluded ("not spend") transactions are ignored: they're already accounted for elsewhere. */
     @Transactional(readOnly = true)
     public List<Transaction> findPotentialDuplicates(LocalDate date, BigDecimal amount) {
+        // Money-out only. Comparing absolute amounts blocked a manual entry against an
+        // unrelated same-day refund of the same size, which is not a duplicate of it.
         BigDecimal target = amount.abs();
         Set<Long> excluded = excludedTransactionIds();
         List<Transaction> out = new ArrayList<>();
         for (Transaction t : transactionRepository.findAll()) {
-            if (excluded.contains(t.getId())) {
+            if (excluded.contains(t.getId()) || isMoneyIn(t)) {
                 continue;
             }
             if (date.equals(t.getTransactionDate()) && t.getAmount() != null
@@ -71,6 +73,16 @@ public class ManualEntryService {
             }
         }
         return out;
+    }
+
+    /**
+     * Money coming in — a refund, a card payment, a deposit — as opposed to money going
+     * out. Sign alone cannot answer this: the parsers disagree on the sign for the same
+     * direction, so the type is the authority.
+     */
+    private static boolean isMoneyIn(Transaction t) {
+        String type = t.getType();
+        return "PAYMENT".equals(type) || "CREDIT".equals(type) || "DEPOSIT".equals(type);
     }
 
     /**
@@ -134,7 +146,16 @@ public class ManualEntryService {
             if (t.getTransactionDate() == null || t.getAmount() == null || excluded.contains(t.getId())) {
                 continue; // skip excluded ("not spend") items — already accounted for
             }
-            String key = t.getTransactionDate() + "|" + t.getAmount().abs().toPlainString();
+            // Keyed by direction as well as amount. Money in and money out are never the
+            // same charge recorded twice: an 89.99 purchase and the 89.99 refund that
+            // reverses it are both real and both belong in the total. Grouping them offered
+            // the pair for deletion, and deleting the refund raised the month by its amount.
+            //
+            // Direction rather than raw sign, because the parsers disagree on sign for the
+            // same direction — a Bayside withdrawal is stored negative while a Crestline purchase
+            // and a manual entry are positive, and those genuinely can duplicate each other.
+            String key = t.getTransactionDate() + "|" + (isMoneyIn(t) ? "in" : "out")
+                    + "|" + t.getAmount().abs().toPlainString();
             byKey.computeIfAbsent(key, k -> new ArrayList<>()).add(t);
         }
         List<List<Transaction>> groups = new ArrayList<>();
