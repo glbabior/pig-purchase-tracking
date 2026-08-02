@@ -246,6 +246,7 @@
         </div>
         <nav>
           <button class="nav-item active" data-view="budget">Budget Entries</button>
+          <button class="nav-item" data-view="hints">Hints</button>
           <button class="nav-item" data-view="sources">Statement Sources</button>
           <button class="nav-item" data-view="ingest">Ingest</button>
           <button class="nav-item" data-view="mapping">Mapping<span id="mappingBadge" class="nav-badge" style="display:none">●</span></button>
@@ -310,6 +311,37 @@
                 <tbody id="budgetTableBody"></tbody>
               </table>
               <div id="emptyState" class="empty">No budget items yet. Add your first entry to get started.</div>
+            </section>
+
+            <section id="hintsView" style="display:none">
+              <div class="view-head">
+                <h2 class="view-title">Hints</h2>
+                <button class="view-help" data-guide="hints" title="Help for this screen">? Help</button>
+              </div>
+              <p class="hint">Every <code>match:</code> rule across every category, in one place. A rule
+                is a plain substring: if a transaction's description contains it, the transaction goes to
+                that category &mdash; free, on the first pass, before anything is sent to the AI. Rules take
+                effect on the <strong>next mapping run</strong>, not retroactively.</p>
+              <div class="toolbar">
+                <button class="primary" id="addHintBtn">Add rule</button>
+                <button class="secondary" id="checkConflictsBtn">Check for conflicts</button>
+              </div>
+              <div id="hintsConflicts" style="display:none;margin:0.6rem 0;"></div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Category</th>
+                    <th>Rule</th>
+                    <th>Matches now</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="hintsBody"></tbody>
+              </table>
+              <div id="hintsEmptyState" class="empty" style="display:none">
+                No rules yet. Add one here, or let the app offer you a hint when you categorize a
+                parked transaction.
+              </div>
             </section>
 
             <section id="sourcesView" style="display:none">
@@ -517,6 +549,31 @@
       </div>
     </div>
 
+    <div id="newHintModal" class="modal" aria-hidden="true">
+      <div class="modal-body">
+        <h2>Add a rule</h2>
+        <p class="hint">A rule is a substring. Any transaction whose description contains it maps to the
+          chosen category on the first pass. Join parts with <code>+</code> to require <em>all</em> of them
+          &mdash; e.g. <code>Crestline + Ext Trnsfr</code>, which survives the transaction ID changing
+          every month. Preview before saving to see exactly what it would catch.</p>
+        <div class="field">
+          <label for="newHintEntry">Category</label>
+          <select id="newHintEntry"></select>
+        </div>
+        <div class="field">
+          <label for="newHintText">Rule</label>
+          <input id="newHintText" type="text" placeholder="e.g. DAILYGRIND" />
+        </div>
+        <div class="modal-actions">
+          <button class="secondary" id="newHintPreviewBtn">Preview matches</button>
+          <button class="primary" id="newHintSaveBtn">Save rule</button>
+          <button class="secondary" id="newHintCancelBtn">Cancel</button>
+        </div>
+        <div id="newHintMsg" class="hint"></div>
+        <div id="newHintPreview" style="margin-top:0.6rem;"></div>
+      </div>
+    </div>
+
     <div id="hintModal" class="modal" aria-hidden="true">
       <div class="modal-body">
         <h2>Add a matching hint?</h2>
@@ -550,6 +607,7 @@
           <div class="guide-nav" id="guideNav">
             <button data-goto="overview">Overview</button>
             <button data-goto="budget">Budget Entries</button>
+            <button data-goto="hints">Hints</button>
             <button data-goto="sources">Statement Sources</button>
             <button data-goto="ingest">Ingest</button>
             <button data-goto="mapping">Mapping</button>
@@ -604,6 +662,79 @@
               <p>The entry's own name is always matched too, so an entry called “Fresh Market” needs no hint
                 at all. You rarely have to write these by hand: when you categorize something during
                 review, the app offers to save the hint for you.</p>
+            </section>
+
+            <section id="guide-hints">
+              <h3>Hints</h3>
+              <p>Every <code>match:</code> rule you've written, across every category, on one screen.
+                Rules live on the budget entries themselves — this is a view of them all together,
+                which is the only place a rule on one category can be compared with a rule on another.</p>
+
+              <h4>What a rule is</h4>
+              <p>A plain substring. If a transaction's description contains it, the transaction goes to
+                that category — on the first pass, free, before anything is sent to the AI.</p>
+              <p>Both sides are lowercased and stripped of everything that isn't a letter or digit
+                before comparing, because statement text carries punctuation your category name
+                doesn't:</p>
+              <pre>City Power  →  citypower   matches  CITYPOWER 800-555-0142 CA
+Novacell     →  novacell    matches  NOVA-CELL PCS SVC
+Daily Grind    →  dailygrind    matches  DAILYGRIND*COFFEE</pre>
+              <p>The category's own <strong>name</strong> is always a rule, so a category called
+                “Fresh Market” needs nothing written at all.</p>
+
+              <h4>Requiring several parts</h4>
+              <p>Join parts with <code>+</code> and <em>all</em> of them must appear. This is what to
+                reach for when one token is too vague on its own, or when a description changes every
+                month:</p>
+              <pre>match: MP + MAILORDER              catches the the pharmacy pharmacy line
+                                   without KP grabbing everything else
+
+match: Crestline + Ext Trnsfr catches a recurring transfer whose
+                                   ID changes every statement</pre>
+              <p>That second case matters more than it looks. A transaction whose description contains
+                a reference number is a <em>different</em> description every month, so categorizing it
+                by hand teaches the app nothing reusable — the memory is keyed on the whole
+                description. A rule is the only thing that survives.</p>
+
+              <h4>Rules that are ignored</h4>
+              <p>Two limits keep this conservative, because a wrong automatic answer is worse than a
+                transaction held for review:</p>
+              <ul>
+                <li>A plain rule needs <strong>3+</strong> letters or digits. “Gas” would otherwise
+                  catch <code>CITYPOWER</code> and <code>POWELL ST GARAGE</code>.</li>
+                <li>Inside a <code>+</code> rule each part needs <strong>2+</strong>, since the AND is
+                  what provides the specificity.</li>
+              </ul>
+              <p>A rule breaking either is <strong>ignored entirely</strong> — not partially applied.
+                <code>match: T + MOBILE</code> does nothing, rather than quietly becoming
+                <code>MOBILE</code> and catching “MOBILE DEPOSIT”. Ignored rules are flagged on this
+                screen with the reason, which is the only way to tell one from a rule that simply
+                hasn't matched anything yet.</p>
+
+              <h4>Preview before you save</h4>
+              <p><strong>Add rule</strong> → <strong>Preview matches</strong> shows exactly which of
+                your existing transactions a rule would catch, and warns when any of them are already
+                filed under another category and would be taken. Worth doing every time: a rule that
+                catches plenty is only good news if none of it was already where you wanted it.</p>
+
+              <h4>Check for conflicts</h4>
+              <p>Runs every rule against every transaction and reports any claimed by more than one
+                category. Two kinds, and the difference matters:</p>
+              <ul>
+                <li><strong>Parked (tie)</strong> — the rules are equally specific, so the app refuses
+                  to guess and the transaction stays in “Other”. Both rules look broken and neither is.
+                  Make one more specific.</li>
+                <li><strong>Resolved</strong> — the longer rule wins. Fine, unless it's not the one you
+                  meant; the loser is named so you can tell.</li>
+              </ul>
+
+              <h4>When rules take effect</h4>
+              <p><strong>On the next mapping run, not retroactively.</strong> Add a rule, then use
+                <em>Re-run mapping</em> on the statements you want re-examined. This is the usual reason
+                a new rule appears to do nothing.</p>
+              <p>One exception outranks rules entirely: a category you set <em>by hand</em> on a
+                specific transaction is kept, and a rule won't override it. Your explicit decision about
+                one row beats a pattern.</p>
             </section>
 
             <section id="guide-sources">
@@ -1035,6 +1166,13 @@
 
       document.getElementById('browseCancelBtn').addEventListener('click', closeBrowseModal);
       backdropClose(browseModal, closeBrowseModal);
+
+      document.getElementById('addHintBtn').addEventListener('click', openNewHint);
+      document.getElementById('checkConflictsBtn').addEventListener('click', checkHintConflicts);
+      document.getElementById('newHintPreviewBtn').addEventListener('click', previewHint);
+      document.getElementById('newHintSaveBtn').addEventListener('click', saveNewHint);
+      document.getElementById('newHintCancelBtn').addEventListener('click', () => hideModalEl('newHintModal'));
+      backdropClose(document.getElementById('newHintModal'), () => hideModalEl('newHintModal'));
 
       document.getElementById('mapTransactionsBtn').addEventListener('click', mapUnmapped);
       document.getElementById('reRunMappingBtn').addEventListener('click', openRemapPicker);
@@ -1470,6 +1608,175 @@
         } catch (err) {
           alert('Could not clear the log.');
           console.error(err);
+        }
+      }
+
+      // ---- Hints -------------------------------------------------------------
+
+      let hintsData = { hints: [], entries: [] };
+
+      async function loadHints() {
+        const body = document.getElementById('hintsBody');
+        const empty = document.getElementById('hintsEmptyState');
+        try {
+          const r = await fetch('/api/hints', { cache: 'no-store' });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          hintsData = await r.json();
+        } catch (err) {
+          body.innerHTML = '';
+          empty.textContent = 'Could not load rules. Is the server running?';
+          empty.style.display = 'block';
+          return;
+        }
+
+        const rows = hintsData.hints || [];
+        empty.style.display = rows.length ? 'none' : 'block';
+        empty.textContent = 'No rules yet. Add one here, or let the app offer you a hint when you '
+          + 'categorize a parked transaction.';
+
+        body.innerHTML = rows.map((h) => {
+          // A rule that is ignored, and one that simply matches nothing yet, are different
+          // problems: the first can never work, the second may just be waiting for a
+          // statement. Saying which is the whole point of this screen.
+          const state = h.problem
+            ? `<span class="badge parked">ignored — ${escapeHtml(h.problem)}</span>`
+            : h.matchCount === 0
+              ? '<span class="badge parked">matches nothing yet</span>'
+              : `<span class="badge mapped">${h.matchCount}</span>`;
+          return `<tr>
+            <td>${escapeHtml(h.entryName || '')}</td>
+            <td><code>${escapeHtml(h.hint || '')}</code></td>
+            <td>${state}</td>
+            <td><button class="secondary" data-del-hint="${escapeHtml(h.hint || '')}"
+                        data-entry="${h.entryId}">Remove</button></td>
+          </tr>`;
+        }).join('');
+
+        body.querySelectorAll('button[data-del-hint]').forEach((b) => {
+          b.addEventListener('click', () => removeHint(b.dataset.entry, b.dataset.delHint));
+        });
+      }
+
+      async function removeHint(entryId, hint) {
+        if (!confirm(`Remove the rule "${hint}"?\n\nTransactions already categorized by it keep their `
+            + `category until you re-run mapping.`)) return;
+        try {
+          const r = await fetch(`/api/entries/${entryId}/hints`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hint })
+          });
+          if (!r.ok) {
+            const payload = await r.json().catch(() => null);
+            throw new Error(payload && payload.error ? payload.error : 'HTTP ' + r.status);
+          }
+          await loadEntries();
+          await loadHints();
+        } catch (err) {
+          alert('Could not remove the rule: ' + err.message);
+        }
+      }
+
+      function openNewHint() {
+        const sel = document.getElementById('newHintEntry');
+        sel.innerHTML = (hintsData.entries || [])
+          .map((e) => `<option value="${e.id}">${escapeHtml(e.name || '')}</option>`).join('');
+        document.getElementById('newHintText').value = '';
+        document.getElementById('newHintMsg').textContent = '';
+        document.getElementById('newHintPreview').innerHTML = '';
+        showModalEl('newHintModal');
+        document.getElementById('newHintText').focus();
+      }
+
+      async function previewHint() {
+        const entryId = document.getElementById('newHintEntry').value;
+        const hint = document.getElementById('newHintText').value.trim();
+        const out = document.getElementById('newHintPreview');
+        if (!hint) { out.innerHTML = '<div class="hint">Type a rule first.</div>'; return; }
+        try {
+          const r = await fetch('/api/hints/preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entryId, hint })
+          });
+          if (!r.ok) {
+            const payload = await r.json().catch(() => null);
+            throw new Error(payload && payload.error ? payload.error : 'HTTP ' + r.status);
+          }
+          const p = await r.json();
+          if (p.problem) {
+            out.innerHTML = `<div class="run-error">This rule would be ignored: ${escapeHtml(p.problem)}</div>`;
+            return;
+          }
+          const samples = (p.samples || []).map((s) =>
+            `<div style="font-family:monospace;font-size:0.85em;">${escapeHtml(s)}</div>`).join('');
+          // The steal warning matters more than the count: a rule catching plenty is only
+          // good news if none of it is already filed where you meant it to be.
+          const steal = (p.alreadyElsewhere || []).length
+            ? `<div class="run-error" style="margin-top:0.5rem;">⚠ ${p.alreadyElsewhere.length} of these are
+                 currently in another category and this rule would take them:<br/>`
+              + p.alreadyElsewhere.map((s) =>
+                  `<span style="font-family:monospace;font-size:0.85em;">${escapeHtml(s)}</span>`).join('<br/>')
+              + '</div>'
+            : '';
+          out.innerHTML = `<div><strong>${p.matchCount}</strong> existing transaction(s) would match`
+            + (p.matchCount > (p.samples || []).length ? ` (showing ${p.samples.length})` : '')
+            + `:</div>${samples}${steal}`;
+        } catch (err) {
+          out.innerHTML = `<div class="run-error">Could not preview: ${escapeHtml(err.message)}</div>`;
+        }
+      }
+
+      async function saveNewHint() {
+        const entryId = document.getElementById('newHintEntry').value;
+        const hint = document.getElementById('newHintText').value.trim();
+        const msg = document.getElementById('newHintMsg');
+        if (!hint) { msg.textContent = 'Type a rule first.'; return; }
+        try {
+          const r = await fetch(`/api/entries/${entryId}/hints`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hint })
+          });
+          if (!r.ok) {
+            const payload = await r.json().catch(() => null);
+            throw new Error(payload && payload.error ? payload.error : 'HTTP ' + r.status);
+          }
+          hideModalEl('newHintModal');
+          await loadEntries();
+          await loadHints();
+        } catch (err) {
+          msg.textContent = 'Could not save: ' + err.message;
+        }
+      }
+
+      async function checkHintConflicts() {
+        const out = document.getElementById('hintsConflicts');
+        out.style.display = 'block';
+        out.innerHTML = '<div class="hint">Checking…</div>';
+        try {
+          const r = await fetch('/api/hints/conflicts', { cache: 'no-store' });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          const data = await r.json();
+          const list = data.conflicts || [];
+          if (!list.length) {
+            out.innerHTML = '<div class="hint">✓ No transaction is claimed by more than one category.</div>';
+            return;
+          }
+          // Ties come first from the server: those are the ones actively costing a
+          // categorization, because the matcher refuses to guess and parks the row.
+          out.innerHTML = `<div><strong>${list.length}</strong> transaction(s) are claimed by more than one `
+            + `category. <strong>${data.parking}</strong> of those are being parked because the rules are `
+            + `equally specific — the app will not guess between them.</div>`
+            + list.slice(0, 40).map((c) => `
+                <div style="margin-top:0.5rem;padding-left:0.6rem;border-left:3px solid ${c.parks ? '#c00' : '#999'};">
+                  <div style="font-family:monospace;font-size:0.85em;">${escapeHtml(c.description || '')}</div>
+                  <div class="hint">${escapeHtml(c.date || '')} — ${c.parks ? 'PARKED (tie)' : 'resolved'}</div>
+                  ${c.claims.map((x) => `<div class="hint">• ${escapeHtml(x)}</div>`).join('')}
+                </div>`).join('')
+            + (list.length > 40 ? `<div class="hint">…and ${list.length - 40} more.</div>` : '');
+        } catch (err) {
+          out.innerHTML = `<div class="run-error">Could not check: ${escapeHtml(err.message)}</div>`;
         }
       }
 
@@ -2416,6 +2723,7 @@
         });
         if (typeof hideBusy === 'function') hideBusy();
         document.getElementById('budgetView').style.display = viewName === 'budget' ? 'block' : 'none';
+        document.getElementById('hintsView').style.display = viewName === 'hints' ? 'block' : 'none';
         document.getElementById('sourcesView').style.display = viewName === 'sources' ? 'block' : 'none';
         document.getElementById('ingestView').style.display = viewName === 'ingest' ? 'block' : 'none';
         document.getElementById('mappingView').style.display = viewName === 'mapping' ? 'block' : 'none';
@@ -2426,6 +2734,7 @@
         document.querySelectorAll('.nav-item').forEach((button) => {
           button.classList.toggle('active', button.dataset.view === viewName);
         });
+        if (viewName === 'hints') loadHints();
         if (viewName === 'ingest') refreshIngest();
         if (viewName === 'mapping') refreshRuns();
         if (viewName === 'debug') loadDebugLog();

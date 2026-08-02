@@ -19,12 +19,21 @@ never leave the machine** — see [Privacy](#privacy).
 
 ## How you use it
 
-The UI is a single browser tab with eight screens, worked roughly left to right.
+The UI is a single browser tab with nine screens, worked roughly left to right.
 
 **Budget Entries** — define categories with a per-unit amount and a quantity
 (e.g. "Pharm copays: 6 × $10"); the stored monthly budget is the total. Each entry
 carries an optional free-text **hints** field, which is the knowledge base that
 categorization gets better from. See [Writing hints](#writing-hints).
+
+**Hints** — every `match:` rule across every category in one place. Rules still live
+on the budget entries; this is the only view where a rule on one category can be
+compared with a rule on another. It flags rules that are **ignored** (with the reason)
+separately from rules that simply **match nothing yet**, shows how many transactions
+each currently catches, previews what a new rule would catch *before* saving — including
+whether it would take transactions from another category — and has a **conflict check**
+that finds transactions claimed by more than one category, distinguishing a tie (which
+parks the transaction) from an uneven overlap (where the longer rule silently wins).
 
 **Statement Sources** — the named accounts, each with the folder its statements
 live in. Add / edit / delete, with per-source spend exclusions shown inline.
@@ -401,10 +410,17 @@ checked 2026-07-22._
 
 ## API reference
 
-Served by eight controllers on `localhost:8080`.
+Served by nine controllers on `localhost:8080`.
 
 **Budget entries** — `GET|POST /api/entries`, `PUT|DELETE /api/entries/{id}`,
-`POST /api/entries/{id}/hints` (append a `match:` line, idempotent)
+`POST /api/entries/{id}/hints` (append a `match:` line, idempotent),
+`DELETE /api/entries/{id}/hints` `{hint}` (remove one line, leaving the entry's other
+rules and its prose untouched)
+
+**Hints** — `GET /api/hints` (every rule, with why it's ignored and how many
+transactions it matches), `GET /api/hints/conflicts` (transactions claimed by more than
+one category, flagged for whether the tie parks them), `POST /api/hints/preview`
+`{entryId, hint}` (what a rule would catch, and what it would take from elsewhere)
 
 **Settings** — `GET|PUT /api/settings` (annual budget, debug-log retention,
 notification day, backup retention)

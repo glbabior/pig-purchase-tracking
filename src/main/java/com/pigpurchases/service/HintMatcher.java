@@ -73,7 +73,7 @@ public class HintMatcher {
      * which must appear (an AND, written with '+' in a hint: {@code hpk + monthly}).
      * {@code weight} is the combined specificity used to pick the best match.
      */
-    record Pattern(BudgetEntry entry, List<String> parts, int weight, String display) {
+    public record Pattern(BudgetEntry entry, List<String> parts, int weight, String display) {
         boolean matches(String haystack) {
             if (parts.isEmpty()) {
                 return false;
@@ -199,4 +199,66 @@ public class HintMatcher {
                 ? java.util.Optional.empty()
                 : java.util.Optional.of(new Match(best.entry(), best.display()));
     }
+
+    /**
+     * EVERY pattern that matches, not just the winner — the raw material for conflict
+     * detection.
+     *
+     * <p>{@link #match} deliberately collapses this to one answer, which hides the two
+     * cases worth knowing about. When two entries tie on weight the transaction is parked
+     * with no explanation, and when they do not tie the heavier one wins silently — so a
+     * hint can be permanently neutralised by one on another category and nothing says so.
+     * Neither is visible from a screen that only ever shows the outcome.
+     */
+    public List<Pattern> allMatches(String description, String vendor) {
+        String haystack = normalize(description) + "\0" + normalize(vendor);
+        List<Pattern> hits = new ArrayList<>();
+        for (Pattern p : patterns) {
+            if (p.matches(haystack)) {
+                hits.add(p);
+            }
+        }
+        return hits;
+    }
+
+    /** Why a {@code match:} line is unusable, or null when it is fine. */
+    public record HintProblem(String hint, String problem) {}
+
+    /**
+     * Check a {@code match:} line against the same rules {@link #addHint} applies, so the
+     * user can be told <i>why</i> a hint does nothing.
+     *
+     * <p>{@code addHint} discards an unusable hint silently — deliberately, because a rule
+     * the app cannot honour as written should produce no rule at all rather than a broader
+     * one. But silence means a hint that looks present in the entry does nothing, with no
+     * way to find out. This is the same logic, returning the reason instead of dropping it.
+     */
+    public static HintProblem validate(String rawHint) {
+        String raw = rawHint == null ? "" : rawHint.trim();
+        if (raw.isEmpty()) {
+            return new HintProblem(raw, "empty");
+        }
+        String[] pieces = raw.split("\\+");
+        int minPart = pieces.length > 1 ? MIN_COMPOSITE_PART_LENGTH : MIN_HINT_PART_LENGTH;
+        for (String piece : pieces) {
+            String normalized = normalize(piece);
+            if (normalized.length() < minPart) {
+                String shown = piece.trim().isEmpty() ? "(blank)" : piece.trim();
+                return new HintProblem(raw, pieces.length > 1
+                        ? "the part \"" + shown + "\" has fewer than " + MIN_COMPOSITE_PART_LENGTH
+                          + " letters or digits, so the whole rule is ignored"
+                        : "fewer than " + MIN_HINT_PART_LENGTH + " letters or digits, so it would"
+                          + " match too much to trust");
+            }
+        }
+        return null;
+    }
+
+    /** A throwaway matcher for one candidate rule, used to preview what it would catch. */
+    public static HintMatcher forSingleHint(BudgetEntry entry, String rawHint) {
+        HintMatcher m = new HintMatcher(List.of());
+        m.addHint(entry, rawHint);
+        return m;
+    }
+
 }
