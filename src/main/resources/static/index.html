@@ -102,6 +102,28 @@
       th { font-size: 0.9rem; color: #8a4b00; }
       th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
       th.sortable:hover { text-decoration: underline; }
+
+      /* A table that scrolls inside itself, with the header row pinned to the top.
+         Capped in vh rather than px so a long table stays readable on a laptop and still uses
+         a tall screen. max-height, not height: a short table takes only the room it needs
+         instead of leaving a box of empty space under three rows.
+         The sticky cells need an opaque background or rows show through them, and under
+         border-collapse a sticky cell LOSES its border — the browser has already collapsed it
+         into a neighbour that scrolls away — so the rule is drawn as an inset shadow instead. */
+      .table-scroll { max-height: 60vh; overflow: auto; border: 1px solid #f0e2c6;
+                      border-radius: 10px; margin-top: 0.5rem; }
+      /* No rows: collapse the whole thing rather than drawing a bordered box with a header
+         and nothing under it, directly above a message saying there is nothing here. Purely
+         cosmetic — a browser without :has() shows the empty box, which is what it did before. */
+      .table-scroll:has(tbody:empty) { display: none; }
+      .table-scroll table { margin-top: 0; }
+      .table-scroll thead th { position: sticky; top: 0; z-index: 2; background: #fff;
+                               box-shadow: inset 0 -1px 0 #eadfd0; }
+      /* Totals pin to the BOTTOM. Left in the tbody they scroll away, and the total is the
+         one row on these screens that should always be readable. */
+      .table-scroll tfoot td { position: sticky; bottom: 0; z-index: 2; background: #fff;
+                               box-shadow: inset 0 1px 0 #eadfd0; border-bottom: none;
+                               font-weight: bold; }
       th .arrow { color: #b57a2b; }
       .muted { color: #7a6753; font-size: 0.9rem; }
       .chip { display: inline-block; background: #f4e7d5; color: #6b3b00; border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.8rem; margin: 0.1rem 0.15rem 0.1rem 0; cursor: help; }
@@ -325,17 +347,19 @@
               <div class="toolbar">
                 <button class="primary" id="addItemBtn">Add Item</button>
               </div>
-              <table>
-                <thead>
-                  <tr>
-                    <th class="sortable" data-sort="title" data-label="Title">Title</th>
-                    <th class="sortable" data-sort="quantity" data-label="Quantity">Quantity</th>
-                    <th class="sortable" data-sort="monthlyBudget" data-label="Monthly Budget">Monthly Budget</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody id="budgetTableBody"></tbody>
-              </table>
+              <div class="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th class="sortable" data-sort="title" data-label="Title">Title</th>
+                      <th class="sortable" data-sort="quantity" data-label="Quantity">Quantity</th>
+                      <th class="sortable" data-sort="monthlyBudget" data-label="Monthly Budget">Monthly Budget</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="budgetTableBody"></tbody>
+                </table>
+              </div>
               <div id="emptyState" class="empty">No budget items yet. Add your first entry to get started.</div>
             </section>
 
@@ -354,17 +378,19 @@
                 <button class="secondary" id="checkConflictsBtn">Check for conflicts</button>
               </div>
               <div id="hintsConflicts" style="display:none;margin:0.6rem 0;"></div>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Category</th>
-                    <th>Hints</th>
-                    <th>Transactions matched</th>
-                    <th>Needs attention</th>
-                  </tr>
-                </thead>
-                <tbody id="hintsBody"></tbody>
-              </table>
+              <div class="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Category</th>
+                      <th>Hints</th>
+                      <th>Transactions matched</th>
+                      <th>Needs attention</th>
+                    </tr>
+                  </thead>
+                  <tbody id="hintsBody"></tbody>
+                </table>
+              </div>
               <div id="hintsEmptyState" class="empty" style="display:none">
                 No budget categories yet. Add one on the Budget Entries screen first.
               </div>
@@ -3478,14 +3504,17 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
         const totCls = Number(state.totalVariance) < 0 ? 'over' : 'under';
         const totalCount = sorted.reduce((sum, c) => sum + Number(c.count || 0), 0);
         const container = document.getElementById(containerId);
-        container.innerHTML = `<table class="analysis-table">
+        // Total in a tfoot, not as the last tbody row: the table scrolls, and the total is the
+        // one row here that should stay on screen whatever you have scrolled to.
+        container.innerHTML = `<div class="table-scroll"><table class="analysis-table">
           <thead><tr>${head}</tr></thead>
-          <tbody>${rows}
+          <tbody>${rows}</tbody>
+          <tfoot>
             <tr class="total-row"><td>Total</td><td class="num">${totalCount}</td>
             <td class="num">${formatCurrency(state.totalBudget)}</td>
             <td class="num">${formatCurrency(state.totalActual)}</td>
             <td class="num ${totCls}">${formatCurrency(state.totalVariance)}</td><td></td></tr>
-          </tbody></table>`;
+          </tfoot></table></div>`;
 
         container.querySelectorAll('th[data-sort]').forEach((th) => {
           th.addEventListener('click', () => {
