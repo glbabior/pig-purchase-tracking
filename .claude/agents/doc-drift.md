@@ -53,8 +53,16 @@ Check every one of these:
    and its own diagrams, and nothing regenerates it automatically.
 
    Report a stale HTML as `Change docs/architecture.html:NNN`, the same as any
-   other file. Do not comment on the PDF: it is generated from the HTML, so the
-   HTML is the only place a fix belongs.
+   other file. Do not comment on `docs/ARCHITECTURE.pdf` itself — it is generated
+   from the HTML and is not tracked in git, so the HTML is the only place a fix
+   belongs. If you find nothing wrong with it, say so explicitly under "What I
+   checked and found correct"; silence there reads as "not looked at", which is
+   how it drifted for a week in the first place.
+
+   End your report with one line stating whether `docs/architecture.html` needs any
+   change. The caller rebuilds the PDF after applying your findings, and that line
+   is what tells them whether they are rebuilding a corrected page or an unchanged
+   one.
 
 ## Known invariants (so you do not rediscover them every run)
 

@@ -11,9 +11,21 @@ the handful of transactions the deterministic rules can't place. **Dollar amount
 never leave the machine** — see [Privacy](#privacy).
 
 > **Design documentation lives in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** —
-> runtime topology, the layer map, UML and ER diagrams, and the reasoning behind
-> the key invariants. This file covers what the app does, how to run it, and where
-> it currently stands.
+> runtime topology, the layer map, UML class / state / ER diagrams, and the
+> reasoning behind the key invariants. This file covers what the app does, how to
+> run it, and where it currently stands.
+>
+> For a version you can read away from the repo or hand to someone, build the PDF:
+>
+> ```
+> npm install --prefix docs mermaid@11     # once
+> node docs/build-architecture-pdf.mjs     # writes docs/ARCHITECTURE.pdf
+> ```
+>
+> It renders [docs/architecture.html](docs/architecture.html) with the diagrams
+> drawn. The PDF is deliberately **not** committed — a checked-in copy would sit
+> there going quietly stale, which is the one thing an architecture document must
+> not do.
 
 ---
 

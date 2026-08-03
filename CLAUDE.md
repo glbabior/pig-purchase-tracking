@@ -9,27 +9,48 @@ is not done until the docs have been checked against it:
   the `_Code-verified <date>_` stamp
 - `docs/ARCHITECTURE.md` — diagrams, the layer map, and the invariants in §7
 - `docs/architecture.html` — the **shareable** version of the same material, with
-  rendered diagrams. It is the source for both the published artifact and the PDF.
+  rendered diagrams. It is the source `docs/ARCHITECTURE.pdf` is built from.
 
-### The architecture document has three copies. Update all three.
+### The architecture document says everything twice. Update both.
 
-`ARCHITECTURE.md`, `architecture.html`, and the PDF built from it say the same
-things in three places. Only the markdown was in this checklist, so the HTML went
-**a week** out of date without anyone noticing — long enough to show a status enum
-missing a constant and a privacy claim that was no longer true.
+`ARCHITECTURE.md` and `architecture.html` cover the same ground in two files with
+their own prose and their own diagrams — nothing generates one from the other. Only
+the markdown was in this checklist at first, so the HTML went **a week** out of date
+without anyone noticing: long enough to show a status enum missing a constant, a
+package table missing three types, and a privacy claim that had stopped being true.
 
-After changing `docs/architecture.html`:
+### Rebuilding the PDF is part of running doc-drift
+
+`docs/ARCHITECTURE.pdf` is **generated and gitignored** — a build output, not a
+tracked file, so it can never be the stale copy that contradicts the other two.
+
+Every `doc-drift` run ends with:
 
 ```
 node docs/build-architecture-pdf.mjs      # rewrites docs/ARCHITECTURE.pdf
 ```
 
-It refuses to write the PDF if any diagram fails to render, because mermaid draws a
-"Syntax error" graphic in place of a broken diagram and the result otherwise looks
-finished.
+Run it after applying the run's findings, so the PDF reflects the corrected page
+rather than the one the agent complained about. Run it even when the agent found
+nothing in `architecture.html` — it is a few seconds, and the alternative is
+deciding each time whether the file changed enough to matter.
 
-Then republish the artifact so the shared link matches — same URL, passed as `url`:
-`https://claude.ai/code/artifact/85a5e20c-a856-4beb-9095-819f2a91c858`
+It refuses to write the PDF if any diagram fails to render. Counting the rendered
+diagrams is not enough on its own: mermaid answers a diagram it cannot parse with an
+SVG containing a bomb icon and the words "Syntax error in text", so the count comes
+back complete and the PDF looks finished. The check looks for that marker.
+
+Needs `npm install --prefix docs mermaid@11` once on a fresh clone.
+
+**To commit a copy on purpose** — for a release, or to hand someone the file through
+the repo — `git add -f docs/ARCHITECTURE.pdf`. Do that only when explicitly asked;
+the default is that it stays untracked.
+
+There is a published artifact of this page at
+`https://claude.ai/code/artifact/85a5e20c-a856-4beb-9095-819f2a91c858`. It is **no
+longer maintained** — the PDF in `docs/` is the shareable copy now. Do not republish
+it as part of doc upkeep. Treat that link as a snapshot of 2026-08-03, and assume it
+is wrong about anything changed since.
 
 Update whatever drifted. Move the `Code-verified` stamp only for what was
 actually verified this session, not as a formality.
