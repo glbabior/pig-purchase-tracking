@@ -25,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.nio.file.Path;
 import java.util.Set;
 
 /**
@@ -63,6 +64,12 @@ public class MappingController {
                 f.put("sourceId", source.getId());
                 f.put("sourceName", source.getName());
                 f.put("fileName", imp.getFileName());
+                // The on-disk path, for the file link's hover text. The screen shows only an
+                // icon, and an icon that launches something should say what it will launch
+                // before you click it. Composed the same way BudgetController resolves it.
+                String rel = imp.getRelativePath() != null ? imp.getRelativePath() : imp.getFileName();
+                f.put("fullPath", source.getFolderPath() == null ? rel
+                        : Path.of(source.getFolderPath()).resolve(rel).toString());
                 f.put("statementDate", imp.getStatementDate() != null ? imp.getStatementDate().toString() : null);
                 f.put("transactionCount", imp.getTransactionCount());
                 Optional<AnalysisRun> run = mappingService.consumingRun(imp.getId());

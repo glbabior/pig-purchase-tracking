@@ -124,6 +124,20 @@
       .table-scroll tfoot td { position: sticky; bottom: 0; z-index: 2; background: #fff;
                                box-shadow: inset 0 1px 0 #eadfd0; border-bottom: none;
                                font-weight: bold; }
+
+      /* Mapping: one row per ingested statement. Eleven columns is a lot for 1000px, so the
+         cells are tight and the buttons small; anything that still will not fit scrolls
+         sideways inside .table-scroll rather than squashing the numbers. */
+      .runs-table th, .runs-table td { padding: 0.3rem 0.5rem; vertical-align: middle; }
+      .runs-table th.num, .runs-table td.num { text-align: right; }
+      .runs-table td.nowrap, .runs-table th { white-space: nowrap; }
+      button.btn-sm { padding: 0.3rem 0.6rem; font-size: 0.82rem; white-space: nowrap; }
+      /* The file link. An icon rather than the file name, which is long, repetitive, and
+         already identified by the source and date beside it — the name lives in the tooltip
+         along with the rest of the path. */
+      .icon-btn { background: none; border: none; padding: 0.1rem 0.2rem; cursor: pointer;
+                  font-size: 1.05rem; line-height: 1; border-radius: 6px; }
+      .icon-btn:hover { background: #f4e7d5; }
       th .arrow { color: #b57a2b; }
       .muted { color: #7a6753; font-size: 0.9rem; }
       .chip { display: inline-block; background: #f4e7d5; color: #6b3b00; border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.8rem; margin: 0.1rem 0.15rem 0.1rem 0; cursor: help; }
@@ -144,10 +158,6 @@
       .run-source-pick { margin-top: 0.9rem; display: flex; flex-direction: column; gap: 0.3rem; }
       .run-source-pick select { border: 1px solid #ddd; padding: 0.6rem; border-radius: 8px; font: inherit; }
       .run-source-pick .none { color: #b3261e; font-size: 0.85rem; }
-      .run-card { padding: 1rem 0; border-bottom: 1px solid #eee; }
-      .run-card:last-child { border-bottom: none; }
-      .run-card h3 { margin: 0 0 0.3rem; color: #6b3b00; }
-      .run-card .counts { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.5rem 0; }
       .badge { display: inline-block; border-radius: 999px; padding: 0.15rem 0.65rem; font-size: 0.8rem; }
       .badge.mapped { background: #e4f0e4; color: #2f7d32; }
       /* A table cell that opens something, styled as a link rather than a button. */
@@ -447,7 +457,24 @@
                 <button class="secondary" id="reviewManualBtn">Review manual entries</button>
               </div>
               <div id="aiModeNote" class="hint" style="margin:0.4rem 0;"></div>
-              <div id="runsList"></div>
+              <div class="table-scroll">
+                <table class="runs-table">
+                  <thead>
+                    <tr>
+                      <th>Source</th>
+                      <th>Date</th>
+                      <th title="Open the statement file">File</th>
+                      <th class="num">Txns</th>
+                      <th>Mapped on</th>
+                      <th class="num">Mapped</th>
+                      <th class="num">Parked</th>
+                      <th class="num">Excluded</th>
+                      <th colspan="3"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="runsBody"></tbody>
+                </table>
+              </div>
               <div id="runsEmptyState" class="empty">No statements ingested yet. Load statements on the Ingest screen, then map them here.</div>
             </section>
 
@@ -2297,7 +2324,7 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
       }
 
       function renderRuns() {
-        const container = document.getElementById('runsList');
+        const container = document.getElementById('runsBody');
         const empty = document.getElementById('runsEmptyState');
         const files = mappingFilesData.files || [];
         empty.style.display = files.length ? 'none' : 'block';
@@ -2312,9 +2339,9 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
         const ai = document.getElementById('aiModeNote');
         if (ai) {
           ai.innerHTML = mappingFilesData.aiAvailable
-            ? '✓ AI categorization is <strong>on</strong>. Merchants no rule can place are sent'
-              + ' to Claude — descriptions and vendor names only, never amounts — and each'
-              + ' answer is remembered, so a merchant is paid for at most once.'
+            ? '✓ AI categorization is <strong>on</strong>. Transactions that no rule can place'
+              + ' are sent to Claude API — descriptions and vendor names only, never amounts —'
+              + ' and each answer is remembered.'
             : '⚠ AI categorization is <strong>off</strong> (no API key found). Only your hints'
               + ' and previously remembered answers will place anything; everything else parks'
               + ' as “Other”.';
@@ -2323,27 +2350,42 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
 
         container.innerHTML = files.map((f) => {
           const label = `${escapeHtml(f.sourceName || '')} · ${formatMmDdYy(f.statementDate)}`;
-          const status = f.mapped
-            ? `<span class="badge mapped">${f.mappedCount} mapped</span>`
-              + (f.parkedCount ? `<span class="badge parked">${f.parkedCount} parked</span>` : '')
-              + `<span class="badge excluded">${f.excludedCount} excluded</span>`
-            : '<span class="badge parked">not mapped yet</span>';
-          const actions = f.mapped
-            ? `<button class="secondary" data-review="${f.runId}" data-label="${label}">Review all</button>
-               <button class="secondary" data-remap-one="${f.importId}">Re-map</button>
-               <button class="secondary" data-del-run="${f.runId}">Delete</button>`
-            : `<button class="secondary" data-map-one="${f.importId}">Map this file</button>`;
-          // When it was last mapped. Without it you cannot tell whether a statement has
-          // been mapped since you changed a hint, added a category, or turned AI on.
-          const lastRun = f.mapped && f.mappedAt
-            ? ` · mapped ${formatLogTime(f.mappedAt)}`
-            : '';
-          return `<div class="run-card">
-            <h3>${label}</h3>
-            <div class="muted">${escapeHtml(f.fileName || '')} · ${f.transactionCount} txns${lastRun}</div>
-            <div class="counts">${status}</div>
-            <div class="actions">${actions}</div>
-          </div>`;
+          // The whole path in the tooltip: the cell shows an icon, and an icon that launches
+          // something should say what it will launch before you click it. Falls back to the
+          // file name if the source folder is somehow unset.
+          const path = f.fullPath || f.fileName || '';
+          const link = `<button class="icon-btn" data-open-file="${f.importId}"
+                          title="Open ${escapeHtml(path)}">📄</button>`;
+
+          // An unmapped statement has no run, so there is nothing to count and nothing to
+          // review, re-map or delete. Em-dashes rather than zeros: "0 parked" and "not mapped
+          // yet, so unknown" are different facts and a zero would assert the wrong one.
+          if (!f.mapped) {
+            return `<tr>
+              <td>${escapeHtml(f.sourceName || '')}</td>
+              <td class="nowrap">${formatMmDdYy(f.statementDate)}</td>
+              <td>${link}</td>
+              <td class="num">${f.transactionCount}</td>
+              <td colspan="4"><span class="badge parked">not mapped yet</span></td>
+              <td colspan="3"><button class="secondary btn-sm"
+                    data-map-one="${f.importId}">Map this file</button></td>
+            </tr>`;
+          }
+          return `<tr>
+            <td>${escapeHtml(f.sourceName || '')}</td>
+            <td class="nowrap">${formatMmDdYy(f.statementDate)}</td>
+            <td>${link}</td>
+            <td class="num">${f.transactionCount}</td>
+            <td class="nowrap">${f.mappedAt ? formatLogTime(f.mappedAt) : '—'}</td>
+            <td class="num">${f.mappedCount}</td>
+            <td class="num">${f.parkedCount ? `<span class="badge parked">${f.parkedCount}</span>`
+                                            : f.parkedCount}</td>
+            <td class="num">${f.excludedCount}</td>
+            <td><button class="secondary btn-sm" data-review="${f.runId}"
+                  data-label="${label}">Review all</button></td>
+            <td><button class="secondary btn-sm" data-remap-one="${f.importId}">Re-map</button></td>
+            <td><button class="secondary btn-sm" data-del-run="${f.runId}">Delete</button></td>
+          </tr>`;
         }).join('');
 
         container.querySelectorAll('[data-review]').forEach((b) =>
@@ -2354,6 +2396,30 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
           b.addEventListener('click', () => doRemap([Number(b.dataset.mapOne)])));
         container.querySelectorAll('[data-del-run]').forEach((b) =>
           b.addEventListener('click', () => deleteRunById(Number(b.dataset.delRun))));
+        container.querySelectorAll('[data-open-file]').forEach((b) =>
+          b.addEventListener('click', () => openStatementFile(Number(b.dataset.openFile), b.title)));
+      }
+
+      /**
+       * Launch a statement in the machine's default PDF app.
+       *
+       * <p>Goes through the server rather than a file:// link, which browsers refuse to follow
+       * from an http:// page — it would fail silently, which is the worst possible outcome for
+       * a button. The endpoint takes an import ID and resolves the path itself, so no path
+       * from the page is ever handed to the shell.
+       */
+      async function openStatementFile(importId, path) {
+        try {
+          const r = await fetch(`/api/imports/${importId}/open`, { method: 'POST' });
+          if (!r.ok) {
+            const payload = await r.json().catch(() => null);
+            throw new Error(payload && (payload.error || payload.message)
+              ? (payload.error || payload.message) : 'HTTP ' + r.status);
+          }
+        } catch (err) {
+          alert('Could not open the statement: ' + err.message
+            + (path ? '\n\n' + path : ''));
+        }
       }
 
       async function mapUnmapped() {

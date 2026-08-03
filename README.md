@@ -50,8 +50,13 @@ import rather than duplicating it. This screen is also where you add a **manual
 transaction** — spend that never hits a statement (a Venmo balance, cash) — with a
 same-day duplicate check.
 
-**Mapping** — the categorization screen. Every ingested statement is listed with
-its mapped / parked / excluded counts. **Map Transactions** maps everything not
+**Mapping** — the categorization screen. One scrolling table, header pinned, with a
+row per ingested statement: source, statement date, a 📄 icon that opens the file in
+your default PDF app (the whole path is in its hover text), transaction count, when
+it was last mapped, its mapped / parked / excluded counts, and per-row **Review all**,
+**Re-map** and **Delete**. A statement nothing has mapped yet shows em-dashes rather
+than zeros — "0 parked" and "not mapped yet, so unknown" are different facts.
+**Map Transactions** maps everything not
 yet mapped; **Re-run mapping** re-does chosen statements. From here you also
 review the parked "Other" bucket, review all transactions in a run with search,
 review manual entries, and work through **potential duplicates** (same date + same
@@ -448,8 +453,9 @@ escape the source folder are rejected), `POST /api/statement-sources/{id}/ingest
 `GET /api/transactions/manual/run`, `DELETE /api/transactions/{id}`,
 `GET /api/transactions/duplicates`, `POST /api/transactions/duplicates/dismiss`
 
-**Mapping** — `GET /api/mapping/files` (every statement with its mapped state and
-counts, plus `aiAvailable`), `POST /api/mapping/map-unmapped`,
+**Mapping** — `GET /api/mapping/files` (every statement with its mapped state,
+counts, and `fullPath` for the file link, plus `aiAvailable`),
+`POST /api/mapping/map-unmapped`,
 `POST /api/mapping/remap` `{importIds}`, `POST /api/mapping/migrate` (one-time,
 idempotent: splits legacy month-runs into per-file runs),
 `GET /api/analysis-runs/{id}/mappings?status=PARKED`,
