@@ -8,6 +8,28 @@ is not done until the docs have been checked against it:
 - `README.md` — the API reference, the Working / Known gaps / Planned lists, and
   the `_Code-verified <date>_` stamp
 - `docs/ARCHITECTURE.md` — diagrams, the layer map, and the invariants in §7
+- `docs/architecture.html` — the **shareable** version of the same material, with
+  rendered diagrams. It is the source for both the published artifact and the PDF.
+
+### The architecture document has three copies. Update all three.
+
+`ARCHITECTURE.md`, `architecture.html`, and the PDF built from it say the same
+things in three places. Only the markdown was in this checklist, so the HTML went
+**a week** out of date without anyone noticing — long enough to show a status enum
+missing a constant and a privacy claim that was no longer true.
+
+After changing `docs/architecture.html`:
+
+```
+node docs/build-architecture-pdf.mjs      # rewrites docs/ARCHITECTURE.pdf
+```
+
+It refuses to write the PDF if any diagram fails to render, because mermaid draws a
+"Syntax error" graphic in place of a broken diagram and the result otherwise looks
+finished.
+
+Then republish the artifact so the shared link matches — same URL, passed as `url`:
+`https://claude.ai/code/artifact/85a5e20c-a856-4beb-9095-819f2a91c858`
 
 Update whatever drifted. Move the `Code-verified` stamp only for what was
 actually verified this session, not as a formality.

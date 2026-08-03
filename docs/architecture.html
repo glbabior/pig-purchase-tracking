@@ -1,0 +1,861 @@
+<title>PigPurchases — Architecture</title>
+<style>
+  :root {
+    --ground: #e9edf1;
+    --surface: #ffffff;
+    --ink: #1f2933;
+    --muted: #5b6873;
+    --hairline: #d3dae0;
+    --accent: #b6560c;
+    --accent-ink: #b6560c;
+    --accent-soft: rgba(182, 86, 12, 0.10);
+    --plate: #f6f8fa;
+    --plate-line: #dde3e9;
+    --plate-ink: #243039;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+    --measure: 78ch;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #11161b;
+      --surface: #1a2128;
+      --ink: #dbe3ea;
+      --muted: #8695a1;
+      --hairline: #2b353f;
+      --accent: #e07a2b;
+      --accent-ink: #f08a3a;
+      --accent-soft: rgba(224, 122, 43, 0.14);
+      --plate: #f6f8fa;
+      --plate-line: #dde3e9;
+      --plate-ink: #243039;
+    }
+  }
+  :root[data-theme="light"] {
+    --ground: #e9edf1; --surface: #ffffff; --ink: #1f2933; --muted: #5b6873;
+    --hairline: #d3dae0; --accent: #b6560c; --accent-ink: #b6560c; --accent-soft: rgba(182,86,12,0.10);
+  }
+  :root[data-theme="dark"] {
+    --ground: #11161b; --surface: #1a2128; --ink: #dbe3ea; --muted: #8695a1;
+    --hairline: #2b353f; --accent: #e07a2b; --accent-ink: #f08a3a; --accent-soft: rgba(224,122,43,0.14);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 1.0625rem;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---- Header ---- */
+  header.top {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    padding: 0.7rem clamp(1rem, 4vw, 2.5rem);
+    background: color-mix(in srgb, var(--ground) 86%, transparent);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .hdr-actions { display: flex; gap: 0.5rem; flex: none; }
+  .brand { display: flex; align-items: baseline; gap: 0.6rem; min-width: 0; }
+  .brand .mark {
+    font-family: var(--mono); font-weight: 700; font-size: 0.95rem; letter-spacing: 0.02em;
+    color: var(--ink);
+  }
+  .brand .mark b { color: var(--accent-ink); }
+  .brand .sub {
+    font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--muted); white-space: nowrap;
+  }
+  .theme-toggle {
+    font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--muted); background: transparent; border: 1px solid var(--hairline);
+    border-radius: 999px; padding: 0.4rem 0.8rem; cursor: pointer; transition: color .15s, border-color .15s;
+  }
+  .theme-toggle:hover { color: var(--accent-ink); border-color: var(--accent); }
+  .theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ---- Layout ---- */
+  main { max-width: var(--measure); margin: 0 auto; padding: clamp(1.5rem, 4vw, 3.5rem) clamp(1rem, 4vw, 2rem) 6rem; }
+  .lede { max-width: var(--measure); }
+
+  h1 {
+    font-size: clamp(2rem, 5vw, 2.9rem); line-height: 1.05; margin: 0.2rem 0 0.6rem;
+    letter-spacing: -0.02em; text-wrap: balance; font-weight: 800;
+  }
+  .eyebrow {
+    font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--accent-ink); margin: 0;
+  }
+  .standfirst { font-size: 1.18rem; color: var(--ink); margin: 0 0 1.6rem; }
+  .standfirst .em { color: var(--accent-ink); font-weight: 600; }
+
+  .facts {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px;
+    background: var(--hairline); border: 1px solid var(--hairline); border-radius: 10px; overflow: hidden;
+    margin: 1.5rem 0 2.5rem;
+  }
+  .fact { background: var(--surface); padding: 0.85rem 1rem; }
+  .fact dt { font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin: 0 0 0.25rem; }
+  .fact dd { margin: 0; font-size: 0.92rem; font-weight: 600; }
+
+  section { margin-top: 3.2rem; scroll-margin-top: 4.5rem; }
+  h2 {
+    font-size: 1.6rem; letter-spacing: -0.01em; margin: 0 0 0.4rem; font-weight: 750; text-wrap: balance;
+    display: flex; align-items: baseline; gap: 0.7rem;
+  }
+  h2 .num { font-family: var(--mono); font-size: 1rem; font-weight: 700; color: var(--accent-ink); }
+  h3 { font-size: 1.15rem; margin: 2rem 0 0.4rem; font-weight: 700; }
+  h3 .tag { font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.12em; color: var(--muted); text-transform: uppercase; margin-left: 0.5rem; }
+  p { margin: 0.7rem 0; }
+  a { color: var(--accent-ink); text-underline-offset: 2px; }
+  strong { font-weight: 700; }
+  code {
+    font-family: var(--mono); font-size: 0.86em; background: var(--accent-soft);
+    color: var(--accent-ink); padding: 0.08em 0.36em; border-radius: 4px;
+  }
+  .rule { border: none; border-top: 1px solid var(--hairline); margin: 3rem 0 0; }
+
+  ul { padding-left: 1.1rem; }
+  li { margin: 0.45rem 0; }
+
+  /* ---- Tables ---- */
+  .table-wrap { overflow-x: auto; margin: 1.2rem 0; border: 1px solid var(--hairline); border-radius: 10px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; min-width: 520px; }
+  th, td { text-align: left; padding: 0.6rem 0.85rem; border-bottom: 1px solid var(--hairline); vertical-align: top; }
+  thead th {
+    font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--muted); background: var(--accent-soft); border-bottom: 1px solid var(--hairline);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td code { white-space: nowrap; }
+
+  /* ---- Diagram plates (always light: mermaid renders on paper) ---- */
+  figure.plate { margin: 1.6rem 0 2rem; border: 1px solid var(--plate-line); border-radius: 12px; overflow: hidden; background: var(--plate); }
+  figure.plate figcaption {
+    display: flex; align-items: center; gap: 0.6rem;
+    font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--plate-ink); background: #eef2f6; padding: 0.55rem 0.9rem; border-bottom: 1px solid var(--plate-line);
+  }
+  figure.plate figcaption .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+  .plate-body { overflow-x: auto; padding: 1.4rem 1rem; }
+  pre.mermaid { margin: 0; text-align: center; min-width: 480px; color: var(--plate-ink); }
+
+  /* ---- Callout ---- */
+  .note {
+    border-left: 3px solid var(--accent); background: var(--accent-soft);
+    padding: 0.85rem 1.1rem; border-radius: 0 8px 8px 0; margin: 1.4rem 0; font-size: 0.95rem;
+  }
+  .note b { color: var(--accent-ink); }
+
+  footer { max-width: var(--measure); margin: 4rem auto 0; padding: 1.4rem clamp(1rem,4vw,2rem); border-top: 1px solid var(--hairline); font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.06em; color: var(--muted); }
+
+  /* ---- Click-to-enlarge affordance ---- */
+  figure.plate .plate-body { cursor: zoom-in; }
+  figcaption .expand {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 0.3rem;
+    color: var(--accent); font-size: 0.62rem; letter-spacing: 0.12em; white-space: nowrap;
+  }
+
+  /* ---- Lightbox ---- */
+  .lb { position: fixed; inset: 0; z-index: 60; display: none; }
+  .lb.open { display: flex; flex-direction: column; }
+  .lb .scrim { position: absolute; inset: 0; z-index: 0; background: rgba(12, 16, 20, 0.84); }
+  .lb .bar {
+    position: relative; z-index: 2; display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.7rem clamp(0.8rem, 3vw, 1.4rem); color: #eef2f6;
+    font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.08em;
+  }
+  .lb .bar .title { margin-right: auto; text-transform: none; opacity: 0.9; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lb .bar button {
+    font-family: var(--mono); font-size: 0.74rem; color: #eef2f6; background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 6px; padding: 0.32rem 0.7rem; cursor: pointer;
+    flex: none;
+  }
+  .lb .bar button:hover { background: rgba(255, 255, 255, 0.18); }
+  .lb .bar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .lb .canvas {
+    position: relative; z-index: 1; flex: 1; overflow: auto;
+    margin: 0 clamp(0.6rem, 3vw, 1.4rem) clamp(0.6rem, 3vw, 1.4rem);
+    background: #f6f8fa; border-radius: 10px; padding: 1.5rem;
+    -webkit-overflow-scrolling: touch;
+  }
+  .lb .canvas svg { display: block; max-width: none !important; height: auto; }
+
+  /* ---- Print: browser "Save as PDF" ---- */
+  @media print {
+    :root, :root[data-theme="dark"], :root[data-theme="light"] {
+      --ground: #ffffff; --surface: #ffffff; --ink: #1a1a1a; --muted: #555555; --hairline: #bbbbbb;
+      --accent: #a8500a; --accent-ink: #a8500a; --accent-soft: #f3e7dc; --plate: #ffffff; --plate-line: #cccccc;
+    }
+    body { background: #fff; }
+    header.top { position: static; -webkit-backdrop-filter: none; backdrop-filter: none; }
+    .hdr-actions, .theme-toggle, figcaption .expand { display: none !important; }
+    main { max-width: none; }
+    figure.plate .plate-body { overflow: visible; cursor: auto; }
+    figure.plate, section, tr, .note, .facts { break-inside: avoid; }
+    h2, h3 { break-after: avoid; }
+    .lb { display: none !important; }
+    a { color: #a8500a; }
+  }
+</style>
+
+<header class="top">
+  <div class="brand">
+    <span class="mark">🐷 Pig<b>Purchases</b></span>
+    <span class="sub">Architecture Reference</span>
+  </div>
+  <div class="hdr-actions">
+    <button class="theme-toggle" id="pdfBtn" type="button">↓ Save as PDF</button>
+    <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle color theme">Theme</button>
+  </div>
+</header>
+
+<main>
+  <div class="lede">
+    <p class="eyebrow">Local-first budgeting · Spring Boot · Java 25</p>
+    <h1>How PigPurchases is put together</h1>
+    <p class="standfirst">A single-user desktop app that parses bank &amp; card statement PDFs, categorizes every
+      transaction against your budget, and tracks actual spend to budget. It runs entirely on your machine — the
+      <span class="em">only</span> thing that ever leaves it is a transaction's description and vendor text, with
+      account identifiers stripped out of both, sent to the Claude API to place the handful of charges the
+      deterministic rules can't.</p>
+
+    <dl class="facts">
+      <div class="fact"><dt>Runtime</dt><dd>Spring Boot 3.5.16 · Java 25</dd></div>
+      <div class="fact"><dt>Server</dt><dd>Embedded Tomcat · :8080</dd></div>
+      <div class="fact"><dt>Persistence</dt><dd>H2 file DB · JPA / Hibernate</dd></div>
+      <div class="fact"><dt>Schema</dt><dd>ddl-auto=update · no migrations</dd></div>
+      <div class="fact"><dt>Client</dt><dd>index.html + app-math.js · vanilla JS</dd></div>
+      <div class="fact"><dt>Entities</dt><dd>12 · one H2 file</dd></div>
+    </dl>
+  </div>
+
+  <section id="topology">
+    <h2><span class="num">§1</span> Runtime topology</h2>
+    <p>You run <code>PigPurchasesApplication</code>; a browser tab is the entire client. No multi-user, no cloud, and
+      no login. Three facts anchor everything else:</p>
+    <ul>
+      <li><strong>The PDFs are the source of truth, not the DB.</strong> Everything in the database can be rebuilt by
+        re-ingesting the folders — which makes the data-safety design a convenience, not a single point of failure.</li>
+      <li><strong><code>SwitchableDataSource</code> sits between JPA and H2</strong> so a restore can be <em>previewed</em>
+        against a backup without touching the live database until you commit.</li>
+      <li><strong>No login is not the same as no protection.</strong> A password would be theatre for one person on
+        their own machine, but any web page that browser has open could still <em>send</em> requests here.
+        <code>LocalOriginFilter</code> refuses state-changing requests that name a foreign origin, and sets the CSP
+        and anti-framing headers. See §8.</li>
+    </ul>
+
+    <figure class="plate">
+      <figcaption><span class="dot"></span> Fig. 1 — Process &amp; data-flow topology</figcaption>
+      <div class="plate-body">
+<pre class="mermaid">
+flowchart LR
+    subgraph Browser["Browser tab (the entire client)"]
+        UI["static/index.html&lt;br/&gt;vanilla JS + fetch()"]
+    end
+    subgraph JVM["Single Spring Boot process — localhost:8080"]
+        direction TB
+        C["@RestController layer&lt;br/&gt;/api/**"]
+        S["@Service layer&lt;br/&gt;business logic"]
+        R["Spring Data JPA repositories"]
+        DS["SwitchableDataSource&lt;br/&gt;live to restore-preview"]
+    end
+    H2[("H2 file DB&lt;br/&gt;~/.pigpurchases/")]
+    BK[("SQL backups&lt;br/&gt;~/pigpurchases-backups/")]
+    PDF["Statement PDF folders&lt;br/&gt;(read-only source of truth)"]
+    API["Claude API&lt;br/&gt;(categorization only)"]
+    UI --"JSON over HTTP"--&gt; C
+    C --&gt; S --&gt; R --&gt; DS --&gt; H2
+    S --"parse PDFs"--&gt; PDF
+    S --"descriptions + vendors only"--&gt; API
+    S --"daily consistent dump"--&gt; BK
+    BK -."restore w/ preview".-&gt; DS
+</pre>
+      </div>
+    </figure>
+  </section>
+
+  <section id="layers">
+    <h2><span class="num">§2</span> Package &amp; layer map</h2>
+    <p>The dependency rule is the usual one: <code>server</code> → <code>service</code> → <code>repository</code> →
+      <code>model</code>. Controllers hold no logic worth testing; the services are where the tests live.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Package</th><th>Role</th><th>Notable types</th></tr></thead>
+        <tbody>
+          <tr><td><code>parser</code></td><td>Turn one issuer's PDF into a parsed statement. Strategy pattern.</td><td><code>StatementParser</code> (interface), <code>Bayside/Crestline/PropertyStatementParser</code>, <code>ExclusionRule</code></td></tr>
+          <tr><td><code>model</code></td><td>JPA entities — the persistent domain (12 total).</td><td><code>Transaction</code>, <code>BudgetEntry</code>, <code>AnalysisRun</code>, <code>TransactionMapping</code>, <code>MerchantCategory</code></td></tr>
+          <tr><td><code>repository</code></td><td>Spring Data JPA interfaces, one per aggregate.</td><td><code>TransactionRepository</code>, <code>AnalysisRunRepository</code></td></tr>
+          <tr><td><code>service</code></td><td>All business logic: ingest, categorization pipeline, analysis math, AI, backup/restore.</td><td><code>IngestService</code>, <code>MappingService</code>, <code>AnalysisService</code>, <code>AiCategorizationService</code>, <code>HintMatcher</code>, <code>HintService</code></td></tr>
+          <tr><td><code>server</code></td><td>REST controllers + <code>DataInitializer</code>. Thin — marshal JSON, delegate.</td><td><code>BudgetController</code>, <code>MappingController</code>, <code>AnalysisController</code>, <code>HintController</code></td></tr>
+          <tr><td><code>config</code></td><td>Switchable-datasource plumbing, startup schema fixes, and the request-origin / security-header filter.</td><td><code>DataSourceConfig</code>, <code>SwitchableDataSource</code>, <code>EnumColumnMigration</code>, <code>LocalOriginFilter</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="flows">
+    <h2><span class="num">§3</span> The three core flows</h2>
+
+    <h3>Ingest <span class="tag">PDF → transactions</span></h3>
+    <p><code>IngestService.ingest(source, file)</code> picks the right <code>StatementParser</code> from the source's
+      configured rules, parses the PDF, records a <code>StatementImport</code> (the batch), and persists
+      <code>Transaction</code> rows. Per-source <code>ExclusionRule</code>s mark transfers/payments as
+      <code>excludeFromSpend</code> at parse time — kept so every line is accounted for, but never counted as spend.</p>
+
+    <h3>Mapping <span class="tag">transactions → categories · the heart</span></h3>
+    <p>Mapping is <strong>per statement file</strong>. Each <code>AnalysisRun</code> consumes exactly one
+      <code>StatementImport</code> (via an <code>AnalysisRunSource</code> link) and produces one
+      <code>TransactionMapping</code> per transaction. <code>MappingService.doMap()</code> runs three passes,
+      cheapest first, so the expensive one only sees what's left:</p>
+
+    <figure class="plate">
+      <figcaption><span class="dot"></span> Fig. 2 — Categorization pipeline (per transaction)</figcaption>
+      <div class="plate-body">
+<pre class="mermaid">
+flowchart TD
+    T["Each transaction in the run"] --&gt; EX{excludeFromSpend?}
+    EX --"yes"--&gt; EXCL["EXCLUDED&lt;br/&gt;(parser rule, never counted)"]
+    EX --"no"--&gt; P1
+    P1["Pass 1 — HintMatcher&lt;br/&gt;deterministic substring match on&lt;br/&gt;names + explicit 'match:' hints"] --&gt; P1Q{matched?}
+    P1Q --"yes"--&gt; MH["MAPPED_HINT"]
+    P1Q --"no"--&gt; P2
+    P2["Pass 2 — remembered answers&lt;br/&gt;MerchantCategory cache, keyed by&lt;br/&gt;normalized description"] --&gt; P2Q{cache hit?}
+    P2Q --"yes"--&gt; MC["reused for free&lt;br/&gt;MAPPED_AI / MANUAL / EXCLUDED"]
+    P2Q --"no"--&gt; P3
+    P3["Pass 3 — Claude API&lt;br/&gt;classifies the remainder,&lt;br/&gt;writes answers back to cache"] --&gt; P3Q{confident?}
+    P3Q --"yes"--&gt; AI["MAPPED_AI + cache write"]
+    P3Q --"no"--&gt; PARK["PARKED — shows as 'Other',&lt;br/&gt;still counts as spend"]
+</pre>
+      </div>
+    </figure>
+
+    <ul>
+      <li><strong>Pass 1 is free and deterministic.</strong> <code>HintMatcher</code> normalizes both sides to
+        lowercase-alphanumeric, then substring-matches. Hints can be composite (<code>MP + MAILORDER</code> — all parts
+        must appear); the longest match wins, and a tie between different entries parks rather than guessing.</li>
+      <li><strong>Pass 2 is why re-runs don't re-pay.</strong> Every answer the AI or the user ever gave is stored in
+        <code>merchant_categories</code>, keyed on the normalized description. A manual answer beats an AI one.</li>
+      <li><strong>Pass 3 is the only one that costs money</strong>, and only for genuinely new merchants. With no API
+        credentials it's skipped silently and those transactions stay parked.</li>
+      <li><strong>Parked ≠ excluded.</strong> Parked charges still count as spend (real money, just uncategorized —
+        shown as "Other"); excluded ones are transfers that never count.</li>
+    </ul>
+
+    <h3>Analysis <span class="tag">mappings → budget vs. actual</span></h3>
+    <p><code>AnalysisService</code> aggregates mappings <strong>by each transaction's actual
+      <code>transactionDate</code></strong> (not the statement/ingest month), so a complete calendar month is assembled
+      regardless of which file each charge arrived in. A month folds into the <strong>rolling average</strong> only once
+      you mark it complete (<code>MonthStatus</code>), so a half-loaded month can't skew the typical-month numbers.</p>
+  </section>
+
+  <section id="safety">
+    <h2><span class="num">§4</span> Data safety (learned the hard way)</h2>
+    <p>The live DB once got reverted by OneDrive syncing the H2 file mid-session. The design is now built around never
+      repeating that:</p>
+    <ul>
+      <li><strong>The live DB lives outside any synced folder</strong> — <code>~/.pigpurchases/</code>.</li>
+      <li><strong><code>BackupService</code></strong> writes a consistent SQL dump to <code>~/pigpurchases-backups/</code>,
+        one file per day named by date, refreshed only when data actually changed, pruned to a configurable retention.
+        Backups live outside both OneDrive and the live-db folder.</li>
+      <li><strong><code>RestoreService</code> + <code>SwitchableDataSource</code></strong> make restore non-destructive:
+        a chosen backup is loaded into a <em>preview</em> datasource and validated; the live DB is overwritten only when
+        you explicitly commit.</li>
+    </ul>
+  </section>
+
+  <section id="uml">
+    <h2><span class="num">§5</span> UML class diagram</h2>
+    <div class="note">
+      <b>Soft vs. real references.</b> Only <code>Transaction → BudgetEntry</code> is a real JPA-managed association
+      (a <code>@ManyToOne</code> with FK <code>budget_entry_id</code>). Every other link is a plain <code>Long …Id</code>
+      field the application resolves, with <b>no database foreign-key constraint</b> — a consequence of
+      <code>ddl-auto=update</code> over by-id fields.
+    </div>
+
+    <h3>Domain &amp; persistence classes <span class="tag">5a</span></h3>
+    <figure class="plate">
+      <figcaption><span class="dot"></span> Fig. 3 — Entity model</figcaption>
+      <div class="plate-body">
+<pre class="mermaid">
+classDiagram
+    class StatementSource {
+        +Long id
+        +String name
+        +String folderPath
+        +String parserRules
+    }
+    class StatementImport {
+        +Long id
+        +Long statementSourceId
+        +LocalDate statementDate
+        +String fileName
+        +String relativePath
+        +int transactionCount
+    }
+    class Transaction {
+        +Long id
+        +LocalDate transactionDate
+        +String description
+        +String vendor
+        +BigDecimal amount
+        +String month
+        +Long statementImportId
+        +Long statementSourceId
+        +String type
+        +boolean excludeFromSpend
+    }
+    class BudgetEntry {
+        +Long id
+        +String name
+        +BigDecimal monthlyAllowance
+        +Integer quantity
+        +String hints
+    }
+    class AnalysisRun {
+        +Long id
+        +String month
+        +Status status
+        +int mappedCount
+        +int parkedCount
+        +int excludedCount
+    }
+    class AnalysisRunSource {
+        +Long id
+        +Long analysisRunId
+        +Long statementSourceId
+        +Long statementImportId
+    }
+    class TransactionMapping {
+        +Long id
+        +Long analysisRunId
+        +Long transactionId
+        +Long budgetEntryId
+        +Status status
+        +String reason
+    }
+    class MerchantCategory {
+        +Long id
+        +String merchantKey
+        +Long budgetEntryId
+        +boolean excluded
+        +Source source
+        +String sampleDescription
+    }
+    class MonthStatus {
+        +String month
+        +boolean complete
+    }
+    class RunStatus {
+        &lt;&lt;enumeration&gt;&gt;
+        DRAFT
+        MAPPED
+    }
+    class MappingStatus {
+        &lt;&lt;enumeration&gt;&gt;
+        MAPPED_HINT
+        MAPPED_AI
+        MAPPED_MANUAL
+        PARKED
+        EXCLUDED
+        EXCLUDED_ONCE
+    }
+    class MerchantSource {
+        &lt;&lt;enumeration&gt;&gt;
+        AI
+        MANUAL
+    }
+    StatementSource "1" --&gt; "*" StatementImport : imports
+    StatementImport "1" --&gt; "*" Transaction : contains
+    Transaction "*" --&gt; "0..1" BudgetEntry : budget_entry_id (real FK)
+    AnalysisRun "1" --&gt; "*" AnalysisRunSource : sources
+    AnalysisRunSource "*" --&gt; "1" StatementImport : consumes
+    AnalysisRun "1" --&gt; "*" TransactionMapping : produces
+    TransactionMapping "*" --&gt; "1" Transaction : maps
+    TransactionMapping "*" --&gt; "0..1" BudgetEntry : assigns
+    MerchantCategory "*" --&gt; "1" BudgetEntry : remembers
+    AnalysisRun --&gt; RunStatus
+    TransactionMapping --&gt; MappingStatus
+    MerchantCategory --&gt; MerchantSource
+</pre>
+      </div>
+    </figure>
+
+    <h3>Parser hierarchy &amp; service dependencies <span class="tag">5b</span></h3>
+    <p>The only true inheritance hierarchy is the parser strategy; the rest is a service/controller dependency graph.</p>
+    <figure class="plate">
+      <figcaption><span class="dot"></span> Fig. 4 — Behavioral classes</figcaption>
+      <div class="plate-body">
+<pre class="mermaid">
+classDiagram
+    direction LR
+    class StatementParser {
+        &lt;&lt;interface&gt;&gt;
+        +parse(Path) ParsedStatement
+    }
+    class DepositStatementParser
+    class CardStatementParser
+    class PropertyStatementParser
+    StatementParser &lt;|.. DepositStatementParser
+    StatementParser &lt;|.. CardStatementParser
+    StatementParser &lt;|.. PropertyStatementParser
+    class SwitchableDataSource {
+        +getConnection()
+        +startPreview(DataSource)
+        +endPreview()
+        +isPreviewing()
+    }
+    class AbstractDataSource
+    AbstractDataSource &lt;|-- SwitchableDataSource
+    class IngestService
+    class MappingService
+    class HintMatcher
+    class AiCategorizationService
+    class RestoreService
+    class BackupService
+    IngestService ..&gt; StatementParser : selects and runs
+    MappingService ..&gt; HintMatcher : pass 1
+    MappingService ..&gt; AiCategorizationService : pass 3
+    AiCategorizationService ..&gt; ClaudeAPI : classify
+    HintService ..&gt; HintMatcher : validate / preview / conflicts
+    RestoreService ..&gt; SwitchableDataSource : preview / commit
+    RestoreService ..&gt; BackupService : list backups
+</pre>
+      </div>
+    </figure>
+
+    <h3>Mapping status lifecycle <span class="tag">5c</span></h3>
+    <p>The most consequential state machine in the app, because every spend figure on every screen is a sum over
+      these six values. The grouping is the invariant: <code>TransactionMapping.countsAsSpend()</code> returns true
+      for everything in the upper box and false for everything in the lower one, and it is the
+      <em>single</em> authority — no caller compares statuses itself.</p>
+    <div class="note">
+      <b>Parked is spend.</b> An uncategorized charge is real money that simply hasn't been attributed yet, so a
+      month's total is right the moment mapping finishes. Only the two <em>excluded</em> flavours are outside spend,
+      and they exist separately because one writes a merchant rule and one deliberately does not.
+    </div>
+    <figure class="plate">
+      <figcaption><span class="dot"></span> Fig. 5 — TransactionMapping.Status lifecycle</figcaption>
+      <div class="plate-body">
+<pre class="mermaid">
+stateDiagram-v2
+    direction TB
+    state "counts as spend" as Spend {
+        PARKED
+        MAPPED_HINT
+        MAPPED_AI
+        MAPPED_MANUAL
+    }
+    state "never counts as spend" as NotSpend {
+        EXCLUDED
+        EXCLUDED_ONCE
+    }
+    [*] --&gt; New : transaction ingested
+    New --&gt; EXCLUDED : parser rule flagged a transfer
+    New --&gt; MAPPED_HINT : pass 1 · hint or entry name matched
+    New --&gt; PARKED : pass 1 · nothing matched
+    MAPPED_HINT --&gt; MAPPED_MANUAL : pass 2 · your own earlier answer outranks a hint
+    PARKED --&gt; MAPPED_MANUAL : pass 2 · remembered, yours
+    PARKED --&gt; MAPPED_AI : pass 2 · remembered, AI  /  pass 3 · Claude placed it
+    PARKED --&gt; EXCLUDED : pass 2 · remembered as not-spend
+    MAPPED_HINT --&gt; MAPPED_MANUAL : you recategorize during review
+    MAPPED_AI --&gt; MAPPED_MANUAL : you recategorize during review
+    MAPPED_MANUAL --&gt; PARKED : you un-categorize it
+    PARKED --&gt; EXCLUDED : you exclude the merchant
+    PARKED --&gt; EXCLUDED_ONCE : you exclude only this transaction
+</pre>
+      </div>
+    </figure>
+    <ul>
+      <li><strong>Only <code>PARKED</code> reaches pass 3.</strong> Everything already placed is left alone, which is
+        why re-running mapping costs nothing for rows that resolved earlier.</li>
+      <li><strong>Three of these survive a re-map, and the rest are rebuilt.</strong> <code>doMap</code> deletes the
+        run's mappings and reconstructs them from the passes, so anything reconstructible is thrown away and
+        recomputed. The three that are <em>not</em> — <code>EXCLUDED_ONCE</code>, a hand-parked row, and a hand-assigned
+        row — are snapshotted first and re-applied ahead of every pass, keyed by transaction. Without that,
+        re-mapping would quietly resurrect a charge you had deliberately excluded.</li>
+      <li><strong><code>EXCLUDED</code> and <code>EXCLUDED_ONCE</code> differ only in what they teach.</strong> The
+        standing flavour writes a <code>merchant_categories</code> rule so every future charge from that merchant is
+        excluded too; the one-off writes nothing, which is precisely why it has to be carried across a re-map by hand.</li>
+    </ul>
+  </section>
+
+  <section id="er">
+    <h2><span class="num">§6</span> Database (ER) diagram</h2>
+    <p>H2 file DB, schema managed by Hibernate <code>ddl-auto=update</code>. Because most inter-table links are plain
+      <code>Long</code> id fields, Hibernate generates <strong>no foreign-key constraints</strong> for them — those
+      relationships are enforced in application code. The one real FK is <code>transactions.budget_entry_id</code>.
+      Reserved-word columns are renamed (<code>run_month</code>, <code>txn_month</code>, <code>status_month</code>)
+      because <code>month</code> is reserved in H2.</p>
+    <p>Enforced unique constraints: <code>analysis_runs.run_month</code>, <code>merchant_categories.merchant_key</code>,
+      <code>dismissed_duplicates.signature</code>, <code>analysis_run_sources (analysis_run_id, statement_source_id)</code>,
+      and <code>transaction_mappings (analysis_run_id, transaction_id)</code>.</p>
+
+    <figure class="plate">
+      <figcaption><span class="dot"></span> Fig. 6 — Entity-relationship schema</figcaption>
+      <div class="plate-body">
+<pre class="mermaid">
+erDiagram
+    STATEMENT_SOURCES ||--o{ STATEMENT_IMPORTS : "has"
+    STATEMENT_IMPORTS ||--o{ TRANSACTIONS : "contains"
+    STATEMENT_SOURCES ||--o{ TRANSACTIONS : "denormalized"
+    BUDGET_ENTRIES ||--o{ TRANSACTIONS : "categorizes (FK)"
+    ANALYSIS_RUNS ||--o{ ANALYSIS_RUN_SOURCES : "sources"
+    STATEMENT_IMPORTS ||--o{ ANALYSIS_RUN_SOURCES : "consumed by"
+    ANALYSIS_RUNS ||--o{ TRANSACTION_MAPPINGS : "produces"
+    TRANSACTIONS ||--o{ TRANSACTION_MAPPINGS : "mapped in"
+    BUDGET_ENTRIES ||--o{ TRANSACTION_MAPPINGS : "assigned"
+    BUDGET_ENTRIES ||--o{ MERCHANT_CATEGORIES : "remembered as"
+    STATEMENT_SOURCES {
+        bigint id PK
+        string name
+        string folder_path
+        string parser_rules
+    }
+    STATEMENT_IMPORTS {
+        bigint id PK
+        bigint statement_source_id "soft ref"
+        date statement_date
+        string file_name
+        string relative_path
+        int transaction_count
+    }
+    TRANSACTIONS {
+        bigint id PK
+        date transaction_date
+        string description
+        string vendor
+        decimal amount
+        string txn_month
+        bigint statement_import_id "soft ref"
+        bigint statement_source_id "soft ref"
+        string type
+        boolean exclude_from_spend
+        bigint budget_entry_id FK
+    }
+    BUDGET_ENTRIES {
+        bigint id PK
+        string name
+        decimal monthly_allowance
+        int quantity
+        string hints
+    }
+    ANALYSIS_RUNS {
+        bigint id PK
+        string run_month UK "internal token, e.g. import-42"
+        string status "DRAFT or MAPPED"
+        int mapped_count
+        int parked_count
+        int excluded_count
+    }
+    ANALYSIS_RUN_SOURCES {
+        bigint id PK
+        bigint analysis_run_id "UK with source"
+        bigint statement_source_id "UK with run"
+        bigint statement_import_id "soft ref"
+    }
+    TRANSACTION_MAPPINGS {
+        bigint id PK
+        bigint analysis_run_id "UK with txn"
+        bigint transaction_id "UK with run"
+        bigint budget_entry_id "null = PARKED or EXCLUDED"
+        string status "HINT AI MANUAL PARKED EXCLUDED EXCLUDED_ONCE"
+        string reason
+    }
+    MERCHANT_CATEGORIES {
+        bigint id PK
+        string merchant_key UK "normalized description"
+        bigint budget_entry_id "soft ref"
+        boolean excluded
+        string source "AI or MANUAL"
+        string sample_description
+    }
+    MONTH_STATUS {
+        string status_month PK
+        boolean complete
+    }
+    DISMISSED_DUPLICATES {
+        bigint id PK
+        string signature UK
+    }
+    APP_SETTINGS {
+        bigint id PK "singleton id=1"
+        decimal annual_budget
+        int notification_day_of_month
+        int backup_retention_count
+    }
+</pre>
+      </div>
+    </figure>
+  </section>
+
+  <section id="decisions">
+    <h2><span class="num">§7</span> Key decisions &amp; invariants</h2>
+    <ul>
+      <li><strong>Analysis groups by actual transaction date</strong>, so a calendar month is complete regardless of
+        which file each charge came in on. <code>AnalysisRun.month</code> is <em>not</em> a calendar month — it's an
+        internal unique token (<code>import-{id}</code>); the rolling average uses <code>MonthStatus</code>.</li>
+      <li><strong>Mapping is per statement file</strong> — one run ⇒ one import. "Map Transactions" maps every unmapped
+        file; "Re-run mapping" re-runs chosen ones.</li>
+      <li><strong>Merchant answers are remembered</strong>, so the AI is only ever paid for once per merchant; manual
+        answers outrank AI answers in that cache.</li>
+      <li><strong>Parked still counts as spend.</strong> Uncategorized real money is never hidden — it lands in "Other."</li>
+      <li><strong>Money-in is kept out of spend unless you assigned that exact row by hand.</strong>
+        <code>signedSpend</code> negates <code>PAYMENT</code>, <code>CREDIT</code> and <code>DEPOSIT</code> alike, so a
+        parked one would <em>subtract</em> from the month — hence the default. The exception is narrow:
+        <code>inSpendBuckets</code> admits a money-in row only when its status is <code>MAPPED_MANUAL</code>, it has an
+        entry id, and its reason is <code>ASSIGNED_BY_HAND</code>. The Bayside parser types every positive line
+        <code>DEPOSIT</code>, so a refund and a paycheck are indistinguishable by type; a decision about one specific
+        transaction is the only reliable signal. A remembered merchant rule is deliberately <em>not</em> enough — that
+        would let one hand-categorized refund drag every later deposit from that merchant into spend.</li>
+      <li><strong>The database is disposable; the PDFs and backups are not.</strong> DB out of synced folders, backups
+        outside the DB folder, restore preview-then-commit.</li>
+      <li><strong>No schema migrations.</strong> <code>ddl-auto=update</code> only adds; new non-null columns carry
+        <code>@ColumnDefault</code> so Hibernate can back-fill them.</li>
+      <li><strong>Local-first everywhere.</strong> Amounts never leave the machine; only descriptions and vendor strings
+        go to Claude, and only for transactions no rule could place — see §8.</li>
+    </ul>
+  </section>
+
+  <section id="security">
+    <h2><span class="num">§8</span> What leaves, and what gets in</h2>
+    <p>Two boundaries, both of which were weaker than the documentation claimed until they were audited on
+      2&nbsp;August&nbsp;2026. Neither is about passwords; both are about a local app being honest.</p>
+
+    <h3>What leaves <span class="tag">outbound</span></h3>
+    <p>The privacy rule was enforced on the <em>shape</em> of the request — no amount field, no date field — which was
+      true and insufficient. A bank ACH descriptor reads
+      <code>MERCHANT DES:&lt;what&gt; ID:&lt;originator id&gt; INDN:&lt;account holder&gt; CO &lt;date&gt;</code>, so the
+      account identifier and the account holder's legal name were <em>inside</em> the description string. "We only send
+      descriptions" and "we never send account identifiers" were both believed, and only the first was true.</p>
+    <ul>
+      <li><code>AiCategorizationService.scrubIdentifiers</code> truncates at the first <code>ID:</code> /
+        <code>INDN:</code> / <code>CO ID:</code> marker and strips runs of eight or more digits. The merchant and the
+        transfer type survive, which is what makes the row categorizable at all.</li>
+      <li>It runs on the way <strong>out</strong> only. The stored description is what hints match on and what the
+        merchant cache is keyed by, so rewriting it would silently invalidate every existing hint and remembered answer.</li>
+      <li><code>promptFor</code> remains the single method that builds a request body, so the guarantee stays checkable
+        in one place.</li>
+    </ul>
+
+    <h3>What gets in <span class="tag">inbound</span></h3>
+    <p>No login is correct for one person on their own machine. But the same-origin policy only stops another page
+      <em>reading</em> a response from localhost — nothing stopped it <em>sending</em>. A plain HTML form needs no
+      preflight, so any site the browser had open could spend API credit, commit a restore, launch a file, or clear the
+      backup baseline, and never see the reply. One-way and invisible.</p>
+    <ul>
+      <li><code>LocalOriginFilter</code> refuses any POST / PUT / PATCH / DELETE whose <code>Origin</code> or
+        <code>Referer</code> resolves to a non-loopback host, and refuses a literal <code>null</code> origin — what a
+        sandboxed iframe or <code>data:</code> document sends.</li>
+      <li>A request carrying <em>neither</em> header is allowed. A browser always sends one for a page-initiated state
+        change, so what remains is <code>curl</code> and local tooling — and anything already running code on this
+        machine has better options than an endpoint.</li>
+      <li>The same filter sets <code>frame-ancestors 'none'</code> and <code>X-Frame-Options: DENY</code>, because
+        framing would hand back the DELETEs and PUTs the origin check puts out of reach by borrowing your clicks. Its
+        CSP allows <code>'unsafe-inline'</code> — the frontend genuinely is one inline script — so the value is in
+        <code>connect-src 'self'</code>: even a successful injection has nowhere off-machine to send what it reads.</li>
+    </ul>
+  </section>
+</main>
+
+<div class="lb" id="lightbox" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Enlarged diagram">
+  <div class="scrim" data-close></div>
+  <div class="bar">
+    <span class="title" id="lbTitle">Diagram</span>
+    <button type="button" id="lbOut" aria-label="Zoom out">&minus;</button>
+    <button type="button" id="lbIn" aria-label="Zoom in">+</button>
+    <button type="button" id="lbFit">Fit</button>
+    <button type="button" id="lbClose" data-close>Close &times;</button>
+  </div>
+  <div class="canvas" id="lbCanvas"></div>
+</div>
+
+<footer>PigPurchases · architecture reference · generated from source</footer>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    var btn = document.getElementById('themeToggle');
+    function current() {
+      var attr = root.getAttribute('data-theme');
+      if (attr) return attr;
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    btn.addEventListener('click', function () {
+      var next = current() === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+    });
+  })();
+
+  // Save as PDF: hand off to the browser's print dialog (choose "Save as PDF").
+  document.getElementById('pdfBtn').addEventListener('click', function () { window.print(); });
+
+  // Click-to-enlarge lightbox for the diagrams (vector SVG, so zoom stays crisp).
+  (function () {
+    var lb = document.getElementById('lightbox');
+    var canvas = document.getElementById('lbCanvas');
+    var titleEl = document.getElementById('lbTitle');
+    var current = null, baseW = 0, zoom = 1;
+
+    function apply() { if (current && baseW) current.style.width = Math.round(baseW * zoom) + 'px'; }
+    function fit() {
+      if (!current || !baseW) return;
+      var avail = canvas.clientWidth - 48;
+      zoom = Math.max(0.1, avail / baseW);
+      apply();
+    }
+    function open(fig) {
+      var svg = fig.querySelector('.plate-body svg');
+      if (!svg) return;
+      titleEl.textContent = fig.getAttribute('data-title') || 'Diagram';
+      var clone = svg.cloneNode(true);
+      clone.removeAttribute('height');
+      clone.style.maxWidth = 'none';
+      clone.style.height = 'auto';
+      var vbW = svg.viewBox && svg.viewBox.baseVal ? svg.viewBox.baseVal.width : 0;
+      baseW = vbW || svg.getBoundingClientRect().width || 900;
+      canvas.innerHTML = '';
+      canvas.appendChild(clone);
+      current = clone;
+      lb.classList.add('open');
+      lb.setAttribute('aria-hidden', 'false');
+      requestAnimationFrame(fit);
+    }
+    function close() {
+      lb.classList.remove('open');
+      lb.setAttribute('aria-hidden', 'true');
+      canvas.innerHTML = '';
+      current = null;
+    }
+
+    Array.prototype.forEach.call(document.querySelectorAll('figure.plate'), function (fig) {
+      var cap = fig.querySelector('figcaption');
+      fig.setAttribute('data-title', cap ? cap.textContent.trim() : 'Diagram');
+      if (cap) {
+        var hint = document.createElement('span');
+        hint.className = 'expand';
+        hint.textContent = '⤢ click to enlarge';
+        cap.appendChild(hint);
+      }
+      var body = fig.querySelector('.plate-body');
+      if (body) body.addEventListener('click', function () { open(fig); });
+    });
+
+    document.getElementById('lbIn').addEventListener('click', function () { zoom *= 1.25; apply(); });
+    document.getElementById('lbOut').addEventListener('click', function () { zoom /= 1.25; apply(); });
+    document.getElementById('lbFit').addEventListener('click', fit);
+    Array.prototype.forEach.call(lb.querySelectorAll('[data-close]'), function (el) {
+      el.addEventListener('click', close);
+    });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+    window.addEventListener('resize', function () { if (lb.classList.contains('open')) fit(); });
+  })();
+</script>

@@ -40,6 +40,21 @@ Check every one of these:
 7. **ARCHITECTURE §7 invariants** — is every listed invariant still true, and is
    any new load-bearing invariant missing? A rule that exists only in code
    comments and not in §7 is a finding.
+8. **`docs/architecture.html`** — the shareable version of the same material, and
+   the source the published artifact and `docs/ARCHITECTURE.pdf` are both built
+   from. Check it against the code with the same rigour as the markdown, and check
+   it against `ARCHITECTURE.md`: where the two disagree about the same fact, that
+   is a finding on its own, whichever one is wrong.
+
+   This file was outside the checklist for its first week and drifted badly in
+   exactly the ways items 2, 6 and 7 are meant to catch — a status enum missing a
+   constant, a package table missing three types, and a privacy claim that had
+   stopped being true. Do not assume it tracks the markdown; it has its own prose
+   and its own diagrams, and nothing regenerates it automatically.
+
+   Report a stale HTML as `Change docs/architecture.html:NNN`, the same as any
+   other file. Do not comment on the PDF: it is generated from the HTML, so the
+   HTML is the only place a fix belongs.
 
 ## Known invariants (so you do not rediscover them every run)
 

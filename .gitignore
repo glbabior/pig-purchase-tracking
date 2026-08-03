@@ -31,3 +31,9 @@ replay_pid*.log
 # Subagent reports — overwritten each run, superseded by the next one.
 # The agent DEFINITIONS in .claude/agents/ are project config and DO get committed.
 .claude/reports/
+
+# The architecture PDF generator's dependency. The PDF itself IS committed;
+# node_modules is not.
+docs/node_modules/
+docs/package-lock.json
+docs/.architecture.print.html
