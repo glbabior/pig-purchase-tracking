@@ -102,6 +102,65 @@ class IndexHtmlSyntaxTest {
                         + " undefined when the page first calls them");
     }
 
+    /**
+     * A browser-shaped stub: every property of everything is a function returning itself.
+     *
+     * <p>Enough for {@code document.getElementById(x).addEventListener(...)} and the rest of
+     * the init code to run without a DOM. {@code then} is deliberately absent so an
+     * {@code await} on a stubbed {@code fetch} resolves instead of hanging on a fake thenable.
+     */
+    private static final String DOM_STUB = """
+        var stub = new Proxy(function () {}, {
+          get: function (t, k) {
+            if (k === 'then') return undefined;
+            if (k === Symbol.toPrimitive) return function () { return ''; };
+            if (k === 'length') return 0;
+            return stub;
+          },
+          apply: function () { return stub; },
+          construct: function () { return stub; },
+          set: function () { return true; },
+          has: function () { return true; }
+        });
+        var document = stub, window = stub, navigator = stub, localStorage = stub;
+        var fetch = function () { return stub; };
+        var alert = function () {}, confirm = function () { return false; };
+        var setTimeout = function () {}, setInterval = function () {};
+        var console = { log: function () {}, error: function () {}, warn: function () {} };
+        """;
+
+    /**
+     * The inline script RUNS to completion.
+     *
+     * <p>Parsing is not enough. A `let` referenced by init code that sits above its
+     * declaration is perfectly valid syntax and throws at runtime — the temporal dead zone —
+     * and it takes the page down exactly as hard as a stray brace: init aborts, no listener
+     * binds, every screen is inert. That shipped once, and parsing had nothing to say about
+     * it.
+     *
+     * <p>This does not need a real browser, only a permissive stub, so the "much heavier
+     * commitment" this file used to cite against runtime checks does not apply. What it
+     * covers is narrow but exact: the top-level statements that run when the page loads.
+     */
+    @Test
+    void theInlineScriptRunsWithoutThrowing() throws IOException {
+        Matcher m = INLINE_SCRIPT.matcher(markupWithoutComments());
+        assertTrue(m.find(), "found no inline <script> block");
+
+        try (Context context = Context.create("js")) {
+            context.eval(Source.newBuilder("js", Files.readString(APP_MATH), "app-math.js")
+                    .buildLiteral());
+            context.eval(Source.newBuilder("js", DOM_STUB, "dom-stub.js").buildLiteral());
+            try {
+                context.eval(Source.newBuilder("js", m.group(1), "index.html#inline")
+                        .buildLiteral());
+            } catch (PolyglotException e) {
+                fail("index.html's inline script throws while initialising, so no event handler"
+                        + " is ever bound and EVERY screen is dead: " + e.getMessage());
+            }
+        }
+    }
+
     /** One inline block, so the parse test cannot silently miss most of the code. */
     @Test
     void thereIsExactlyOneInlineScriptBlock() throws IOException {

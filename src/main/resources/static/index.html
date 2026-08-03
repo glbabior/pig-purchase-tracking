@@ -1160,6 +1160,13 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
       let entries = [];
       let editingId = null;
       let sortState = { key: null, dir: 1 };
+      // Sort state for the two tables wired by wireSort() during init below. Declared HERE,
+      // with the other state, because wireSort takes them as arguments — a `let` further down
+      // the file is in the temporal dead zone at that point and throws, which kills the rest
+      // of init and leaves the whole page inert. The closure that used to hold these was safe
+      // only because it read them on click, long after the script had finished.
+      let runsSort = { key: null, dir: 1 };
+      let hintsSort = { key: null, dir: 1 };
       let settings = { annualBudget: '0', monthlyAllowance: '0' };
       let sources = [];
       let editingSourceId = null;
@@ -1765,8 +1772,6 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
         return (hintsData.hints || []).filter((h) => String(h.entryId) === String(entryId));
       }
 
-      let hintsSort = { key: null, dir: 1 };
-
       async function loadHints() {
         const body = document.getElementById('hintsBody');
         const empty = document.getElementById('hintsEmptyState');
@@ -2347,8 +2352,6 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
         renderRuns();
         checkNotification();
       }
-
-      let runsSort = { key: null, dir: 1 };
 
       /**
        * Draw ▲/▼ on whichever header is the active sort, for ONE table.
