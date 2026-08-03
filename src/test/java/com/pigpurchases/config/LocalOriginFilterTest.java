@@ -48,6 +48,19 @@ class LocalOriginFilterTest {
     }
 
     @Test
+    void anOpaqueNullOriginIsRefusedRatherThanIgnored() throws Exception {
+        // The hole the first version of this filter had. A browser sends Origin: null from a
+        // sandboxed iframe or a data:/srcdoc document, and a hostile page can pair that with
+        // referrerpolicy="no-referrer" so neither header names a host. Treating "null" as
+        // "no Origin" then fell through to the both-absent allowance — which exists for curl,
+        // not for a browser being driven by another page.
+        mvc.perform(post("/api/backup/now").header("Origin", "null"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/backup/now").header("Origin", "null").header("Referer", "null"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void aHostThatMerelyLooksLocalIsRefused() throws Exception {
         // "localhost.evil.example" contains "localhost". Matching on the parsed HOST rather
         // than on the string is what makes that a non-issue, so pin it.

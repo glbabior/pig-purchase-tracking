@@ -21,6 +21,12 @@ never leave the machine** — see [Privacy](#privacy).
 
 The UI is a single browser tab with nine screens, worked roughly left to right.
 
+The four long tables — **Budget Entries**, **Matching Hints**, **Mapping**, and the
+category breakdown on both Spend screens — scroll inside themselves with their header
+row pinned, so the columns stay labelled however far down you are. On the Spend
+screens the **Total** row is pinned to the bottom for the same reason: it is the one
+row you want readable while scrolling everything above it.
+
 **Budget Entries** — define categories with a per-unit amount and a quantity
 (e.g. "Pharm copays: 6 × $10"); the stored monthly budget is the total. Each entry
 carries an optional free-text **hints** field, which is the knowledge base that
@@ -59,9 +65,9 @@ opens the file in your default PDF app (the whole path is in its hover text),
 transaction count, when it was last mapped, its mapped / parked / excluded counts,
 and per-row **Review all**, **Re-map** and **Delete**. A statement nothing has mapped
 yet shows "not mapped yet" rather than zeros — "0 parked" and "not mapped yet, so
-unknown" are different facts — and sorts to the bottom of a count column whichever
-way that column is sorted.
-**Map Transactions** maps everything not
+unknown" are different facts — offers **Map this file** in place of those three
+actions, and sorts to the bottom of a count column whichever way that column is
+sorted. **Map Transactions** maps everything not
 yet mapped; **Re-run mapping** re-does chosen statements. From here you also
 review the parked "Other" bucket, review all transactions in a run with search,
 review manual entries, and work through **potential duplicates** (same date + same
@@ -178,9 +184,12 @@ match: HPK + monthly     matches only the HPK line that is also a monthly paymen
 Two rules keep this pass conservative, because a wrong automatic answer is worse
 than parking a transaction for review:
 
-- Patterns shorter than 4 normalized characters are ignored — the entry "Gas"
-  would otherwise match "CITYPOWER" and "POWELL ST GARAGE". (A part inside a `+` composite
-  may be shorter, since the AND is what makes it specific.)
+- Patterns that are too short are ignored, and there are three thresholds. A
+  category **name** needs 4 normalized characters — "Gas" would otherwise match
+  "CITYPOWER" and "POWELL ST GARAGE". An explicit `match:` hint needs 3, because you wrote
+  it deliberately. A part inside a `+` composite needs only 2, since the AND is what
+  makes it specific. Break the limit and the **whole** hint is discarded, not just
+  the offending part; the Matching Hints screen shows which and why.
 - When several entries match, the longest pattern wins as the most specific
   ("Harbor Park Pass" over "Harbor Park"). If the longest is a tie between different
   entries, the transaction is parked rather than guessed at.
@@ -340,7 +349,8 @@ independent of the live `.mv.db`.
 |---|---|---|
 | Transaction amounts | Local database | ❌ Never |
 | Spending history | Local database | ❌ Never |
-| Budget definitions | Local database | ❌ Never |
+| Budget amounts | Local database | ❌ Never |
+| Budget entry names and hints | Local database | ✓ Only for categorization |
 | Account information | Local database | ❌ Never |
 | Statement PDFs | Local disk | ❌ Never |
 | Transaction descriptions | Local database | ✓ Only for categorization |
@@ -409,8 +419,12 @@ file from anywhere other than this app should not be previewed.
 
 ## Current status
 
-_Code-verified 2026-08-01. Runtime behavior against real statements was last
-checked 2026-07-22._
+_Code-verified 2026-08-02 — the screen descriptions, the API reference, Privacy,
+Security, spend semantics, and the hint-length rules were each checked against the
+source. Runtime behavior against real statements was last checked 2026-07-22, and
+one parser check is currently failing: the July Bayside statement's printed debits
+subtotal does not match the sum of its debit transactions. The balance itself
+reconciles, so the transactions are right and the cross-check is not._
 
 ### Working
 
@@ -438,6 +452,13 @@ checked 2026-07-22._
   teaching the app a merchant rule, and that survive a re-map
 - **Built-in help**: a usage guide reachable from the sidebar and from a per-screen
   help button on every screen
+- **Hint management** on its own screen: every hint grouped by category, categories
+  with none listed too, hints that are *ignored* separated from hints that merely
+  *match nothing yet*, a before-you-save preview of what a hint would catch and what
+  it would take from another category, and a conflict check across all categories
+- **Security for a local app**: state-changing requests must come from this machine,
+  the page cannot be framed, and account identifiers are stripped from anything sent
+  to the Claude API — see [Security](#security)
 - **Spend analysis**: monthly and rolling budget-vs-actual, per category and total,
   transaction-count columns, click-through to the transactions behind any figure,
   a trend chart, and a per-category spend-over-time chart. Months are grouped by
@@ -455,9 +476,15 @@ checked 2026-07-22._
   A source created through the UI therefore has no parser and ingest fails with
   `No parser configured for id: ''`. Set them via
   `PUT /api/statement-sources/{id}/parser-rules` until this is surfaced.
-- **Spend semantics are type-based.** Spend nets by transaction type — purchases add,
-  refunds subtract, and payments and deposits are money-in and never counted at all —
-  and drops excluded transfers. Each *statement* is now reconciled against its own
+- **Spend semantics are type-based, with one deliberate exception.** Spend nets by
+  transaction type — purchases add, refunds subtract — and drops excluded transfers.
+  Money-in (`PAYMENT`, `CREDIT`, `DEPOSIT`) is kept out of spend **unless you assigned
+  that exact transaction to a category by hand**, in which case it nets against that
+  category. The exception exists because the Bayside parser types every positive line
+  `DEPOSIT`, so a refund and a paycheck are indistinguishable by type; your own
+  decision about one row is the only reliable signal. A remembered merchant rule is
+  not enough — only a decision about that transaction
+  (`AnalysisService.inSpendBuckets`). Each *statement* is now reconciled against its own
   printed control totals at ingest and refused if it doesn't tie out, but nothing
   checks a whole month's computed spend against the statements that fed it.
 - **Only PDF is supported.** CSV and OFX are not implemented.
@@ -532,6 +559,8 @@ completeness and unmapped counts), `PUT /api/analysis/months/{month}/complete`,
 `GET /api/analysis/category-trend?category=`
 
 **Backup / restore** — `GET /api/backup/status`, `POST /api/backup/now`,
+`POST /api/backup/accept-baseline` (accept the current row count as normal, after a
+deliberate deletion, so backups stop being filed `.SUSPECT`),
 `GET /api/restore/status`, `POST /api/restore/preview` `{file}`,
 `POST /api/restore/commit`, `POST /api/restore/cancel`, `POST /api/restore/comment`
 
@@ -563,13 +592,14 @@ PigPurchases/
 │   ├── repository/ one Spring Data repo per entity
 │   ├── service/    IngestService, MappingService, HintMatcher,
 │   │               AiCategorizationService, AnalysisService, ManualEntryService,
-│   │               BackupService, RestoreService, DebugLogService, BudgetService
+│   │               BackupService, RestoreService, DebugLogService, HintService
 │   └── server/     BudgetController, MappingController, AnalysisController,
 │                   ManualEntryController, BackupController, RestoreController,
-│                   DebugLogController, NotificationController, DataInitializer
+│                   DebugLogController, NotificationController, HintController,
+│                   DataInitializer
 ├── src/main/resources/
 │   ├── static/index.html          the frontend: markup, styles, and all DOM/fetch code
-│   ├── static/app-math.js         its pure functions (money, dates, escaping), split out
+│   ├── static/app-math.js         its pure functions (money, dates, escaping, sorting), split out
 │   │                              so AppMathTest can cover them. Plain <script>, no bundler
 │   └── application.properties     H2, backups, DevTools, AI settings
 ├── src/test/java/com/pigpurchases/

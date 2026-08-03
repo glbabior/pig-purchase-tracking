@@ -2453,31 +2453,13 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
           b.addEventListener('click', () => doRemap([Number(b.dataset.mapOne)])));
         container.querySelectorAll('[data-del-run]').forEach((b) =>
           b.addEventListener('click', () => deleteRunById(Number(b.dataset.delRun))));
+        // Shared with the Ingest screen. That one already falls back to viewing the PDF in a
+        // browser tab when the desktop launch fails, which is the better answer here too —
+        // a path the shell will not take can still be served and read.
         container.querySelectorAll('[data-open-file]').forEach((b) =>
-          b.addEventListener('click', () => openStatementFile(Number(b.dataset.openFile), b.title)));
+          b.addEventListener('click', () => openStatementFile(Number(b.dataset.openFile))));
       }
 
-      /**
-       * Launch a statement in the machine's default PDF app.
-       *
-       * <p>Goes through the server rather than a file:// link, which browsers refuse to follow
-       * from an http:// page — it would fail silently, which is the worst possible outcome for
-       * a button. The endpoint takes an import ID and resolves the path itself, so no path
-       * from the page is ever handed to the shell.
-       */
-      async function openStatementFile(importId, path) {
-        try {
-          const r = await fetch(`/api/imports/${importId}/open`, { method: 'POST' });
-          if (!r.ok) {
-            const payload = await r.json().catch(() => null);
-            throw new Error(payload && (payload.error || payload.message)
-              ? (payload.error || payload.message) : 'HTTP ' + r.status);
-          }
-        } catch (err) {
-          alert('Could not open the statement: ' + err.message
-            + (path ? '\n\n' + path : ''));
-        }
-      }
 
       async function mapUnmapped() {
         if (!(mappingFilesData.unmappedCount)) {

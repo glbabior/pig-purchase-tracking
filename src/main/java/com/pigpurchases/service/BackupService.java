@@ -19,9 +19,11 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -66,24 +68,6 @@ public class BackupService {
     /** Category for the in-app Debug screen, alongside "ingest" and "mapping". */
     private static final String BACKUP = "backup";
 
-    /**
-     * The durable log, as well as the console.
-     *
-     * <p>Console output disappears with the terminal and nobody reads it. The subsystem whose
-     * entire job is to be trustworthy was the one with no visible record: a failure showed up
-     * as Settings continuing to display the last SUCCESSFUL timestamp.
-     *
-     * <p>Routine "nothing changed, skipped" runs are deliberately NOT logged. The scheduler
-     * runs every ten minutes, so that would be ~144 entries a day saying nothing happened,
-     * which would bury the entries that matter — and Settings already shows the last backup
-     * time for answering "is it still running?".
-     *
-     * <p>Safe against recursion: the backup fingerprint does not read {@code app_log_entries},
-     * so writing these rows cannot make the next run think the database changed.
-     * {@code DebugLogService.record} also swallows its own failures, so logging can never
-     * break the backup it is reporting on.
-     */
-    @Autowired private DebugLogService debugLog;
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmmss");
     private static final String PREFIX = "pigpurchases-";
@@ -130,6 +114,56 @@ public class BackupService {
      */
     private Connection liveConnection() throws SQLException {
         return dataSource.getLive().getConnection();
+    }
+
+    /**
+     * Write one line to the durable log, on the LIVE database, swallowing anything that goes
+     * wrong.
+     *
+     * <p>Console output disappears with the terminal and nobody reads it. The subsystem whose
+     * entire job is to be trustworthy was the one with no visible record: a failure showed up
+     * as Settings continuing to display the last SUCCESSFUL timestamp.
+     *
+     * <p>Routine "nothing changed, skipped" runs are deliberately NOT logged. The scheduler
+     * runs every ten minutes, so that would be ~144 entries a day saying nothing happened,
+     * which would bury the entries that matter — and Settings already shows the last backup
+     * time for answering "is it still running?".
+     *
+     * <p><b>Not through {@code DebugLogService}</b>, for the same reason every other read here
+     * goes through {@link #liveConnection()}. That service writes through the {@code @Primary}
+     * {@link SwitchableDataSource}, which points at the PREVIEW database for as long as a
+     * restore preview is open — so a scheduled backup during a preview would dump the live
+     * database correctly and then file its own record in the copy, which
+     * {@code clearPreview()} deletes. The entry worth losing least is the suspicious-drop
+     * warning, and a restore preview is exactly when someone is investigating suspected data
+     * loss. This is the third bug of that shape in this class; the field javadoc above and
+     * {@code effectiveKeep} document the other two.
+     *
+     * <p><b>And not through a transaction.</b> {@code DebugLogService.record} guards its own
+     * {@code save}, but under {@code REQUIRES_NEW} the INSERT and the COMMIT happen after that
+     * method returns, so a commit-time failure is thrown by the transaction interceptor,
+     * outside every guard. That could make a backup that succeeded report as failed — the
+     * exact inversion this logging was added to prevent — and, from
+     * {@code resetBaselineAfterRestore}, propagate into {@code RestoreService.commit} after
+     * the live database had already been replaced, reporting a successful restore as failed.
+     *
+     * <p>Safe against feedback: the backup fingerprint does not read {@code app_log_entries},
+     * so writing these rows cannot make the next run think the database changed.
+     */
+    private void logBackup(String level, String message) {
+        try (Connection c = liveConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "INSERT INTO app_log_entries (created_at, level, category, message)"
+                     + " VALUES (?, ?, ?, ?)")) {
+            ps.setTimestamp(1, Timestamp.valueOf(LocalDateTime.now()));
+            ps.setString(2, level);
+            ps.setString(3, BACKUP);
+            ps.setString(4, message.length() > 4000 ? message.substring(0, 4000) : message);
+            ps.executeUpdate();
+        } catch (Exception e) {
+            // Never let the record of the work break the work, or misreport it.
+            log.warn("Could not write backup log entry: {}", e.getMessage());
+        }
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -303,7 +337,7 @@ public class BackupService {
                         + lastGoodRichness + " to " + richness + " — possible data loss. Saved as "
                         + target.getFileName() + " WITHOUT overwriting the good daily backup. Investigate before trusting the live database.";
                 log.warn(lastWarning);
-                debugLog.warn(BACKUP, lastWarning);
+                logBackup("WARN", lastWarning);
                 // Do not update lastGoodRichness or prune on a suspect snapshot.
                 return;
             }
@@ -313,7 +347,7 @@ public class BackupService {
             lastFailure = null;
             prune(dir, effectiveKeep());
             log.info("Database backup written: {} (trigger={}, mappings={})", target.getFileName(), trigger, richness);
-            debugLog.info(BACKUP, "Wrote " + target.getFileName() + " (" + trigger + ") — "
+            logBackup("INFO", "Wrote " + target.getFileName() + " (" + trigger + ") — "
                     + richness + " mapped transaction(s).");
         } catch (Exception e) {
             // Record it, don't just log it. Every failure here was previously console-only:
@@ -324,7 +358,7 @@ public class BackupService {
             // in the one subsystem whose whole job is to be trustworthy.
             lastFailure = LocalDateTime.now() + " (" + trigger + "): " + e.getMessage();
             log.error("Database backup ({}) failed", trigger, e);
-            debugLog.error(BACKUP, "FAILED (" + trigger + "): "
+            logBackup("ERROR", "FAILED (" + trigger + "): "
                     + e.getClass().getSimpleName() + " — " + e.getMessage());
         }
     }

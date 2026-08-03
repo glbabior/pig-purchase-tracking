@@ -4,13 +4,14 @@ A single-user desktop budgeting app. You point it at folders of bank/credit-card
 statement PDFs; it parses them into transactions, categorizes each transaction
 against your budget, and shows how actual spending tracks to budget per month and
 on a rolling average. It runs entirely on your machine — the only thing that ever
-leaves it is a transaction's *description and vendor text*, sent to the Claude API
-to categorize the handful of transactions the deterministic rules can't place.
+leaves it is a transaction's *description and vendor text* — with account identifiers
+stripped from both — sent to the Claude API to categorize the handful of transactions
+the deterministic rules can't place.
 
 - **Stack:** Spring Boot 3.5.16, Java 25, Spring Data JPA / Hibernate, embedded Tomcat on `:8080`.
 - **Database:** H2 file database, one file, `ddl-auto=update` (no migration scripts; one programmatic column-type fix in `EnumColumnMigration` — see §7).
-- **UI:** one hand-written `static/index.html` (vanilla JS, no build step) talking to a REST API.
-- **Shape:** you run `PigPurchasesApplication`, a browser tab is the whole client. No multi-user, no auth, no cloud.
+- **UI:** two hand-written files, no build step: `static/index.html` (markup, styles, DOM and fetch code) and `static/app-math.js` (the pure functions — money, dates, escaping, table sorting — split out so `AppMathTest` can run them). Vanilla JS, talking to a REST API.
+- **Shape:** you run `PigPurchasesApplication`, a browser tab is the whole client. No multi-user, no cloud, and no login — but not no protection: `LocalOriginFilter` refuses state-changing requests that did not come from this machine, and sets a CSP and anti-framing headers. See §7.
 
 ---
 
@@ -60,9 +61,9 @@ Two deliberate facts about this picture:
 | `parser` | Turn one issuer's PDF into `ParsedStatement`/`ParsedTransaction`. Strategy pattern. | `StatementParser` (interface), `DepositStatementParser`, `CardStatementParser`, `PropertyStatementParser`, `ExclusionRule` |
 | `model` | JPA entities — the persistent domain. | `Transaction`, `BudgetEntry`, `AnalysisRun`, `TransactionMapping`, `MerchantCategory`, … (12 total) |
 | `repository` | Spring Data JPA interfaces, one per aggregate. | `TransactionRepository`, `AnalysisRunRepository`, … |
-| `service` | All business logic. Ingest, the categorization pipeline, analysis math, AI, backup/restore. | `IngestService`, `MappingService`, `AnalysisService`, `AiCategorizationService`, `HintMatcher`, `BackupService`, `RestoreService`, `ManualEntryService`, `DebugLogService` |
-| `server` | `@RestController`s (the `/api` surface) + `DataInitializer`. Thin — they marshal JSON and delegate. | `BudgetController`, `MappingController`, `AnalysisController`, `ManualEntryController`, `BackupController`, `RestoreController` |
-| `config` | Switchable-datasource plumbing, plus startup schema fixes. | `DataSourceConfig`, `SwitchableDataSource`, `EnumColumnMigration` |
+| `service` | All business logic. Ingest, the categorization pipeline, analysis math, AI, backup/restore. | `IngestService`, `MappingService`, `AnalysisService`, `AiCategorizationService`, `HintMatcher`, `HintService`, `BackupService`, `RestoreService`, `ManualEntryService`, `DebugLogService` |
+| `server` | `@RestController`s (the `/api` surface) + `DataInitializer`. Thin — they marshal JSON and delegate. | `BudgetController`, `MappingController`, `AnalysisController`, `ManualEntryController`, `BackupController`, `RestoreController`, `HintController` |
+| `config` | Switchable-datasource plumbing, startup schema fixes, and the request-origin / security-header filter. | `DataSourceConfig`, `SwitchableDataSource`, `EnumColumnMigration`, `LocalOriginFilter` |
 
 The dependency rule is the usual one: `server` → `service` → `repository` → `model`.
 Controllers hold no logic worth testing; services are where the tests live.
@@ -326,6 +327,7 @@ classDiagram
     class IngestService
     class MappingService
     class HintMatcher
+    class HintService
     class AiCategorizationService
     class AnalysisService
     class ManualEntryService
@@ -335,6 +337,7 @@ classDiagram
     IngestService ..> StatementParser : selects & runs
     MappingService ..> HintMatcher : pass 1
     MappingService ..> AiCategorizationService : pass 3
+    HintService ..> HintMatcher : validate / preview / find conflicts
     AiCategorizationService ..> ClaudeAPI : classify
     class EnumColumnMigration
     RestoreService ..> SwitchableDataSource : preview / commit
@@ -517,22 +520,50 @@ erDiagram
   this left mappings pointing at rows that no longer existed: the statement contributed
   nothing to any month, its run vanished from the Mapping screen, and `EXCLUDED_ONCE`
   was unrecoverable.
-- **Payments and deposits are never spend**, whatever their mapping status. `signedSpend`
-  negates them, so a parked one would *subtract* from the month. Only `CREDIT` nets
-  against spend, because a refund genuinely reverses a purchase.
+- **Payments and deposits are kept out of spend unless you assigned that exact row by
+  hand.** `signedSpend` negates `PAYMENT`, `CREDIT` and `DEPOSIT` alike, so a parked one
+  would *subtract* from the month — hence the default. The exception is narrow and
+  deliberate: `inSpendBuckets` admits a money-in row only when its status is
+  `MAPPED_MANUAL`, it has an entry id, and its reason is `ASSIGNED_BY_HAND`. The Bayside
+  parser types every positive line `DEPOSIT`, so a refund and a paycheck are
+  indistinguishable by type, and a decision about one specific transaction is the only
+  reliable signal. A remembered `MANUAL` merchant rule is not enough — that would let one
+  hand-categorized refund drag every later deposit from that merchant into spend.
 - **Backups always read the live database**, never the restore preview. `BackupService`
   holds the `SwitchableDataSource` itself and calls `getLive()`; taking the `@Primary`
   `DataSource` routed dumps through the switch, so a scheduled backup during a preview
   overwrote the day's real backup and poisoned the anti-clobber baseline.
-- **A budget entry cannot be deleted while transactions are mapped to it.** Analysis
-  buckets spend by entry id and builds its rows from the surviving entries, so an
-  orphaned key is never read and that money leaves every total at once.
+- **A budget entry cannot be deleted while a transaction that COUNTS TOWARD SPEND is
+  mapped to it.** Analysis buckets spend by entry id and builds its rows from the
+  surviving entries, so an orphaned key is never read and that money would leave every
+  total at once. `deleteEntry` splits the entry's mappings with the same
+  `inSpendBuckets` test the analysis uses, and refuses only if a visible row remains.
+  Rows that are invisible anyway — excluded, or money-in the user never assigned — do
+  not block the delete; they are re-parked with the reason "Category deleted" and their
+  runs recounted.
 - **A one-off exclusion survives a re-map.** `EXCLUDED_ONCE` deliberately writes no
   `merchant_categories` rule, so it is the one manual decision `doMap` cannot
   rebuild from the cache; it snapshots those rows before deleting and re-applies
   them ahead of every pass. `TransactionMapping.countsAsSpend()` is the single test
   for "is this spend" — callers never compare statuses themselves.
-- **Local-first everywhere.** Amounts never leave the machine; only descriptions
-  and vendor strings are sent to Claude, and only for transactions no rule could place.
-```
+- **Local-first everywhere.** Amounts never leave the machine; only descriptions and
+  vendor strings are sent to Claude, and only for transactions no rule could place —
+  and both are passed through `AiCategorizationService.scrubIdentifiers` first. A bank
+  ACH descriptor carries the originator ID and the account holder's legal name *inside*
+  the description text, so enforcing the rule on the shape of the payload (no amount
+  field, no date field) was true and insufficient. The scrub truncates at the first
+  `ID:` / `INDN:` / `CO ID:` marker and strips runs of eight or more digits. It happens
+  on the way OUT only: the stored description is what hints match on and what the
+  merchant cache is keyed by, so rewriting it would invalidate every existing hint and
+  remembered answer.
+- **A state-changing request must not name a foreign origin.** `LocalOriginFilter`
+  refuses any POST / PUT / PATCH / DELETE whose `Origin` or `Referer` resolves to a host
+  that is not loopback, and refuses a literal `null` origin — the opaque origin a
+  sandboxed iframe or `data:` document sends. A request carrying *neither* header is
+  allowed: a browser always sends one for a page-initiated state change, so what is left
+  is `curl` and local tooling. Without this, any page the browser had open could spend
+  API credit, commit a restore, or clear the backup baseline; it could never read the
+  reply, so the damage was one-way and invisible. The same filter sets the CSP and
+  `X-Frame-Options`, because framing would hand back the `DELETE`s and `PUT`s the origin
+  check puts out of reach.
 

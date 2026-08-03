@@ -386,16 +386,36 @@ public class BudgetController {
      * <p>Refusing is deliberately preferred to quoting. Getting {@code cmd} quoting right for
      * every case is famously difficult, a mistake fails open, and no real statement file needs
      * these characters — so the safe answer costs nothing and the risky one has to be perfect.
-     * Checked on every platform, not just Windows, because a rule that only applies where the
-     * bug is remembered is a rule that stops applying.
+     *
+     * <p>Called ONLY from the Windows {@code cmd} branch. It first ran on every platform, on
+     * the theory that a rule applied only where the bug is remembered is a rule that stops
+     * applying — but {@code open} and {@code xdg-open} are handed their argument directly with
+     * no shell in between, so there it refused files it had no reason to. It also runs against
+     * the whole absolute path, which includes the user's own folders: a statement source under
+     * {@code D:\Docs\Bank & Trust\} would otherwise have every file in it permanently
+     * unopenable. That is still refused on Windows, because {@code cmd} really would split the
+     * command there — but the message has to name the character, since the offending part of
+     * the path may be a folder the user chose rather than the file they clicked.
      */
     private static void refuseShellMetacharacters(String path) {
-        if (SHELL_METACHARACTERS.matcher(path).find()) {
+        java.util.regex.Matcher m = SHELL_METACHARACTERS.matcher(path);
+        if (m.find()) {
             throw new IllegalArgumentException(
-                    "This file cannot be opened from the app: its path contains a character the "
-                    + "command shell would treat as an instruction (one of & | ^ % ! \"). "
-                    + "Rename the file, then try again.\n\n" + path);
+                    "This file cannot be opened from the app. Its path contains "
+                    + describe(m.group()) + ", which the Windows command shell would treat as "
+                    + "an instruction rather than part of a name. Rename the file or the folder,"
+                    + " then try again.\n\n" + path);
         }
+    }
+
+    /** Name the character, since several of these are invisible or easy to miss in a path. */
+    private static String describe(String ch) {
+        return switch (ch) {
+            case "\r", "\n" -> "a line break";
+            case "`" -> "a backtick (`)";
+            case "\"" -> "a double quote (\")";
+            default -> "'" + ch + "'";
+        };
     }
 
     /**
@@ -413,9 +433,13 @@ public class BudgetController {
     private void launch(Path file, boolean reveal) throws IOException {
         String os = System.getProperty("os.name", "").toLowerCase();
         String path = file.toAbsolutePath().toString();
-        refuseShellMetacharacters(path);
         ProcessBuilder pb;
         if (os.contains("win")) {
+            // Only here. This is the one branch that hands the path to a shell — explorer.exe
+            // below and the open/xdg-open branches all receive it as a plain argument.
+            if (!reveal) {
+                refuseShellMetacharacters(path);
+            }
             // "start" treats a leading quoted token as the window title, so pass an empty one.
             pb = reveal ? new ProcessBuilder("explorer.exe", "/select," + path)
                         : new ProcessBuilder("cmd", "/c", "start", "", path);

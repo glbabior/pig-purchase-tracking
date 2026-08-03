@@ -107,8 +107,14 @@ public class LocalOriginFilter extends OncePerRequestFilter {
      * fallback for anything that sends one and no {@code Origin}.
      */
     private boolean fromThisMachine(HttpServletRequest request) {
+        // A literal "null" Origin is REFUSED, not ignored. A browser sends it from an opaque
+        // origin — a sandboxed iframe, a data: or srcdoc document — and a hostile page can pair
+        // that with referrerpolicy="no-referrer" so neither header names a host. Treating it as
+        // "no Origin" then fell through to the both-absent allowance below, which exists for
+        // curl and local tooling, and handed the exact attacker this filter is for a way past
+        // it. Falling into isLoopback is enough: "null" has no host, so it fails closed.
         String origin = request.getHeader("Origin");
-        if (origin != null && !origin.isBlank() && !"null".equals(origin)) {
+        if (origin != null && !origin.isBlank()) {
             return isLoopback(origin);
         }
         String referer = request.getHeader("Referer");
