@@ -26,8 +26,11 @@ The UI is a single browser tab with nine screens, worked roughly left to right.
 carries an optional free-text **hints** field, which is the knowledge base that
 categorization gets better from. See [Writing hints](#writing-hints).
 
-**Matching Hints** — one row per category, sorted by name, showing how many hints it has
-and how much they catch. Click a category to see, add or remove its hints; terms are
+**Matching Hints** — one row per category, sortable by any header and by name to start
+with, showing how many hints it has and how much they catch. Sorting by **Needs
+attention** ranks by severity rather than alphabetically: a hint the app cannot honour
+outranks one that is valid but has matched nothing yet, which outranks a category with
+no hints at all. Click a category to see, add or remove its hints; terms are
 quoted so the split points of a `+` hint are visible, and a hint's **matches N** badge
 opens the transactions it actually catches (dated, with the amount signed the same way
 the rest of the app signs it). Categories with **no** hints are listed too — those rely
@@ -50,12 +53,14 @@ import rather than duplicating it. This screen is also where you add a **manual
 transaction** — spend that never hits a statement (a Venmo balance, cash) — with a
 same-day duplicate check.
 
-**Mapping** — the categorization screen. One scrolling table, header pinned, with a
-row per ingested statement: source, statement date, a 📄 icon that opens the file in
-your default PDF app (the whole path is in its hover text), transaction count, when
-it was last mapped, its mapped / parked / excluded counts, and per-row **Review all**,
-**Re-map** and **Delete**. A statement nothing has mapped yet shows em-dashes rather
-than zeros — "0 parked" and "not mapped yet, so unknown" are different facts.
+**Mapping** — the categorization screen. One scrolling table, header pinned and
+sortable, with a row per ingested statement: source, statement date, a 📄 icon that
+opens the file in your default PDF app (the whole path is in its hover text),
+transaction count, when it was last mapped, its mapped / parked / excluded counts,
+and per-row **Review all**, **Re-map** and **Delete**. A statement nothing has mapped
+yet shows "not mapped yet" rather than zeros — "0 parked" and "not mapped yet, so
+unknown" are different facts — and sorts to the bottom of a count column whichever
+way that column is sorted.
 **Map Transactions** maps everything not
 yet mapped; **Re-run mapping** re-does chosen statements. From here you also
 review the parked "Other" bucket, review all transactions in a run with search,

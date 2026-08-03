@@ -392,10 +392,12 @@
                 <table>
                   <thead>
                     <tr>
-                      <th>Category</th>
-                      <th>Hints</th>
-                      <th>Transactions matched</th>
-                      <th>Needs attention</th>
+                      <th class="sortable" data-hint-sort="name" data-label="Category">Category</th>
+                      <th class="sortable" data-hint-sort="hintCount" data-label="Hints">Hints</th>
+                      <th class="sortable" data-hint-sort="matched"
+                          data-label="Transactions matched">Transactions matched</th>
+                      <th class="sortable" data-hint-sort="attention"
+                          data-label="Needs attention">Needs attention</th>
                     </tr>
                   </thead>
                   <tbody id="hintsBody"></tbody>
@@ -461,14 +463,14 @@
                 <table class="runs-table">
                   <thead>
                     <tr>
-                      <th>Source</th>
-                      <th>Date</th>
+                      <th class="sortable" data-run-sort="sourceName" data-label="Source">Source</th>
+                      <th class="sortable" data-run-sort="statementDate" data-label="Date">Date</th>
                       <th title="Open the statement file">File</th>
-                      <th class="num">Txns</th>
-                      <th>Mapped on</th>
-                      <th class="num">Mapped</th>
-                      <th class="num">Parked</th>
-                      <th class="num">Excluded</th>
+                      <th class="sortable num" data-run-sort="transactionCount" data-label="Txns">Txns</th>
+                      <th class="sortable" data-run-sort="mappedAt" data-label="Mapped on">Mapped on</th>
+                      <th class="sortable num" data-run-sort="mappedCount" data-label="Mapped">Mapped</th>
+                      <th class="sortable num" data-run-sort="parkedCount" data-label="Parked">Parked</th>
+                      <th class="sortable num" data-run-sort="excludedCount" data-label="Excluded">Excluded</th>
                       <th colspan="3"></th>
                     </tr>
                   </thead>
@@ -1302,6 +1304,10 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
       backdropClose(document.getElementById('newHintModal'), () => hideModalEl('newHintModal'));
 
       document.getElementById('mapTransactionsBtn').addEventListener('click', mapUnmapped);
+      // Headers are static markup, so these bind once. Clicking the active column again
+      // reverses it, matching Budget Entries and the Spend tables.
+      wireSort('data-run-sort', runsSort, renderRuns);
+      wireSort('data-hint-sort', hintsSort, renderHints);
       document.getElementById('reRunMappingBtn').addEventListener('click', openRemapPicker);
       document.getElementById('remapGoBtn').addEventListener('click', doRemapSelected);
       document.getElementById('remapCancelBtn').addEventListener('click', () => hideModalEl('remapModal'));
@@ -1759,6 +1765,8 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
         return (hintsData.hints || []).filter((h) => String(h.entryId) === String(entryId));
       }
 
+      let hintsSort = { key: null, dir: 1 };
+
       async function loadHints() {
         const body = document.getElementById('hintsBody');
         const empty = document.getElementById('hintsEmptyState');
@@ -1772,31 +1780,48 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
           empty.style.display = 'block';
           return;
         }
+        renderHints();
+      }
 
-        // One row per CATEGORY, including categories with no hints at all — "this category
-        // has nothing catching anything" is exactly what you want to see, and listing only
-        // categories that already have hints hides it. A flat list of every hint becomes
-        // unreadable well before a real budget is fully covered.
+      /**
+       * One row per CATEGORY, including categories with no hints at all — "this category has
+       * nothing catching anything" is exactly what you want to see, and listing only
+       * categories that already have hints hides it.
+       *
+       * Split from the fetch so sorting re-renders without going back to the server: nothing
+       * about the data changed, only the order you want to read it in.
+       */
+      function renderHints() {
+        const body = document.getElementById('hintsBody');
+        const empty = document.getElementById('hintsEmptyState');
         const entries = hintsData.entries || [];
         empty.style.display = entries.length ? 'none' : 'block';
 
-        body.innerHTML = entries.map((e) => {
+        const rows = entries.map((e) => {
           const mine = hintsForEntry(e.id);
-          const ignored = mine.filter((h) => h.problem).length;
-          const idle = mine.filter((h) => !h.problem && h.matchCount === 0).length;
-          const matched = mine.filter((h) => !h.problem)
-            .reduce((sum, h) => sum + (h.matchCount || 0), 0);
+          return {
+            id: e.id,
+            name: e.name || '',
+            hintCount: mine.length,
+            ignored: mine.filter((h) => h.problem).length,
+            idle: mine.filter((h) => !h.problem && h.matchCount === 0).length,
+            matched: mine.filter((h) => !h.problem)
+              .reduce((sum, h) => sum + (h.matchCount || 0), 0),
+          };
+        });
 
-          const attention = ignored
-            ? `<span class="badge parked">${ignored} ignored</span>`
-            : idle
-              ? `<span class="badge parked">${idle} matching nothing yet</span>`
-              : mine.length ? '' : '<span class="hint">no hints — relies on the name or the AI</span>';
+        updateSortArrows('data-hint-sort', hintsSort);
+        body.innerHTML = sortHintCategories(rows, hintsSort).map((r) => {
+          const attention = r.ignored
+            ? `<span class="badge parked">${r.ignored} ignored</span>`
+            : r.idle
+              ? `<span class="badge parked">${r.idle} matching nothing yet</span>`
+              : r.hintCount ? '' : '<span class="hint">no hints — relies on the name or the AI</span>';
 
           return `<tr>
-            <td><button class="linklike" data-cat-hints="${e.id}">${escapeHtml(e.name || '')}</button></td>
-            <td>${mine.length}</td>
-            <td>${mine.length ? matched : ''}</td>
+            <td><button class="linklike" data-cat-hints="${r.id}">${escapeHtml(r.name)}</button></td>
+            <td>${r.hintCount}</td>
+            <td>${r.hintCount ? r.matched : ''}</td>
             <td>${attention}</td>
           </tr>`;
         }).join('');
@@ -2323,10 +2348,40 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
         checkNotification();
       }
 
+      let runsSort = { key: null, dir: 1 };
+
+      /**
+       * Draw ▲/▼ on whichever header is the active sort, for ONE table.
+       *
+       * Selected by the table's own attribute rather than a shared one, so the three sortable
+       * tables cannot rewrite each other's headers — which is exactly what the unscoped
+       * version of this did, blanking the Spend headers to the text "undefined".
+       */
+      function updateSortArrows(attr, state) {
+        document.querySelectorAll(`th[${attr}]`).forEach((th) => {
+          const active = th.getAttribute(attr) === state.key;
+          th.innerHTML = th.dataset.label
+            + (active ? ` <span class="arrow">${state.dir === 1 ? '▲' : '▼'}</span>` : '');
+        });
+      }
+
+      /** Click-to-sort for one table's headers. Re-clicking the active column reverses it. */
+      function wireSort(attr, state, rerender) {
+        document.querySelectorAll(`th[${attr}]`).forEach((th) => {
+          th.addEventListener('click', () => {
+            const key = th.getAttribute(attr);
+            if (state.key === key) state.dir *= -1;
+            else { state.key = key; state.dir = 1; }
+            rerender();
+          });
+        });
+      }
+
       function renderRuns() {
         const container = document.getElementById('runsBody');
         const empty = document.getElementById('runsEmptyState');
-        const files = mappingFilesData.files || [];
+        updateSortArrows('data-run-sort', runsSort);
+        const files = sortRunFiles(mappingFilesData.files || [], runsSort);
         empty.style.display = files.length ? 'none' : 'block';
 
         const pending = mappingFilesData.unmappedCount || 0;
@@ -2378,8 +2433,7 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
             <td class="num">${f.transactionCount}</td>
             <td class="nowrap">${f.mappedAt ? formatLogTime(f.mappedAt) : '—'}</td>
             <td class="num">${f.mappedCount}</td>
-            <td class="num">${f.parkedCount ? `<span class="badge parked">${f.parkedCount}</span>`
-                                            : f.parkedCount}</td>
+            <td class="num">${f.parkedCount}</td>
             <td class="num">${f.excludedCount}</td>
             <td><button class="secondary btn-sm" data-review="${f.runId}"
                   data-label="${label}">Review all</button></td>
@@ -2811,7 +2865,12 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
       }
 
       function updateSortIndicators() {
-        document.querySelectorAll('th[data-sort]').forEach((th) => {
+        // Scoped to Budget Entries. Unscoped, this rewrote EVERY th[data-sort] on the page
+        // from its own sort state — including the Spend tables', which carry no data-label and
+        // so had their headers replaced with the text "undefined" the next time anything
+        // reloaded the entries. Views are hidden with display:none, not removed, so a table
+        // rendered on another screen is still in the DOM to be clobbered.
+        document.querySelectorAll('#budgetView th[data-sort]').forEach((th) => {
           const active = th.dataset.sort === sortState.key;
           const arrow = active ? ` <span class="arrow">${sortState.dir === 1 ? '▲' : '▼'}</span>` : '';
           th.innerHTML = th.dataset.label + arrow;

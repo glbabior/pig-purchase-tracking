@@ -96,6 +96,90 @@ class AppMathTest {
         return AnalysisService.signedSpend(txn);
     }
 
+    // ---- table sorting -----------------------------------------------------
+
+    /** Runs a JS expression against the loaded file and returns the result. */
+    private Value evalJs(String expression) {
+        return js.eval("js", expression);
+    }
+
+    /** The names, in order, that a sort of the given rows produces. */
+    private List<String> orderOf(String rowsJs, String sortJs, String sortFn, String field) {
+        Value out = evalJs("(" + sortFn + "(" + rowsJs + ", " + sortJs + "))"
+                + ".map(function(r) { return String(r." + field + "); })");
+        return List.copyOf(out.as(List.class));
+    }
+
+    private static final String FILES = """
+        [ { sourceName: 'Crestline', statementDate: '2026-07-11', transactionCount: 144,
+            mapped: true,  mappedAt: '2026-07-12T09:00:00', mappedCount: 83,
+            parkedCount: 60, excludedCount: 1 },
+          { sourceName: 'Bayside',  statementDate: '2026-07-08', transactionCount: 15,
+            mapped: true,  mappedAt: '2026-07-09T09:00:00', mappedCount: 4,
+            parkedCount: 4,  excludedCount: 7 },
+          { sourceName: 'Ridgeline', statementDate: '2026-07-01', transactionCount: 4,
+            mapped: false } ]""";
+
+    @Test
+    void anUnmappedStatementSinksWhicheverWayACountColumnIsSorted() {
+        // The one that is easy to get wrong: an unmapped statement has no parked count, and
+        // treating that as 0 would file it among genuinely clean statements. Flipping the
+        // direction must not float it to the top either — it is not the answer at either end.
+        assertEquals(List.of("Crestline", "Bayside", "Ridgeline"),
+                orderOf(FILES, "{key:'parkedCount', dir:-1}", "sortRunFiles", "sourceName"),
+                "descending: most parked first, unmapped last");
+        assertEquals(List.of("Bayside", "Crestline", "Ridgeline"),
+                orderOf(FILES, "{key:'parkedCount', dir:1}", "sortRunFiles", "sourceName"),
+                "ascending: fewest parked first, and the unmapped one STILL last");
+    }
+
+    @Test
+    void mappingSortsOnValuesNotOnHowTheyAreDisplayed() {
+        // Dates are ISO strings and compare as text; counts are numbers and must not.
+        assertEquals(List.of("Crestline", "Bayside", "Ridgeline"),
+                orderOf(FILES, "{key:'statementDate', dir:-1}", "sortRunFiles", "sourceName"));
+        // 144 vs 15 vs 4: string comparison would put 144 below 15.
+        assertEquals(List.of("Crestline", "Bayside", "Ridgeline"),
+                orderOf(FILES, "{key:'transactionCount', dir:-1}", "sortRunFiles", "sourceName"));
+        assertEquals(List.of("Bayside", "Crestline", "Ridgeline"),
+                orderOf(FILES, "{key:'sourceName', dir:1}", "sortRunFiles", "sourceName"));
+    }
+
+    @Test
+    void anUnknownOrAbsentSortKeyLeavesTheServerOrderAlone() {
+        assertEquals(List.of("Crestline", "Bayside", "Ridgeline"),
+                orderOf(FILES, "{}", "sortRunFiles", "sourceName"));
+        assertEquals(List.of("Crestline", "Bayside", "Ridgeline"),
+                orderOf(FILES, "{key:'nonsense', dir:1}", "sortRunFiles", "sourceName"));
+    }
+
+    private static final String HINT_ROWS = """
+        [ { name: 'Groceries', hintCount: 2, ignored: 0, idle: 0, matched: 40 },
+          { name: 'Roadster', hintCount: 0, ignored: 0, idle: 0, matched: 0 },
+          { name: 'Phone',     hintCount: 2, ignored: 1, idle: 0, matched: 9 },
+          { name: 'Media',     hintCount: 1, ignored: 0, idle: 1, matched: 0 } ]""";
+
+    @Test
+    void needsAttentionSortsWorstFirstNotAlphabetically() {
+        // "Needs attention" is not a number on screen, so it sorts on severity. A rule the app
+        // cannot honour outranks one that is merely waiting for a statement, which outranks a
+        // category with no rules at all — the first can never work, the last is only a gap.
+        assertEquals(List.of("Phone", "Media", "Roadster", "Groceries"),
+                orderOf(HINT_ROWS, "{key:'attention', dir:-1}", "sortHintCategories", "name"),
+                "ignored, then idle, then no-hints, then the category that is fine");
+    }
+
+    @Test
+    void hintCategoriesSortOnTheirCountsAndNames() {
+        // Roadster and Media both match nothing. A tie keeps the incoming order — the server
+        // sorts by name, so the table stays stable rather than reshuffling equal rows on every
+        // re-render. Array.prototype.sort has been required to be stable since ES2019.
+        assertEquals(List.of("Groceries", "Phone", "Roadster", "Media"),
+                orderOf(HINT_ROWS, "{key:'matched', dir:-1}", "sortHintCategories", "name"));
+        assertEquals(List.of("Roadster", "Groceries", "Media", "Phone"),
+                orderOf(HINT_ROWS, "{key:'name', dir:1}", "sortHintCategories", "name"));
+    }
+
     // ---- the rest ----------------------------------------------------------
 
     @Test

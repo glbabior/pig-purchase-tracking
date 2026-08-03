@@ -88,6 +88,66 @@ function formatLogTime(iso) {
 }
 
 /**
+ * Sort table rows by one named column.
+ *
+ * `sort` is {key, dir}; `valuesByKey` maps a column key to what that column compares on. An
+ * unknown or absent key returns the input untouched, which is the server's order.
+ *
+ * Rows with nothing to compare SINK, whichever way the column is sorted, rather than
+ * flipping to the top on the reverse click. Sorting by "Parked" asks a question about mapped
+ * statements; an unmapped one is not the answer at either end, and interleaving them makes
+ * the column unreadable.
+ *
+ * Returns a new array, so the caller keeps the server's order to sort differently next time.
+ */
+function sortRows(rows, sort, valuesByKey) {
+  const value = valuesByKey[(sort || {}).key];
+  if (!value) return rows;
+  const dir = (sort.dir === -1) ? -1 : 1;
+  return [...rows].sort((a, b) => {
+    const x = value(a);
+    const y = value(b);
+    const xMissing = x === null || x === undefined;
+    const yMissing = y === null || y === undefined;
+    if (xMissing || yMissing) return (xMissing && yMissing) ? 0 : (xMissing ? 1 : -1);
+    return (typeof x === 'number' ? x - y : String(x).localeCompare(String(y))) * dir;
+  });
+}
+
+/**
+ * Mapping columns. Returning null rather than 0 for an unmapped statement is the point: it
+ * has no counts, and "not mapped yet" is a different fact from "mapped, nothing parked".
+ * Dates are ISO strings, so they compare correctly as text.
+ */
+const RUN_SORT_VALUES = {
+  sourceName: (f) => String(f.sourceName || '').toLowerCase(),
+  statementDate: (f) => f.statementDate || null,
+  transactionCount: (f) => f.transactionCount,
+  mappedAt: (f) => f.mappedAt || null,
+  mappedCount: (f) => (f.mapped ? f.mappedCount : null),
+  parkedCount: (f) => (f.mapped ? f.parkedCount : null),
+  excludedCount: (f) => (f.mapped ? f.excludedCount : null),
+};
+
+/**
+ * Matching Hints columns, over the per-category rows the screen builds.
+ *
+ * "Needs attention" is not a number on screen, so it sorts on severity — descending puts the
+ * categories worth looking at first. A rule the app cannot honour outranks one that is valid
+ * but has matched nothing yet, which outranks a category with no rules at all: the first can
+ * never work, the second may just be waiting for a statement, and the third is only a gap.
+ */
+const HINT_SORT_VALUES = {
+  name: (r) => String(r.name || '').toLowerCase(),
+  hintCount: (r) => r.hintCount,
+  matched: (r) => r.matched,
+  attention: (r) => (r.ignored ? 3 : r.idle ? 2 : r.hintCount ? 0 : 1),
+};
+
+function sortRunFiles(files, sort) { return sortRows(files, sort, RUN_SORT_VALUES); }
+function sortHintCategories(rows, sort) { return sortRows(rows, sort, HINT_SORT_VALUES); }
+
+/**
  * Escape text for interpolation into markup. Statement descriptions are merchant-controlled
  * text, so this is the boundary between them and the page.
  *
