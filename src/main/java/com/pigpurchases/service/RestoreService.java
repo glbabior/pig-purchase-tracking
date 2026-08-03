@@ -227,7 +227,11 @@ public class RestoreService {
     }
 
     private Path resolveBackup(String fileName) {
-        if (fileName == null || fileName.contains("/") || fileName.contains("\\") || fileName.contains("..")) {
+        // The quote matters as much as the separators. This name is concatenated into
+        // RUNSCRIPT FROM '<name>' (and twice more in commit), so a single quote in it closes
+        // the string literal and the rest of the name becomes SQL.
+        if (fileName == null || fileName.contains("/") || fileName.contains("\\")
+                || fileName.contains("..") || fileName.contains("'") || fileName.contains("\"")) {
             throw new IllegalArgumentException("Invalid backup file name.");
         }
         Path p = Paths.get(backupDir).resolve(fileName);

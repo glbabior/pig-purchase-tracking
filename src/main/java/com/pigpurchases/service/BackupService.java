@@ -5,6 +5,7 @@ import com.pigpurchases.repository.AppSettingsRepository;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
@@ -61,6 +62,28 @@ import java.util.Properties;
 public class BackupService {
 
     private static final Logger log = LoggerFactory.getLogger(BackupService.class);
+
+    /** Category for the in-app Debug screen, alongside "ingest" and "mapping". */
+    private static final String BACKUP = "backup";
+
+    /**
+     * The durable log, as well as the console.
+     *
+     * <p>Console output disappears with the terminal and nobody reads it. The subsystem whose
+     * entire job is to be trustworthy was the one with no visible record: a failure showed up
+     * as Settings continuing to display the last SUCCESSFUL timestamp.
+     *
+     * <p>Routine "nothing changed, skipped" runs are deliberately NOT logged. The scheduler
+     * runs every ten minutes, so that would be ~144 entries a day saying nothing happened,
+     * which would bury the entries that matter — and Settings already shows the last backup
+     * time for answering "is it still running?".
+     *
+     * <p>Safe against recursion: the backup fingerprint does not read {@code app_log_entries},
+     * so writing these rows cannot make the next run think the database changed.
+     * {@code DebugLogService.record} also swallows its own failures, so logging can never
+     * break the backup it is reporting on.
+     */
+    @Autowired private DebugLogService debugLog;
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmmss");
     private static final String PREFIX = "pigpurchases-";
@@ -280,6 +303,7 @@ public class BackupService {
                         + lastGoodRichness + " to " + richness + " — possible data loss. Saved as "
                         + target.getFileName() + " WITHOUT overwriting the good daily backup. Investigate before trusting the live database.";
                 log.warn(lastWarning);
+                debugLog.warn(BACKUP, lastWarning);
                 // Do not update lastGoodRichness or prune on a suspect snapshot.
                 return;
             }
@@ -289,6 +313,8 @@ public class BackupService {
             lastFailure = null;
             prune(dir, effectiveKeep());
             log.info("Database backup written: {} (trigger={}, mappings={})", target.getFileName(), trigger, richness);
+            debugLog.info(BACKUP, "Wrote " + target.getFileName() + " (" + trigger + ") — "
+                    + richness + " mapped transaction(s).");
         } catch (Exception e) {
             // Record it, don't just log it. Every failure here was previously console-only:
             // Settings went on displaying the last SUCCESSFUL timestamp with no error state,
@@ -298,6 +324,8 @@ public class BackupService {
             // in the one subsystem whose whole job is to be trustworthy.
             lastFailure = LocalDateTime.now() + " (" + trigger + "): " + e.getMessage();
             log.error("Database backup ({}) failed", trigger, e);
+            debugLog.error(BACKUP, "FAILED (" + trigger + "): "
+                    + e.getClass().getSimpleName() + " — " + e.getMessage());
         }
     }
 

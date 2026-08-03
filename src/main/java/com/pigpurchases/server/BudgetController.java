@@ -364,6 +364,41 @@ public class BudgetController {
     }
 
     /**
+     * Characters that mean something to {@code cmd.exe} rather than naming a file.
+     *
+     * <p>{@code &} and {@code |} separate statements, {@code ^} escapes, {@code %} expands a
+     * variable, {@code !} expands one again under delayed expansion, and {@code "} ends a
+     * quoted argument. Windows already forbids most of these in a file name — {@code &},
+     * {@code ^}, {@code %} and {@code !} it does not.
+     */
+    private static final java.util.regex.Pattern SHELL_METACHARACTERS =
+            java.util.regex.Pattern.compile("[&|^%!\"`\\r\\n]");
+
+    /**
+     * Refuse to launch a path that could be read as a command rather than a file name.
+     *
+     * <p>The Windows branch below goes through {@code cmd /c start}, and the JDK quotes an
+     * argument only when it contains a space or a tab. A path with no space is therefore
+     * passed to {@code cmd} unquoted, and {@code cmd} reads an {@code &} in it as "end of
+     * this command, start the next one". The file name comes from whatever writes into the
+     * statement folder, so it is not ours to trust.
+     *
+     * <p>Refusing is deliberately preferred to quoting. Getting {@code cmd} quoting right for
+     * every case is famously difficult, a mistake fails open, and no real statement file needs
+     * these characters — so the safe answer costs nothing and the risky one has to be perfect.
+     * Checked on every platform, not just Windows, because a rule that only applies where the
+     * bug is remembered is a rule that stops applying.
+     */
+    private static void refuseShellMetacharacters(String path) {
+        if (SHELL_METACHARACTERS.matcher(path).find()) {
+            throw new IllegalArgumentException(
+                    "This file cannot be opened from the app: its path contains a character the "
+                    + "command shell would treat as an instruction (one of & | ^ % ! \"). "
+                    + "Rename the file, then try again.\n\n" + path);
+        }
+    }
+
+    /**
      * Hand the file to the desktop: {@code reveal} selects it in the file
      * manager, otherwise it opens in the default handler for its type.
      *
@@ -378,6 +413,7 @@ public class BudgetController {
     private void launch(Path file, boolean reveal) throws IOException {
         String os = System.getProperty("os.name", "").toLowerCase();
         String path = file.toAbsolutePath().toString();
+        refuseShellMetacharacters(path);
         ProcessBuilder pb;
         if (os.contains("win")) {
             // "start" treats a leading quoted token as the window title, so pass an empty one.

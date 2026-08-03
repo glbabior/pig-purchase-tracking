@@ -50,6 +50,7 @@ class BackupServiceTest {
     @Autowired private TransactionMappingRepository mappingRepo;
     @Autowired private TransactionRepository txnRepo;
     @Autowired private DismissedDuplicateRepository dismissedRepo;
+    @Autowired private DebugLogService debugLogService;
 
     @BeforeEach
     void clean() throws IOException {
@@ -87,6 +88,39 @@ class BackupServiceTest {
     /** When the last backup was written, or null. Unchanged across a skipped run. */
     private Object lastBackupAt() {
         return backupService.status().get("lastBackupAt");
+    }
+
+    @Test
+    void aWrittenBackupIsRecordedInTheDebugLog() {
+        // Backups were console-only, and a console nobody is watching is not a record. This
+        // is the subsystem whose entire job is to be trustworthy, so "did it run?" has to be
+        // answerable from inside the app.
+        entryRepo.save(new BudgetEntry("Groceries", new BigDecimal("400.00")));
+        backupService.backupNow();
+
+        boolean logged = debugLogService.recent().stream()
+                .anyMatch(e -> "backup".equals(e.getCategory())
+                        && e.getMessage() != null && e.getMessage().contains("Wrote "));
+        assertTrue(logged, "a written backup must appear in the debug log");
+    }
+
+    @Test
+    void aRoutineSkipIsNotLogged() {
+        // The scheduler runs every ten minutes. Logging "nothing changed" would add ~144
+        // entries a day and bury the ones worth reading, and Settings already shows the last
+        // backup time for answering "is it still running?".
+        entryRepo.save(new BudgetEntry("Groceries", new BigDecimal("400.00")));
+        backupService.backupNow();
+        long after = debugLogService.recent().stream()
+                .filter(e -> "backup".equals(e.getCategory())).count();
+
+        // scheduled() is the non-forced path — the one that actually runs every ten minutes.
+        // backupNow() forces a write, so it could not show this.
+        backupService.scheduled();
+
+        assertEquals(after, debugLogService.recent().stream()
+                        .filter(e -> "backup".equals(e.getCategory())).count(),
+                "a skipped backup must not add an entry");
     }
 
     /**

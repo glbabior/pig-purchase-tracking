@@ -83,9 +83,15 @@ and restore.
 (which file, which parser, whether it reconciled against the statement's own
 totals, what a re-load carried over or lost), every mapping run (how many
 transactions each pass placed, and how many were left parked), every manual
-decision you made during review, and every outbound Claude API call with its
-result or error. This is where you look when a total moved and you don't know why,
-or when a mapping run categorizes nothing.
+decision you made during review, every outbound Claude API call with its result or
+error, and every database backup written, failed, or flagged as a suspicious drop.
+This is where you look when a total moved and you don't know why, or when a mapping
+run categorizes nothing.
+
+Routine backups that find nothing changed are deliberately **not** logged — the
+scheduler runs every ten minutes, so they would add ~144 entries a day saying
+nothing happened. Settings shows the last backup time for answering "is it still
+running?".
 
 **Help is built in.** The sidebar **? Help** button opens a usage guide — an
 overview plus a section per screen — and every screen's own **? Help** button opens
@@ -366,6 +372,38 @@ rewriting it would invalidate every existing hint and remembered answer.
 No cloud database, no analytics, no third-party sharing. **With no API key
 configured, nothing at all leaves the machine** — the AI pass is skipped and
 unresolved transactions stay in "Other".
+
+### Security
+
+There is no login, because this is one person on their own machine and a password
+would be theatre. That is not the same as no protection, and the gap between the
+two was real until 2026-08-02:
+
+- **Requests must come from this machine.** `LocalOriginFilter` refuses any POST,
+  PUT, PATCH or DELETE whose `Origin` or `Referer` names a host that is not
+  loopback. Without it, any web page the browser had open could silently drive the
+  app — spend API credit, commit a restore, launch a file, or clear the backup
+  baseline. It could never *read* a response, so the damage was all one-way and
+  invisible. Requests with neither header are allowed: a browser always sends one
+  for a page-initiated state change, so what is left is `curl` and local tooling.
+- **The page cannot be framed, and injected code cannot phone home.** Every
+  response carries `X-Frame-Options: DENY`, `frame-ancestors 'none'`,
+  `X-Content-Type-Options: nosniff` and a CSP whose `default-src`/`connect-src` are
+  `'self'`. `'unsafe-inline'` is allowed for scripts and styles because the
+  frontend is one inline block by design — the value here is `connect-src`, which
+  means even a successful injection has nowhere off-machine to send what it reads.
+- **The H2 web console is off.** It had no password of its own and fronted a
+  datasource using `sa` with a blank one.
+- **Files are not opened through a shell if their name could be a command.**
+  `cmd /c start` leaves an unquoted path when it contains no space, so an `&` in a
+  statement filename would separate commands. Such a path is refused with an
+  explanation rather than quoted, because quoting has to be perfect and refusing
+  does not.
+- **Backup file names may not contain a quote**, which would otherwise escape the
+  `RUNSCRIPT FROM '<name>'` that loads them.
+
+Still open, and known: previewing a backup executes the SQL inside it, so a `.sql`
+file from anywhere other than this app should not be previewed.
 
 ---
 
