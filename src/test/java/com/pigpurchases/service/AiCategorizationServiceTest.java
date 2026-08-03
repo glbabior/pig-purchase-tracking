@@ -58,6 +58,69 @@ class AiCategorizationServiceTest {
         assertFalse(prompt.contains("$"), "no dollar figures anywhere:\n" + prompt);
     }
 
+    // ---- account identifiers buried inside the description --------------------
+    //
+    // The gap this file used to have. Every fixture above is a CARD descriptor, which
+    // contains no personal data — so the privacy tests passed while bank ACH lines, which
+    // carry the originator id and the account holder's legal name inside the description
+    // string, went out intact. The name below is fictional on purpose: a real one has no
+    // business being committed to a repo either.
+
+    private static final String ACH =
+            "Crestline DES:Ext Trnsfr ID:29457381777 INDN:JORDAN A TESTERSON CO 07/03/26";
+
+    @Test
+    void anAchDescriptorSendsTheMerchantButNotTheNameOrTheAccountId() {
+        String prompt = AiCategorizationService.promptFor(
+                List.of(new AiCategorizationService.Candidate("k", ACH, "Crestline")),
+                ENTRIES);
+
+        assertFalse(prompt.contains("TESTERSON"),
+                "the account holder's name must never leave the machine:\n" + prompt);
+        assertFalse(prompt.contains("JORDAN"), prompt);
+        assertFalse(prompt.contains("29457381777"),
+                "the originator id is an account identifier:\n" + prompt);
+        assertFalse(prompt.contains("07/03/26"), "dates are not sent either:\n" + prompt);
+        assertFalse(prompt.contains("INDN"), prompt);
+
+        // Still categorizable: the merchant and the kind of transfer are what place it.
+        assertTrue(prompt.contains("Crestline"), prompt);
+        assertTrue(prompt.contains("Ext Trnsfr"),
+                "the transfer type is the signal that makes this placeable:\n" + prompt);
+    }
+
+    @Test
+    void scrubbingKeepsOrdinaryCardDescriptorsIntact() {
+        // The other half of the risk: over-scrubbing would quietly make categorization worse
+        // for the vast majority of rows, which nothing else would notice.
+        assertEquals("FRESHMARKET WHSE #1234 RIVERTON CA",
+                AiCategorizationService.scrubIdentifiers("FRESHMARKET WHSE #1234 RIVERTON CA"));
+        assertEquals("TST* PIZZA NIGHT",
+                AiCategorizationService.scrubIdentifiers("TST* PIZZA NIGHT"));
+        assertEquals("SQ *BREW HOUSE 0042",
+                AiCategorizationService.scrubIdentifiers("SQ *BREW HOUSE 0042"));
+    }
+
+    @Test
+    void aLongDigitRunIsStrippedWhereverItAppears() {
+        // Belt and braces for a statement format nobody has met yet. Eight digits is past a
+        // store number and into account, card and trace territory.
+        assertEquals("ACME UTILITY PAYMENT",
+                AiCategorizationService.scrubIdentifiers("ACME UTILITY 000000000000 PAYMENT"));
+    }
+
+    @Test
+    void theVendorFieldIsScrubbedToo() {
+        // The vendor is usually already clean, but it is the second thing on the wire and a
+        // guarantee with an unchecked second path is not a guarantee.
+        String prompt = AiCategorizationService.promptFor(
+                List.of(new AiCategorizationService.Candidate("k", "SALARY DEPOSIT",
+                        "PAYROLL ID:998877665544 INDN:JORDAN A TESTERSON")),
+                ENTRIES);
+        assertFalse(prompt.contains("TESTERSON"), prompt);
+        assertFalse(prompt.contains("998877665544"), prompt);
+    }
+
     @Test
     void repeatedMerchantsCollapseToOneCandidate() {
         // Five Fresh Market visits should cost one line in the request, not five.

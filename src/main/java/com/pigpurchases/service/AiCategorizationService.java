@@ -253,8 +253,56 @@ public class AiCategorizationService {
             """;
 
     /**
+     * Everything from the first ACH field marker onward. An ACH descriptor reads
+     * {@code MERCHANT DES:<what> ID:<originator id> INDN:<account holder> CO <date>} — so
+     * {@code ID:} and {@code INDN:} are, literally, an account identifier and the account
+     * holder's legal name, and the trailing {@code CO} segment carries a date.
+     */
+    private static final java.util.regex.Pattern ACH_IDENTIFIERS =
+            java.util.regex.Pattern.compile("\\s*\\b(ID|INDN|IND ID|CO ID)\\s*:.*$",
+                    java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /** A run of digits long enough to be an account, card or trace number rather than a store. */
+    private static final java.util.regex.Pattern LONG_DIGIT_RUN =
+            java.util.regex.Pattern.compile("\\d{8,}");
+
+    /**
+     * Strip account identifiers out of statement text before it leaves the machine.
+     *
+     * <p>This exists because the guarantee was being broken in the quietest possible way. The
+     * privacy rule was enforced on the SHAPE of the payload — no amount field, no date field —
+     * and that was genuinely true. But a bank ACH descriptor carries the originator ID and the
+     * account holder's full legal name INSIDE the description string, so "we only send
+     * descriptions" and "we never send account identifiers" were both believed, and only the
+     * first was true. The transactions this hits are the ones no card-merchant hint matches —
+     * mortgage, payroll, insurance, utilities — which is to say the most sensitive ones.
+     *
+     * <p>Applied here rather than at parse time on purpose. The stored description is what
+     * hints match on and what the merchant cache is keyed by
+     * ({@code HintMatcher.normalize(description)}); rewriting it would silently invalidate
+     * every existing hint and every remembered answer. What is stored is unchanged. What
+     * LEAVES is scrubbed.
+     *
+     * <p>Truncating at the marker keeps the part that identifies the merchant — the
+     * {@code MERCHANT DES:<what>} prefix is what makes the transfer categorizable — and drops
+     * the id, the name and the date together. The digit sweep is belt and braces for the same
+     * class of thing in a format nobody has met yet.
+     */
+    static String scrubIdentifiers(String text) {
+        if (text == null) {
+            return null;
+        }
+        String out = ACH_IDENTIFIERS.matcher(text).replaceAll("");
+        out = LONG_DIGIT_RUN.matcher(out).replaceAll("");
+        return out.replaceAll("\\s{2,}", " ").trim();
+    }
+
+    /**
      * The request body. Descriptions and vendor names only — deliberately no
      * amounts, dates, account identifiers, or balances.
+     *
+     * <p>Both fields go through {@link #scrubIdentifiers} on the way out, so this really is
+     * the one method the privacy guarantee has to be checked in.
      */
     static String promptFor(List<Candidate> batch, List<BudgetEntry> entries) {
         StringBuilder sb = new StringBuilder();
@@ -271,10 +319,11 @@ public class AiCategorizationService {
         sb.append("\nTransactions to categorize:\n");
         for (int i = 0; i < batch.size(); i++) {
             Candidate candidate = batch.get(i);
-            sb.append(i).append(". ").append(candidate.description());
-            if (candidate.vendor() != null && !candidate.vendor().isBlank()
-                    && !candidate.vendor().equals(candidate.description())) {
-                sb.append("  (vendor: ").append(candidate.vendor()).append(")");
+            String description = scrubIdentifiers(candidate.description());
+            String vendor = scrubIdentifiers(candidate.vendor());
+            sb.append(i).append(". ").append(description);
+            if (vendor != null && !vendor.isBlank() && !vendor.equals(description)) {
+                sb.append("  (vendor: ").append(vendor).append(")");
             }
             sb.append('\n');
         }

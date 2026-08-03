@@ -347,6 +347,22 @@ never included. The request body is built in a single method
 (`AiCategorizationService.promptFor`) so the guarantee is checkable in one place,
 and `AiCategorizationServiceTest` asserts it.
 
+Descriptions are **scrubbed** on the way out, because a bank ACH descriptor carries
+account identifiers inside the description text itself — the shape is
+`MERCHANT DES:<what> ID:<originator id> INDN:<account holder name> CO <date>`.
+`AiCategorizationService.scrubIdentifiers` truncates at the first such marker and
+strips any run of eight or more digits, so the merchant and the transfer type are
+sent and the id, the name and the date are not. What is **stored** is untouched:
+hints match on the full description and the merchant cache is keyed by it, so
+rewriting it would invalidate every existing hint and remembered answer.
+
+> **This was broken until 2026-08-02.** The rule was enforced on the shape of the
+> payload — no amount field, no date field — which was true and insufficient.
+> Descriptions of bank transfers, payroll, mortgage and insurance payments were sent
+> whole, carrying the originator ID and the account holder's legal name. The test
+> that was supposed to prove otherwise only ever used card descriptors, which contain
+> neither. If you ran AI categorization before that date, assume those went out.
+
 No cloud database, no analytics, no third-party sharing. **With no API key
 configured, nothing at all leaves the machine** — the AI pass is skipped and
 unresolved transactions stay in "Other".
