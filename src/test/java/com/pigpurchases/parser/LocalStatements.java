@@ -70,6 +70,21 @@ final class LocalStatements {
             props.load(in);
         } catch (IOException e) {
             throw new UncheckedIOException("Could not read " + CONFIG.toAbsolutePath(), e);
+        } catch (RuntimeException e) {
+            // Properties.load throws IllegalArgumentException, not IOException, on a
+            // malformed unicode escape — and on Windows the natural thing to type, a path
+            // like C:{backslash}users{backslash}me, is exactly that, because the backslash
+            // before "u" starts one. Uncaught it escapes this static initializer as
+            // ExceptionInInitializerError, which names neither the file nor the key,
+            // burying the one detail the reader needs under a JVM-level error.
+            //
+            // Written with {backslash} rather than the character because javac expands
+            // unicode escapes inside COMMENTS too: spelling the sequence out literally here
+            // is itself a compile error, which is a fair demonstration of the hazard.
+            throw new IllegalStateException(
+                    "Could not parse " + CONFIG.toAbsolutePath() + " - this is a"
+                    + " java.util.Properties file, so backslash is an escape character."
+                    + " Use forward slashes in paths (C:/Users/... works on Windows).", e);
         }
         return props;
     }
@@ -131,14 +146,35 @@ final class LocalStatements {
         return Optional.of(path);
     }
 
-    /** A configured decimal (an expected total for a known sample), or empty. */
+    /**
+     * A configured decimal (an expected total for a known sample), or empty.
+     *
+     * <p>The key is named in the failure because the raw {@code NumberFormatException} does
+     * not name it, and the likeliest bad value is a total copied off a statement with its
+     * thousands separator intact — in a file whose neighbouring key is deliberately
+     * comma-separated, so a comma looks reasonable right up until it isn't.
+     */
     static Optional<BigDecimal> decimal(String key) {
-        return value(key).map(BigDecimal::new);
+        return value(key).map(v -> {
+            try {
+                return new BigDecimal(v);
+            } catch (NumberFormatException e) {
+                throw new IllegalStateException(key + " must be a plain decimal with no"
+                        + " thousands separator or currency symbol, but is \"" + v + "\"", e);
+            }
+        });
     }
 
     /** A configured whole number (an expected transaction count), or empty. */
     static Optional<Integer> integer(String key) {
-        return value(key).map(Integer::parseInt);
+        return value(key).map(v -> {
+            try {
+                return Integer.valueOf(v);
+            } catch (NumberFormatException e) {
+                throw new IllegalStateException(key + " must be a whole number, but is \""
+                        + v + "\"", e);
+            }
+        });
     }
 
     /**
@@ -206,7 +242,14 @@ final class LocalStatements {
             (value(key).isPresent() ? configured : missing).add(key);
         }
         if (configured.isEmpty()) {
-            return unset(String.join("\" / \"", missing));
+            // One key gets the copy-pasteable -D suggestion; several cannot, because
+            // joining them into unset() built a -D flag with two key names inside it that
+            // no shell would accept.
+            return missing.size() == 1
+                    ? unset(missing.get(0))
+                    : "No statements configured for \"" + String.join("\" or \"", missing)
+                      + "\" - set either in " + CONFIG + " (copy " + CONFIG
+                      + ".example). Skipping.";
         }
         return "The configured folder(s) for \"" + String.join("\", \"", configured)
                 + "\" resolve but hold no PDFs. Nothing to reconcile; skipping.";

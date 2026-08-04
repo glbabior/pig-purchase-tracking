@@ -1,8 +1,18 @@
 # Where the *ValidationTest suite finds real statements to reconcile against.
 #
-# Copy this file to `statements.local.properties` (gitignored) and fill in the
-# folders on your machine. Every key is optional: an unset one makes its test skip,
-# which is what happens on CI and on a fresh clone.
+# Copy this file to `statements.local.properties` (gitignored) and uncomment only the
+# keys you actually have statements for. Every key is optional: an unset one makes its
+# test skip, which is what happens on CI and on a fresh clone.
+#
+# EVERY KEY BELOW SHIPS COMMENTED OUT, deliberately. A key set to a path that does not
+# exist is an error (see below), so a template with live placeholder paths would fail
+# four tests the moment you copied it — teaching you that this mechanism cries wolf,
+# which is the one lesson that would stop you trusting it when it is right.
+#
+# USE FORWARD SLASHES. This is a java.util.Properties file, where backslash is the
+# escape character: `C:\Users\me\statements` silently loads as `C:Usersmestatements`,
+# and a backslash before a `u` — `C:\users\...` — is a malformed unicode escape that
+# fails the whole file. Forward slashes work fine on Windows.
 #
 # THE KEYS BELOW ARE NOT A SCHEMA. They exist because this repo ships three parsers
 # written against three specific statement formats — one bank, one card issuer, one
@@ -46,14 +56,14 @@
 # Two keys because one login can hold a consumer ("Northwind Checking") and a business
 # ("Business Checking") account, and the parser handles both. Set
 # either, both, or neither.
-bayside.primary=C:/path/to/statements/bayside/primary/2026
-bayside.secondary=C:/path/to/statements/bayside/business/2026
+# bayside.primary=C:/path/to/statements/bayside/primary/2026
+# bayside.secondary=C:/path/to/statements/bayside/business/2026
 
 # --- Crestline credit card ----------------------------------------------------------
-crestline=C:/path/to/statements/crestline/2026
+# crestline=C:/path/to/statements/crestline/2026
 
 # --- Ridgeline Properties rent/utility statements ----------------------------
-ridgeline=C:/path/to/statements/ridgeline
+# ridgeline=C:/path/to/statements/ridgeline
 
 # One statement whose figures you have checked by eye. The exact count, total and utility
 # list are the sharpest assertions in the suite, so they are worth setting — but they

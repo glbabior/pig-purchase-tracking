@@ -325,11 +325,11 @@ Tests come in two flavours, deliberately separated:
   Point them at your statements by copying `statements.local.properties.example` to
   `statements.local.properties` (gitignored) and filling in the folders; a single key
   can also come from `-Dpigpurchases.statements.<key>=...` or the environment
-  (`src/test/java/com/pigpurchases/parser/LocalStatements.java:69-82`). Every key is
+  (`src/test/java/com/pigpurchases/parser/LocalStatements.java:88-101`). Every key is
   optional: unset, blank or commented out all mean "not requested", and the test skips.
 
   A key that **is** set but points at nothing **fails** rather than skipping
-  (`LocalStatements.java:109-121`), and so does a configured
+  (`LocalStatements.java:128-142`), and so does a configured
   `ridgeline.sample.file` that isn't in the folder. Configuring a key is a statement
   of intent, and a validation test that quietly stops running looks exactly like one
   that passes — Surefire prints no reason for a skip, so silence there is total. When a
@@ -337,7 +337,7 @@ Tests come in two flavours, deliberately separated:
   that the config and the disk agree, not that the data live forever.
 
   The four `ridgeline.sample.*` keys — the file, its expected count, total and utility
-  list — travel as a **group**: all set, or all absent (`LocalStatements.java:158-170`).
+  list — travel as a **group**: all set, or all absent (`LocalStatements.java:198-210`).
   Naming a reference statement without saying what it should contain reads as configured
   while asserting almost nothing.
 
