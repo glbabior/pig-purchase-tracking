@@ -84,6 +84,34 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
             </plugin>
+            <!--
+                Javadoc, on demand: `mvnw javadoc:javadoc` -> target/reports/apidocs.
+                Deliberately not bound to a lifecycle phase, for the same reason the
+                architecture PDF is not: it is 220 files nobody needs during a test run.
+
+                doclint is left ON for HTML and syntax, and off only for missing tags.
+                That is not a cosmetic setting. The HTML check is what flagged a bare
+                '&' and a '<-' in two parser javadocs, and following those two errors
+                is how a real card payment amount was found sitting in a comment. The
+                missing-tag warnings are the ~40 record components whose names are
+                already their documentation, so leaving those on would bury the checks
+                that earn their keep.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>3.11.3</version>
+                <configuration>
+                    <!-- Output path is left at the plugin's default rather than pinned.
+                         It has moved before (target/site/apidocs -> target/reports/apidocs)
+                         and overriding it here did not take effect for the CLI goal anyway;
+                         javadoc.cmd locates the generated index instead, which is honest
+                         about the path being the plugin's business rather than ours. -->
+                    <doclint>all,-missing</doclint>
+                    <notimestamp>true</notimestamp>
+                    <quiet>true</quiet>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 </project>

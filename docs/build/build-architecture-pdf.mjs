@@ -1,7 +1,11 @@
 /*
  * Render docs/architecture.html to docs/ARCHITECTURE.pdf.
  *
- *   node docs/build-architecture-pdf.mjs
+ *   node docs/build/build-architecture-pdf.mjs
+ *
+ * This script and its npm dependencies live in docs/build/ so that docs/ itself holds
+ * only what a reader wants: the architecture document, its HTML twin, and the PDF built
+ * from them. The output still lands in docs/ — it is the deliverable, not the machinery.
  *
  * Needs Node and Chrome, both of which are already on this machine. It is deliberately NOT
  * wired into the Maven build: the PDF is a hand-checked deliverable, not a build artifact, and
@@ -20,11 +24,12 @@
  * make it, because "the PDF was written" and "the PDF is correct" are different claims.
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const docs = dirname(fileURLToPath(import.meta.url));
+const here = dirname(fileURLToPath(import.meta.url)); // docs/build
+const docs = resolve(here, '..');                     // docs
 const source = resolve(docs, 'architecture.html');
 const output = resolve(docs, 'ARCHITECTURE.pdf');
 const staging = resolve(docs, '.architecture.print.html');
@@ -46,12 +51,14 @@ function findChrome() {
 }
 
 function findMermaid() {
-  // Wherever npm put it — docs/node_modules or the repo root.
-  for (const base of [docs, resolve(docs, '..')]) {
+  // Wherever npm put it. docs/build is where the install is documented to go; docs and
+  // the repo root are kept as fallbacks so an install done before this script moved, or
+  // hoisted to the root, still resolves rather than failing on a technicality.
+  for (const base of [here, docs, resolve(docs, '..')]) {
     const p = resolve(base, 'node_modules', 'mermaid', 'dist', 'mermaid.min.js');
     if (existsSync(p)) return p;
   }
-  throw new Error('mermaid is not installed. Run:  npm install --prefix docs mermaid@11');
+  throw new Error('mermaid is not installed. Run:  npm install --prefix docs/build mermaid@11');
 }
 
 const runtime = (mermaidJs) => `
@@ -111,10 +118,29 @@ function build() {
       + `Nothing was written. Search docs/architecture.html for the diagram that changed.`);
   }
 
+  // Chrome exits 0 even when it could not write the PDF at all — on Windows, a viewer
+  // holding the file open is enough, and Acrobat holds it open. The size line below then
+  // reads the STALE file still sitting there and reports it as a fresh success.
+  //
+  // That is the same "looks finished" failure the two diagram checks above exist to
+  // prevent, one step further along: not a wrong PDF, but YESTERDAY's PDF announced as
+  // today's. It defeats the reason the PDF is generated on every doc-drift run rather
+  // than committed — the whole point was that it can never be the stale copy that
+  // contradicts the other two documents, and a silent no-write makes it exactly that.
+  //
+  // So the write is proved by the timestamp advancing, not by the file merely existing.
+  const before = existsSync(output) ? statSync(output).mtimeMs : 0;
+
   execFileSync(chrome, [...common, '--no-pdf-header-footer', `--print-to-pdf=${output}`, url],
     { stdio: ['ignore', 'ignore', 'ignore'] });
 
   unlinkSync(staging);
+  if (!existsSync(output) || statSync(output).mtimeMs <= before) {
+    throw new Error(
+      `Chrome reported success but ${output} was not rewritten. It is almost certainly open in `
+      + `a PDF viewer — Acrobat locks the file — so close it and run this again. The previous `
+      + `PDF is still on disk, unchanged, and is now out of date.`);
+  }
   const bytes = readFileSync(output).length;
   console.log(`docs/ARCHITECTURE.pdf — ${expected} diagrams, ${(bytes / 1024).toFixed(0)} KB`);
 }

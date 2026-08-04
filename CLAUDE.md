@@ -27,7 +27,7 @@ tracked file, so it can never be the stale copy that contradicts the other two.
 Every `doc-drift` run ends with:
 
 ```
-node docs/build-architecture-pdf.mjs      # rewrites docs/ARCHITECTURE.pdf
+node docs/build/build-architecture-pdf.mjs   # rewrites docs/ARCHITECTURE.pdf
 ```
 
 Run it after applying the run's findings, so the PDF reflects the corrected page
@@ -40,17 +40,19 @@ diagrams is not enough on its own: mermaid answers a diagram it cannot parse wit
 SVG containing a bomb icon and the words "Syntax error in text", so the count comes
 back complete and the PDF looks finished. The check looks for that marker.
 
-Needs `npm install --prefix docs mermaid@11` once on a fresh clone.
+Needs `npm install --prefix docs/build mermaid@11` once on a fresh clone. The generator
+and its dependencies live in `docs/build/` so that `docs/` holds only what a reader
+wants; the PDF is still written to `docs/`.
 
 **To commit a copy on purpose** — for a release, or to hand someone the file through
 the repo — `git add -f docs/ARCHITECTURE.pdf`. Do that only when explicitly asked;
 the default is that it stays untracked.
 
-There is a published artifact of this page at
-`https://claude.ai/code/artifact/85a5e20c-a856-4beb-9095-819f2a91c858`. It is **no
-longer maintained** — the PDF in `docs/` is the shareable copy now. Do not republish
-it as part of doc upkeep. Treat that link as a snapshot of 2026-08-03, and assume it
-is wrong about anything changed since.
+An early version of this page was once published as a Claude artifact. That artifact is
+**abandoned** — the PDF in `docs/` is the shareable copy now. Do not republish it, do not
+look for it, and do not treat anything it says as current. Its URL has been removed from
+this file deliberately: it is a private link tied to one account, and this repo is
+shareable.
 
 Update whatever drifted. Move the `Code-verified` stamp only for what was
 actually verified this session, not as a formality.

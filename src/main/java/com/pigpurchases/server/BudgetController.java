@@ -674,7 +674,7 @@ public class BudgetController {
     }
 
     /**
-     * Append a matching hint to an entry (stored as a "match: <text>" line), so any
+     * Append a matching hint to an entry (stored as a {@code match: <text>} line), so any
      * future transaction whose description contains that text maps here automatically.
      * De-duplicates case-insensitively. Turns a one-off manual categorization into a rule.
      */

@@ -18,8 +18,8 @@ never leave the machine** — see [Privacy](#privacy).
 > For a version you can read away from the repo or hand to someone, build the PDF:
 >
 > ```
-> npm install --prefix docs mermaid@11     # once
-> node docs/build-architecture-pdf.mjs     # writes docs/ARCHITECTURE.pdf
+> npm install --prefix docs/build mermaid@11    # once
+> node docs/build/build-architecture-pdf.mjs    # writes docs/ARCHITECTURE.pdf
 > ```
 >
 > It renders [docs/architecture.html](docs/architecture.html) with the diagrams
@@ -213,6 +213,18 @@ during review, the app offers to save the matching hint for you.
 
 ## Running it
 
+> **If you cloned this.** It is one person's budget tracker, not a general statement
+> reader, and the three parsers are written against three specific PDF layouts — a
+> particular bank, card issuer and property manager. Yours will not match. Expect to
+> write a parser and a validation test for your own statements; the ones here are
+> reference material for the shape of the problem, and the deliberate parts are that a
+> parse is reconciled against the control totals the statement itself prints, and that a
+> parser refuses rather than guesses when it cannot tell what it is looking at.
+>
+> Nothing in the repo requires any file to exist. A clone with no statements and no
+> configuration builds green, with the statement-dependent tests skipped — see
+> [Testing](#testing).
+
 The Maven wrapper is committed, so no Maven install is needed — just a JDK 25 on
 `PATH`. Use `.\mvnw.cmd` (PowerShell / cmd) or `./mvnw` (Git Bash).
 
@@ -220,7 +232,26 @@ The Maven wrapper is committed, so no Maven install is needed — just a JDK 25 
 .\launch.cmd                      # or: .\mvnw.cmd -DskipTests spring-boot:run
 .\mvnw.cmd clean package          # build
 .\mvnw.cmd test                   # test
+.\javadoc.cmd                     # generate the API docs and open them
 ```
+
+### Reading the code
+
+`.\javadoc.cmd` builds the API documentation from the source comments and opens it in
+your browser. Worth doing if you are reading this codebase rather than running it: the
+reasoning behind the mapping passes, the spend rules and the privacy boundary lives in
+class and method comments rather than in a separate design document, and the generated
+site is far easier to move around than the files are. Start with `MappingService`,
+`AnalysisService`, `HintMatcher` and `TransactionMapping`.
+
+It writes under `target/` — a build output, gitignored and regenerated on demand, never
+committed. The script finds and opens the generated index rather than hardcoding the
+path, because that path belongs to the Maven plugin and has moved before. `doclint`
+stays on for HTML and syntax, so a malformed comment fails the command rather than
+producing a quietly broken page — an unescaped `<` or `&` in a comment is an error.
+
+For the design view rather than the class view, read
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) instead.
 
 Wait for the log line `Started PigPurchasesApplication` (about 6 seconds), then
 open <http://localhost:8080> — the server does not open it for you. Stop with
@@ -284,13 +315,31 @@ Tests come in two flavours, deliberately separated:
   through the `TestPdfs` helper, and `IngestServiceIntegrationTest` drives a full
   ingest against an in-memory H2 (`application-test.properties`), covering parser
   dispatch, storage, exclusions, and idempotent re-ingest.
-- **Validation tests** (`*ValidationTest`) reconcile each parser against the real
-  statements on this machine — for Bayside, the sum of all signed transactions must
-  equal ending minus beginning balance; for Crestline, the printed purchases and credits
-  totals must match. Those PDFs are personal data and are never committed, so these
-  tests `assumeTrue` the folder exists and **skip silently** elsewhere. A green CI
-  run does not mean the parsers still reconcile — run the suite locally after
-  touching a parser.
+- **Validation tests** (`*ValidationTest`) reconcile each parser against real
+  statements — for Bayside, the sum of all signed transactions must equal ending minus
+  beginning balance; for Crestline, the printed purchases and credits totals must match.
+  Those PDFs are personal data and are never committed, so these tests `assumeTrue`
+  the folder exists and **skip silently** elsewhere. A green CI run does not mean the
+  parsers still reconcile — run the suite locally after touching a parser.
+
+  Point them at your statements by copying `statements.local.properties.example` to
+  `statements.local.properties` (gitignored) and filling in the folders; a single key
+  can also come from `-Dpigpurchases.statements.<key>=...` or the environment
+  (`src/test/java/com/pigpurchases/parser/LocalStatements.java:69-82`). Every key is
+  optional: unset, blank or commented out all mean "not requested", and the test skips.
+
+  A key that **is** set but points at nothing **fails** rather than skipping
+  (`LocalStatements.java:109-121`), and so does a configured
+  `ridgeline.sample.file` that isn't in the folder. Configuring a key is a statement
+  of intent, and a validation test that quietly stops running looks exactly like one
+  that passes — Surefire prints no reason for a skip, so silence there is total. When a
+  folder is gone for good, blank the key to withdraw the request; the requirement is
+  that the config and the disk agree, not that the data live forever.
+
+  The four `ridgeline.sample.*` keys — the file, its expected count, total and utility
+  list — travel as a **group**: all set, or all absent (`LocalStatements.java:158-170`).
+  Naming a reference statement without saying what it should contain reads as configured
+  while asserting almost nothing.
 
 ---
 
@@ -432,8 +481,10 @@ file from anywhere other than this app should not be previewed.
 ## Current status
 
 _Code-verified 2026-08-02 — the screen descriptions, the API reference, Privacy,
-Security, spend semantics, and the hint-length rules were each checked against the
-source. Runtime behavior against real statements was last checked 2026-07-22, and
+Security, and the hint-length rules were each checked against the source. **Spend
+semantics re-checked 2026-08-04**, which is when the money-in list above was corrected:
+it had named `CREDIT` as kept out of spend, and `AnalysisService.isMoneyIn` has never
+included it. Runtime behavior against real statements was last checked 2026-07-22, and
 one parser check is currently failing: the July Bayside statement's printed debits
 subtotal does not match the sum of its debit transactions. The balance itself
 reconciles, so the transactions are right and the cross-check is not._
@@ -490,13 +541,22 @@ reconciles, so the transactions are right and the cross-check is not._
   `PUT /api/statement-sources/{id}/parser-rules` until this is surfaced.
 - **Spend semantics are type-based, with one deliberate exception.** Spend nets by
   transaction type — purchases add, refunds subtract — and drops excluded transfers.
-  Money-in (`PAYMENT`, `CREDIT`, `DEPOSIT`) is kept out of spend **unless you assigned
-  that exact transaction to a category by hand**, in which case it nets against that
-  category. The exception exists because the Bayside parser types every positive line
-  `DEPOSIT`, so a refund and a paycheck are indistinguishable by type; your own
-  decision about one row is the only reliable signal. A remembered merchant rule is
-  not enough — only a decision about that transaction
-  (`AnalysisService.inSpendBuckets`). Each *statement* is now reconciled against its own
+  `PAYMENT` and `DEPOSIT` are kept out of spend **unless you assigned that exact
+  transaction to a category by hand**, in which case it nets against that category.
+  The exception exists because the Bayside parser types every positive line `DEPOSIT`,
+  so a refund and a paycheck are indistinguishable by type; your own decision about
+  one row is the only reliable signal. A remembered merchant rule is not enough —
+  only a decision about that transaction (`AnalysisService.inSpendBuckets`,
+  `AnalysisService.java:455-470`).
+
+  `CREDIT` is deliberately **not** in that keep-out set (`AnalysisService.java:434-437`):
+  a refund genuinely reverses a purchase in the same category, so it always reaches the
+  spend buckets and nets against them with no hand-assignment needed. All three types are
+  negated by `signedSpend` (`AnalysisService.java:480-487`) — that is the part they have
+  in common, and confusing the two rules is what put `CREDIT` in this list until
+  2026-08-04. The distinction is load-bearing: it is why a card payment mistyped as
+  `CREDIT` would subtract its full amount from the month with no control total catching
+  it (`CardStatementParser.java:151-176`). Each *statement* is now reconciled against its own
   printed control totals at ingest and refused if it doesn't tie out, but nothing
   checks a whole month's computed spend against the statements that fed it.
 - **Only PDF is supported.** CSV and OFX are not implemented.
@@ -622,9 +682,17 @@ PigPurchases/
 │   ├── parser/                    portable parser tests + *ValidationTest
 │   ├── service/                   mapping, analysis, ingest, AI, manual entry
 │   └── server/                    controller tests
-├── docs/ARCHITECTURE.md           design docs: diagrams, invariants, rationale
+├── docs/                          ARCHITECTURE.md + architecture.html (the same design
+│                                  material twice, prose and rendered diagrams), and the
+│                                  generated ARCHITECTURE.pdf. build/ holds the PDF
+│                                  generator and its npm dependencies, kept out of the
+│                                  way so docs/ is only what a reader wants
 ├── .github/workflows/ci.yml       mvnw test on Temurin 25
 ├── launch.cmd / stop.cmd / restart.cmd / restore.db.cmd
+├── javadoc.cmd                    generate the API docs from the source comments
+│                                  and open them (built under target/, gitignored)
+├── statements.local.properties.example   template for pointing the *ValidationTests
+│                                  at your statement folders; the real file is ignored
 └── mvnw, mvnw.cmd, pom.xml
 ```
 

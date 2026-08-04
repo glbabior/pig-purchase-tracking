@@ -18,6 +18,11 @@ pig-purchases-data.txt
 pig-purchases-data.txt.imported
 budget-import.json
 
+# Where the *ValidationTest suite finds real statements on THIS machine. The PDFs were
+# never committed; the paths to them were, hard-coded in four test files, which published
+# a home directory and the institutions behind each parser. The .example IS committed.
+statements.local.properties
+
 # OS / shortcut noise
 *.lnk
 
@@ -33,9 +38,12 @@ replay_pid*.log
 .claude/reports/
 
 # The architecture PDF and its generator's dependencies. The PDF is BUILT, not
-# tracked -- regenerate with: node docs/build-architecture-pdf.mjs
+# tracked -- regenerate with: node docs/build/build-architecture-pdf.mjs
 # To commit a copy anyway on purpose: git add -f docs/ARCHITECTURE.pdf
 docs/ARCHITECTURE.pdf
+docs/.architecture.print.html
+docs/build/node_modules/
+docs/build/package-lock.json
+# Pre-move locations, kept so an older clone does not suddenly start offering these.
 docs/node_modules/
 docs/package-lock.json
-docs/.architecture.print.html
