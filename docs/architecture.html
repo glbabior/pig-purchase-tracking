@@ -291,7 +291,7 @@ flowchart LR
       <table>
         <thead><tr><th>Package</th><th>Role</th><th>Notable types</th></tr></thead>
         <tbody>
-          <tr><td><code>parser</code></td><td>Turn one issuer's PDF into a parsed statement. Strategy pattern.</td><td><code>StatementParser</code> (interface), <code>Bayside/Crestline/PropertyStatementParser</code>, <code>ExclusionRule</code></td></tr>
+          <tr><td><code>parser</code></td><td>Turn one issuer's PDF into a parsed statement. Strategy pattern, wired by discovery.</td><td><code>StatementParser</code> (interface), <code>StatementParserRegistry</code>, <code>NorthwindStatementParser</code> (demonstration), <code>ExclusionRule</code></td></tr>
           <tr><td><code>model</code></td><td>JPA entities — the persistent domain (12 total).</td><td><code>Transaction</code>, <code>BudgetEntry</code>, <code>AnalysisRun</code>, <code>TransactionMapping</code>, <code>MerchantCategory</code></td></tr>
           <tr><td><code>repository</code></td><td>Spring Data JPA interfaces, one per aggregate.</td><td><code>TransactionRepository</code>, <code>AnalysisRunRepository</code></td></tr>
           <tr><td><code>service</code></td><td>All business logic: ingest, categorization pipeline, analysis math, AI, backup/restore.</td><td><code>IngestService</code>, <code>MappingService</code>, <code>AnalysisService</code>, <code>AiCategorizationService</code>, <code>HintMatcher</code>, <code>HintService</code></td></tr>
@@ -501,12 +501,15 @@ classDiagram
         &lt;&lt;interface&gt;&gt;
         +parse(Path) ParsedStatement
     }
-    class DepositStatementParser
-    class CardStatementParser
-    class PropertyStatementParser
-    StatementParser &lt;|.. DepositStatementParser
-    StatementParser &lt;|.. CardStatementParser
-    StatementParser &lt;|.. PropertyStatementParser
+    class StatementParserRegistry {
+        +get(String id) StatementParser
+        +ids() Set
+    }
+    class NorthwindStatementParser
+    class PrivateParsers["(parsers for real statements)"]
+    StatementParser &lt;|.. NorthwindStatementParser
+    StatementParser &lt;|.. PrivateParsers
+    StatementParserRegistry o-- StatementParser : discovers by id
     class SwitchableDataSource {
         +getConnection()
         +startPreview(DataSource)
@@ -712,7 +715,7 @@ erDiagram
         <code>signedSpend</code> negates <code>PAYMENT</code>, <code>CREDIT</code> and <code>DEPOSIT</code> alike, so a
         parked one would <em>subtract</em> from the month — hence the default. The exception is narrow:
         <code>inSpendBuckets</code> admits a money-in row only when its status is <code>MAPPED_MANUAL</code>, it has an
-        entry id, and its reason is <code>ASSIGNED_BY_HAND</code>. The Bayside parser types every positive line
+        entry id, and its reason is <code>ASSIGNED_BY_HAND</code>. A deposit-account parser types every positive line
         <code>DEPOSIT</code>, so a refund and a paycheck are indistinguishable by type; a decision about one specific
         transaction is the only reliable signal. A remembered merchant rule is deliberately <em>not</em> enough — that
         would let one hand-categorized refund drag every later deposit from that merchant into spend.</li>

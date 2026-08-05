@@ -32,5 +32,27 @@ public interface StatementParser {
      */
     Set<String> ids();
 
+    /**
+     * Whether this issuer's statements print totals the parse can be checked against.
+     *
+     * <p>When true, {@code IngestService} refuses a statement whose control totals it could
+     * not read at all: a summary box that stopped matching is the same layout change that
+     * makes transaction rows go missing, so an unverifiable parse from a format that is
+     * supposed to be verifiable is refused rather than stored.
+     *
+     * <p>Return false only when the statement genuinely prints no <i>independent</i> total.
+     * A "total" derived from the very rows being checked cannot catch anything, and treating
+     * it as reconciliation would be worse than admitting there is none — such a parser needs
+     * a structural guard of its own instead.
+     *
+     * <p>This lived in {@code IngestService} as a hardcoded set of parser ids. That put
+     * knowledge of specific issuers in the ingest path, which had to be edited to add a
+     * parser and named those issuers in code that is otherwise parser-agnostic. The parser
+     * knows the answer; it should say so.
+     */
+    default boolean printsControlTotals() {
+        return true;
+    }
+
     ParsedStatement parse(Path pdf) throws IOException;
 }

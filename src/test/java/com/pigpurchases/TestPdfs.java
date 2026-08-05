@@ -15,15 +15,23 @@ public final class TestPdfs {
 
     private TestPdfs() {}
 
-    /** A minimal Crestline-format statement whose transactions the Crestline parser recognizes. */
-    public static final List<String> CHASE_LINES = List.of(
-            "Opening/Closing Date 05/12/26 - 06/11/26",
-            "Payment, Credits -$150.00",
-            "Purchases +$1,234.45",
-            "05/22 COFFEE SHOP ANYTOWN CA 4.10",
-            "05/23 BIG PURCHASE STORE CITY CA 1,230.00",
-            "05/24 METRO STATION CITY CA .35",
-            "05/20 & Payment Thank You Bill Pay Service -150.00");
+    /**
+     * A Northwind (demonstration) statement whose rows the Northwind parser recognizes, and
+     * whose printed totals the parsed rows reconcile against.
+     *
+     * <p>Purchases 4.10 + 1,230.00 + 0.35 = 1,234.45; credits -150.00. Change a row and the
+     * totals must change with it, or ingest will refuse the file — which is the behaviour
+     * these fixtures exist to exercise.
+     */
+    public static final List<String> NORTHWIND_LINES = List.of(
+            "Northwind Bank - Account Statement",
+            "Statement Period Ending 06/11/2026",
+            "Total Purchases $1,234.45",
+            "Total Credits $150.00",
+            "05/22/26 COFFEE SHOP ANYTOWN CA 4.10",
+            "05/23/26 BIG PURCHASE STORE CITY CA 1,230.00",
+            "05/24/26 METRO STATION CITY CA 0.35",
+            "05/20/26 PAYMENT THANK YOU -150.00");
 
     public static void write(Path file, List<String> lines) throws IOException {
         try (PDDocument doc = new PDDocument()) {

@@ -17,7 +17,7 @@
 /**
  * Money out is positive, money in negative — the mirror of AnalysisService.signedSpend.
  *
- * The TYPE decides, not the stored sign, because the parsers disagree: a Bayside withdrawal is
+ * The TYPE decides, not the stored sign, because the parsers disagree: a deposit-account withdrawal is
  * stored negative while a Crestline purchase is positive. "Review all" used to render
  * Math.abs(amount), so a 150 refund read as a 150 charge there and as -150 in the category
  * drill-down — the same transaction with opposite signs on the two screens where it gets

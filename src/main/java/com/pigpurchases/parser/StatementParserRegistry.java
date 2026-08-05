@@ -1,5 +1,6 @@
 package com.pigpurchases.parser;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -39,7 +40,14 @@ public class StatementParserRegistry {
 
     private final Map<String, StatementParser> byId = new LinkedHashMap<>();
 
-    public StatementParserRegistry(List<StatementParser> parsers) {
+    /**
+     * Takes an {@link ObjectProvider} rather than a {@code List} so that ZERO parsers is a
+     * legal state. Spring treats an injected {@code List<T>} as a required dependency and
+     * fails to start when no {@code T} exists — which would turn "this checkout has no
+     * parsers yet" into an unexplained wiring error at startup, instead of the plain message
+     * {@link #get} gives when something actually asks for one.
+     */
+    public StatementParserRegistry(ObjectProvider<StatementParser> parsers) {
         Map<String, String> claimedBy = new LinkedHashMap<>();
         List<String> conflicts = new ArrayList<>();
         for (StatementParser parser : parsers) {

@@ -139,7 +139,7 @@ class StatementSourceControllerTest {
     void ingestThenServeSourceFileAndTraceTransaction(@TempDir Path folder) throws Exception {
         Files.createDirectories(folder.resolve("2026"));
         Path pdf = folder.resolve("2026").resolve("stmt.pdf");
-        TestPdfs.write(pdf, TestPdfs.CHASE_LINES);
+        TestPdfs.write(pdf, TestPdfs.NORTHWIND_LINES);
 
         String created = mvc.perform(post("/api/statement-sources").contentType(APPLICATION_JSON)
                         .content(json(Map.of("name", "Trace Test", "folderPath", folder.toString()))))
@@ -147,7 +147,7 @@ class StatementSourceControllerTest {
         long sourceId = om.readTree(created).get("id").asLong();
 
         mvc.perform(put("/api/statement-sources/" + sourceId + "/parser-rules").contentType(APPLICATION_JSON)
-                        .content(json(Map.of("parserRules", "{\"parser\":\"card-pdf\"}"))))
+                        .content(json(Map.of("parserRules", "{\"parser\":\"northwind-demo-pdf\"}"))))
                 .andExpect(status().isOk());
 
         String ingestResp = mvc.perform(post("/api/statement-sources/" + sourceId + "/ingest").contentType(APPLICATION_JSON)

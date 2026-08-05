@@ -6,34 +6,32 @@
 #
 # EVERY KEY BELOW SHIPS COMMENTED OUT, deliberately. A key set to a path that does not
 # exist is an error (see below), so a template with live placeholder paths would fail
-# four tests the moment you copied it — teaching you that this mechanism cries wolf,
-# which is the one lesson that would stop you trusting it when it is right.
+# tests the moment you copied it — teaching you that this mechanism cries wolf, which is
+# the one lesson that would stop you trusting it when it is right.
 #
 # USE FORWARD SLASHES. This is a java.util.Properties file, where backslash is the
 # escape character: `C:\Users\me\statements` silently loads as `C:Usersmestatements`,
 # and a backslash before a `u` — `C:\users\...` — is a malformed unicode escape that
 # fails the whole file. Forward slashes work fine on Windows.
 #
-# THE KEYS BELOW ARE NOT A SCHEMA. They exist because this repo ships three parsers
-# written against three specific statement formats — one bank, one card issuer, one
-# property manager — and those are the author's. Yours will be different. Nothing here
-# requires you to have a Bayside or Crestline statement, or any statement at all: the whole
-# mechanism is opt-in, key by key, and a clone that ignores this file entirely builds
-# green with every validation test skipped.
+# THE KEYS BELOW ARE NOT A SCHEMA. LocalStatements resolves whatever key it is asked
+# for; no name is special to it. Nothing here requires you to have a statement from any
+# particular institution, or any statement at all — this repository ships no validation
+# test, because it ships no parser for a real issuer. The one parser here reads a format
+# that does not exist, so it can be demonstrated without anyone's data.
 #
-# Bringing your own is the expected path. Write a parser, write its validation test,
-# pick whatever key name you like — LocalStatements resolves any key you ask it for,
-# and none of the names here are special to it. The parsers and tests already in the
-# repo are reference material showing the shape: reconcile the parse against whatever
-# control totals the statement itself prints, and refuse rather than guess.
+# Bringing your own is the expected path: write a parser, write a validation test, pick
+# a key name, put the folder here. NorthwindStatementParser is the worked example, and
+# the parts worth copying are that the parse is reconciled against whatever control
+# totals the statement itself prints, and that it refuses rather than guesses.
 #
 # WHY THIS FILE EXISTS: these paths used to be hard-coded in the test sources, which
 # published a home directory, an account nickname, and the institutions behind each
 # parser to anyone who read the repo. Statement PDFs were never committed; the paths
-# to them effectively were.
+# to them effectively were. The parsers themselves have since moved out too.
 #
 # A SKIP IS NOT A PASS. If you have statements and the test skips, this file is wrong.
-# The parsers are only proven against real statements here — see README, "Testing".
+# A parser is only proven against real statements here — see README, "Testing".
 #
 # HOW EACH KEY BEHAVES
 #   unset / blank / commented out  -> the test skips, quietly. Nothing was requested.
@@ -48,32 +46,29 @@
 # indistinguishable from the tests still running.
 #
 # You can also set any key for one run without a file:
-#   ./mvnw test -Dpigpurchases.statements.crestline=D:/statements/crestline
+#   ./mvnw test -Dpigpurchases.statements.mycard=D:/statements/mycard
 # or from the environment, upper-cased with dots as underscores:
-#   PIGPURCHASES_STATEMENTS_CHASE=/mnt/statements/crestline
+#   PIGPURCHASES_STATEMENTS_MYCARD=/mnt/statements/mycard
 
-# --- Bayside deposit accounts -------------------------------------------
-# Two keys because one login can hold a consumer ("Northwind Checking") and a business
-# ("Business Checking") account, and the parser handles both. Set
-# either, both, or neither.
-# bayside.primary=C:/path/to/statements/bayside/primary/2026
-# bayside.secondary=C:/path/to/statements/bayside/business/2026
+# --- Your statement folders -----------------------------------------------------
+# One key per folder of statements. The key name is yours to choose: a validation test
+# asks LocalStatements for whatever key it was written with, and nothing here treats any
+# name as special. These are examples of the shape, not a list to fill in.
 
-# --- Crestline credit card ----------------------------------------------------------
-# crestline=C:/path/to/statements/crestline/2026
+# mybank.primary=C:/path/to/statements/mybank/2026
+# mybank.business=C:/path/to/statements/mybank-business/2026
+# mycard=C:/path/to/statements/mycard/2026
 
-# --- Ridgeline Properties rent/utility statements ----------------------------
-# ridgeline=C:/path/to/statements/ridgeline
-
-# One statement whose figures you have checked by eye. The exact count, total and utility
-# list are the sharpest assertions in the suite, so they are worth setting — but they
-# describe YOUR statement, so they live here rather than in the test.
+# --- A reference statement, if your validation test uses one ---------------------
+# Naming one statement whose figures you have checked by eye gives a test its sharpest
+# assertions: an exact count and an exact total. They describe YOUR statement, so they
+# live here rather than in the test.
 #
-# These four travel as a GROUP: set them all, or leave them all out. A half-configured
-# sample is rejected, because naming a statement without saying what it should contain
-# reads as configured while asserting almost nothing. Leave all four out and the test
-# still runs its structural checks and insists at least one PDF parsed.
-# ridgeline.sample.file=statement-2026-07-01.pdf
-# ridgeline.sample.count=3
-# ridgeline.sample.total=123.45
-# ridgeline.sample.utilities=Sewer,Trash,Water
+# Keys like these travel as a GROUP - set them all, or leave them all out. A
+# half-configured reference reads as configured while asserting almost nothing, and is
+# rejected rather than quietly checking less.
+
+# mycard.sample.file=statement-2026-07-01.pdf
+# mycard.sample.count=3
+# mycard.sample.total=123.45
+# mycard.sample.utilities=Sewer,Trash,Water

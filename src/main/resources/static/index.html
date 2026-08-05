@@ -662,7 +662,7 @@
         <h2>Add a rule</h2>
         <p class="hint">A rule is a substring. Any transaction whose description contains it maps to the
           chosen category on the first pass. Join parts with <code>+</code> to require <em>all</em> of them
-          &mdash; e.g. <code>Crestline + Ext Trnsfr</code>, which survives the transaction ID changing
+          &mdash; e.g. <code>Northgate Bank + Ext Trnsfr</code>, which survives the transaction ID changing
           every month. Preview before saving to see exactly what it would catch.</p>
         <div class="field">
           <label for="newHintEntry">Category</label>
@@ -800,7 +800,7 @@ Daily Grind    →  dailygrind    matches  DAILYGRIND*COFFEE</pre>
               <pre>match: MP + MAILORDER              catches the the pharmacy pharmacy line
                                    without KP grabbing everything else
 
-match: Crestline + Ext Trnsfr catches a recurring transfer whose
+match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
                                    ID changes every statement</pre>
               <p>That second case matters more than it looks. A transaction whose description contains
                 a reference number is a <em>different</em> description every month, so categorizing it
@@ -1111,11 +1111,11 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
         <h2 id="sourceModalTitle">Add Source</h2>
         <div class="field">
           <label for="sourceName">Source name</label>
-          <input id="sourceName" type="text" placeholder="e.g. Crestline Checking" />
+          <input id="sourceName" type="text" placeholder="e.g. Northwind Checking" />
         </div>
         <div class="field">
           <label for="sourceFolder">Absolute folder path</label>
-          <input id="sourceFolder" type="text" placeholder="e.g. C:\Users\you\Statements\Crestline" />
+          <input id="sourceFolder" type="text" placeholder="e.g. C:\Users\you\Statements\Checking" />
           <div class="hint">Full path to the folder that holds this account's statement files.</div>
         </div>
         <div class="modal-actions">
@@ -1756,8 +1756,8 @@ match: Crestline + Ext Trnsfr catches a recurring transfer whose
       let hintsData = { hints: [], entries: [] };
 
       /**
-       * A hint's terms, quoted. `Crestline + Ext Trnsfr` becomes
-       * "Crestline" + "Ext Trnsfr" — so where one term ends and the next begins is
+       * A hint's terms, quoted. `Northgate Bank + Ext Trnsfr` becomes
+       * "Northgate Bank" + "Ext Trnsfr" — so where one term ends and the next begins is
        * visible, and so is a stray trailing space, which otherwise silently changes nothing
        * (it is stripped) but looks like it might.
        */

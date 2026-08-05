@@ -75,15 +75,6 @@ public class IngestService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    /**
-     * Parsers whose statements print control totals, so having none means the summary box
-     * did not match and the parse cannot be verified. Ridgeline is deliberately absent:
-     * its only "total" is derived from the rows being checked, so it can never reconcile
-     * and is guarded by the divider check in the parser instead.
-     */
-    private static final java.util.Set<String> MUST_RECONCILE = java.util.Set.of(
-            "card-pdf", "deposit-checking-pdf", "deposit-business-pdf");
-
     /** A prior mapping, held by transaction *content* so it can outlive the row's id. */
     private record CarriedMapping(Long runId, TransactionMapping.Status status,
                                   Long budgetEntryId, String reason) {}
@@ -439,7 +430,7 @@ public class IngestService {
             return;
         }
 
-        if (MUST_RECONCILE.contains(parserId)) {
+        if (parserRegistry.get(parserId).printsControlTotals()) {
             // This parser prints totals and none of them parsed, which means the summary box
             // did not match either — the same layout change that makes transaction rows go
             // missing. Refusing beats storing an unverifiable parse from a format that is
@@ -448,9 +439,10 @@ public class IngestService {
                     + " cannot be verified. The layout has probably changed");
         }
 
-        // Ridgeline prints no independent total — utilitiesTotal is derived from the very
-        // rows being checked, so it cannot catch anything. Its guard is the divider check in
-        // the parser instead. Say so rather than implying the parse was verified.
+        // This parser declares that it prints no INDEPENDENT total — one derived from the
+        // very rows being checked cannot catch anything, so such a parser carries a
+        // structural guard of its own instead. Say so rather than implying the parse was
+        // verified. See StatementParser.printsControlTotals.
         debugLog.warn("ingest", "No independent control totals for " + fileName
                 + " (parser " + parserId + "), so the parse could not be reconciled. "
                 + statement.getTransactions().size() + " transactions totalling " + net + ".");
