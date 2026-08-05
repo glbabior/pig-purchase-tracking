@@ -116,33 +116,38 @@
     </build>
 
     <!--
-        Parsers written against real personal statements are maintained in a SEPARATE,
-        PRIVATE repository, checked out beside this one:
+        Statement parsers can live OUTSIDE this repository.
 
-            code/
-            ├── PigPurchases/                     (this, public)
-            └── pigpurchases-private-parsers/     (private)
+        The parsers here in src/main are demonstration parsers, written against invented
+        formats so that this project can be cloned and run by someone who has none of its
+        author's data. Parsers for real statements are a different matter: a parser is its
+        issuer, since the product names in its regexes identify the account whatever the
+        class is called. Those are maintained in a separate private repository.
 
-        When that directory is present its sources are compiled as part of this build, so
-        the parsers and their validation tests are edited and run in place. When it is
-        absent — which is every clone but the author's — the profile never activates and
-        the build is unaffected.
+        Set the parsers.dir property to a source tree laid out like this one and its
+        src/main/java and src/test/java are compiled alongside these, so external parsers
+        and their tests are edited and run in place with no install step. Set it once in
+        ~/.m2/settings.xml and it applies to every build on that machine:
 
-        The parsers here in src/main are demonstration parsers for generated sample
-        statements. Both sets register through StatementParserRegistry; nothing in the
-        ingest path knows which is which.
+            <profile>
+              <id>local-parsers</id>
+              <properties><parsers.dir>D:/path/to/my-parsers</parsers.dir></properties>
+            </profile>
 
-        A sibling rather than a subdirectory on purpose: nested, the whole arrangement
-        would rest on one .gitignore line, and mistyping it starts staging private files
-        into a public repository.
+        Where the property is undefined, which is every machine but the author's, the
+        profile never activates and the build is unaffected. Nothing lists the parsers
+        anywhere either way: StatementParserRegistry discovers them as beans and indexes
+        them by the ids they declare.
+
+        Deliberately a property rather than a conventional directory beside this one. A
+        path in the pom would be a path of the author's, published in a public repository,
+        which is most of what this arrangement exists to avoid.
     -->
     <profiles>
         <profile>
-            <id>private-parsers</id>
+            <id>external-parsers</id>
             <activation>
-                <file>
-                    <exists>${basedir}/../pigpurchases-private-parsers/src/main/java</exists>
-                </file>
+                <property><name>parsers.dir</name></property>
             </activation>
             <build>
                 <plugins>
@@ -157,7 +162,7 @@
                                 <goals><goal>add-source</goal></goals>
                                 <configuration>
                                     <sources>
-                                        <source>${basedir}/../pigpurchases-private-parsers/src/main/java</source>
+                                        <source>${parsers.dir}/src/main/java</source>
                                     </sources>
                                 </configuration>
                             </execution>
@@ -167,7 +172,7 @@
                                 <goals><goal>add-test-source</goal></goals>
                                 <configuration>
                                     <sources>
-                                        <source>${basedir}/../pigpurchases-private-parsers/src/test/java</source>
+                                        <source>${parsers.dir}/src/test/java</source>
                                     </sources>
                                 </configuration>
                             </execution>
