@@ -22,13 +22,12 @@ import java.util.regex.Pattern;
 /**
  * Parser for <b>Northwind Bank</b> statements — a bank that does not exist.
  *
- * <p>This is a demonstration parser, and the format it reads is invented. It exists so that
- * this repository ships something you can actually run: generated sample statements, a
- * parser that reads them, and an app you can ingest them into and click around. The parsers
- * written against real personal statements are maintained privately and are not here.
+ * <p>This is a demonstration parser, and the format it reads is invented. It exists so the
+ * project ships something you can actually run: generated sample statements, a parser that
+ * reads them, and an app to ingest them into.
  *
- * <p>It is a demonstration, not a toy. It does the two things every parser in this project
- * is expected to do, because those are the parts worth copying:
+ * <p>It is a demonstration, not a toy. It does the two things every parser here is expected
+ * to do, because those are the parts worth copying:
  *
  * <ul>
  *   <li><b>It prints control totals and is reconciled against them.</b> The statement states

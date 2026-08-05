@@ -472,11 +472,8 @@ public class IngestService {
     /**
      * The parser for a source's configured id.
      *
-     * <p>Was a switch naming the three parser classes directly, which meant this file had to
-     * be edited to add a parser and would not compile without all of them. Parsers are now
-     * discovered as beans, so the set can differ between checkouts — the ones written
-     * against real personal statements live outside this repository, and the ones here are
-     * demonstration parsers. Nothing in the ingest path knows the difference.
+     * <p>Parsers are discovered as beans, so the set can differ between checkouts and
+     * nothing in the ingest path needs to know which are present.
      */
     private StatementParser parserFor(String parserId) {
         return parserRegistry.get(parserId);

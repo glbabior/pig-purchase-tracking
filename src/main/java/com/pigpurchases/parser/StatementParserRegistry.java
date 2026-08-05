@@ -14,13 +14,10 @@ import java.util.TreeSet;
 /**
  * Every {@link StatementParser} on the classpath, indexed by the ids it answers to.
  *
- * <p>This replaced a {@code switch} in {@code IngestService} that named the three parser
- * classes directly. The switch worked, but it meant the ingest path had to be edited to add
- * a parser and would not compile without all of them — so a parser could not be added by a
- * user of this project, and the set of parsers could not vary between one checkout and
- * another. Both matter now: the parsers written against real personal statements are
- * maintained outside this repository, and the ones shipped here are demonstration parsers
- * for generated sample statements. Dispatch resolves whatever is actually present.
+ * <p>Dispatch resolves whatever parsers are actually present, so the ingest path never
+ * needs editing to add one and does not require any particular parser to compile. A parser
+ * tree outside this repository (see {@code parsers.dir} in the pom) registers the same way
+ * as the ones shipped here.
  *
  * <p>Two failure modes are made loud rather than left to chance.
  *

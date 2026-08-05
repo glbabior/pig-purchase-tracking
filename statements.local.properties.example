@@ -15,20 +15,10 @@
 # fails the whole file. Forward slashes work fine on Windows.
 #
 # THE KEYS BELOW ARE NOT A SCHEMA. LocalStatements resolves whatever key it is asked
-# for; no name is special to it. Nothing here requires you to have a statement from any
-# particular institution, or any statement at all — this repository ships no validation
-# test, because it ships no parser for a real issuer. The one parser here reads a format
-# that does not exist, so it can be demonstrated without anyone's data.
-#
-# Bringing your own is the expected path: write a parser, write a validation test, pick
-# a key name, put the folder here. NorthwindStatementParser is the worked example, and
-# the parts worth copying are that the parse is reconciled against whatever control
-# totals the statement itself prints, and that it refuses rather than guesses.
-#
-# WHY THIS FILE EXISTS: these paths used to be hard-coded in the test sources, which
-# published a home directory, an account nickname, and the institutions behind each
-# parser to anyone who read the repo. Statement PDFs were never committed; the paths
-# to them effectively were. The parsers themselves have since moved out too.
+# for; no name is special to it. Write a parser, write a validation test, pick a key
+# name, and point it at the folder. NorthwindStatementParser is the worked example:
+# reconcile the parse against whatever control totals the statement itself prints, and
+# refuse rather than guess.
 #
 # A SKIP IS NOT A PASS. If you have statements and the test skips, this file is wrong.
 # A parser is only proven against real statements here — see README, "Testing".

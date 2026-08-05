@@ -18,17 +18,12 @@ import java.util.stream.Stream;
 /**
  * Where the {@code *ValidationTest}s find the real statements they reconcile against.
  *
- * <p>Those statements are personal financial data and are never committed — but until
- * this class existed, the <b>paths to them</b> were, hard-coded into four test files.
- * That published the machine's user name, the folder layout, which institutions the
- * accounts are with, their nicknames, and one statement's filename, which carried the
- * account holder's name. A repo can be shared; a home directory should not have to be.
- *
- * <p>So the locations live outside the repo now, resolved in this order:
+ * <p>Statements are personal financial data and are never committed, and neither are the
+ * paths to them. Locations are resolved in this order:
  *
  * <ol>
  *   <li>System property {@code pigpurchases.statements.<key>} — for a one-off run:
- *       {@code mvnw test -Dpigpurchases.statements.crestline=D:/statements/crestline}</li>
+ *       {@code mvnw test -Dpigpurchases.statements.mycard=D:/statements/mycard}</li>
  *   <li>Environment variable {@code PIGPURCHASES_STATEMENTS_<KEY>}, dots becoming
  *       underscores and the whole thing upper-cased.</li>
  *   <li>{@code statements.local.properties} in the project root — gitignored, and the
@@ -45,12 +40,9 @@ import java.util.stream.Stream;
  *
  * <p><b>The key names are the caller's, not this class's.</b> Nothing here knows about
  * banks, card issuers or any particular institution — {@link #value} builds a property
- * and environment name from whatever string it is handed. The keys the shipped tests
- * happen to use describe the author's three statement formats and carry no privilege.
- * A parser you write gets a key you choose, and a clone that configures nothing at all
- * builds green with every validation test skipped. That is the intended resting state
- * for anyone but the author: the parsers and their tests are reference material for the
- * shape of the problem, not a set of formats this project requires you to possess.
+ * and environment name from whatever string it is handed. A parser you write gets a key
+ * you choose, and a checkout that configures nothing builds green with every validation
+ * test skipped.
  */
 final class LocalStatements {
 

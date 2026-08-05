@@ -12,8 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests the demonstration parser against invented statement text. Portable: it needs no
- * files and no personal data, which is true of every test in this repository now that the
- * parsers for real statements are maintained privately.
+ * files and no personal data, which is true of every test in this repository.
  */
 class NorthwindStatementParserTest {
 

@@ -118,11 +118,8 @@
     <!--
         Statement parsers can live OUTSIDE this repository.
 
-        The parsers here in src/main are demonstration parsers, written against invented
-        formats so that this project can be cloned and run by someone who has none of its
-        author's data. Parsers for real statements are a different matter: a parser is its
-        issuer, since the product names in its regexes identify the account whatever the
-        class is called. Those are maintained in a separate private repository.
+        The parsers in src/main are demonstration parsers, written against invented
+        formats so the project can be cloned and run with no statements of your own.
 
         Set the parsers.dir property to a source tree laid out like this one and its
         src/main/java and src/test/java are compiled alongside these, so external parsers
@@ -134,14 +131,12 @@
               <properties><parsers.dir>D:/path/to/my-parsers</parsers.dir></properties>
             </profile>
 
-        Where the property is undefined, which is every machine but the author's, the
-        profile never activates and the build is unaffected. Nothing lists the parsers
-        anywhere either way: StatementParserRegistry discovers them as beans and indexes
-        them by the ids they declare.
+        Where the property is undefined the profile never activates and the build is
+        unaffected. Nothing lists the parsers anywhere either way: StatementParserRegistry
+        discovers them as beans and indexes them by the ids they declare.
 
-        Deliberately a property rather than a conventional directory beside this one. A
-        path in the pom would be a path of the author's, published in a public repository,
-        which is most of what this arrangement exists to avoid.
+        A property rather than a fixed directory, so a parser tree can live anywhere and
+        no local path is baked into the build.
     -->
     <profiles>
         <profile>
