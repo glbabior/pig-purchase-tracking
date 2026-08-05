@@ -266,6 +266,26 @@ final class LocalStatements {
         }
     }
 
+    /**
+     * Whether the validation tests may print per-statement detail. <b>Off by default.</b>
+     *
+     * <p>These tests run against real statements, and the lines they printed carried real
+     * filenames, dates, per-utility descriptions and real amounts straight to stdout — which
+     * means into a CI log, a terminal buffer, or the context of any tool asked to run the
+     * suite. A code-review agent declined to run the tests for exactly this reason, and it
+     * was right to; the detail was never worth that.
+     *
+     * <p>Nothing diagnostic is lost by default. Every assertion message already names the
+     * statement it failed on and what disagreed; this switch only adds the running commentary
+     * for statements that passed, which is useful when investigating a parser and useless the
+     * rest of the time. Turn it on deliberately, in a terminal you are watching:
+     *
+     * <pre>  mvnw test -Dpigpurchases.statements.verbose=true</pre>
+     */
+    static boolean verbose() {
+        return Boolean.parseBoolean(System.getProperty("pigpurchases.statements.verbose", "false"));
+    }
+
     /** The PDFs for a configured key, or none when it isn't configured. */
     static List<Path> pdfsFor(String key) throws IOException {
         Optional<Path> dir = dir(key);
