@@ -58,7 +58,7 @@ Two deliberate facts about this picture:
 
 | Package | Role | Notable types |
 |---|---|---|
-| `parser` | Turn one issuer's PDF into `ParsedStatement`/`ParsedTransaction`. Strategy pattern. | `StatementParser` (interface), `DepositStatementParser`, `CardStatementParser`, `PropertyStatementParser`, `ExclusionRule` |
+| `parser` | Turn one issuer's PDF into `ParsedStatement`/`ParsedTransaction`. Strategy pattern, wired by discovery. | `StatementParser` (interface), `StatementParserRegistry`, `NorthwindStatementParser` (demonstration), `ExclusionRule` |
 | `model` | JPA entities — the persistent domain. | `Transaction`, `BudgetEntry`, `AnalysisRun`, `TransactionMapping`, `MerchantCategory`, … (12 total) |
 | `repository` | Spring Data JPA interfaces, one per aggregate. | `TransactionRepository`, `AnalysisRunRepository`, … |
 | `service` | All business logic. Ingest, the categorization pipeline, analysis math, AI, backup/restore. | `IngestService`, `MappingService`, `AnalysisService`, `AiCategorizationService`, `HintMatcher`, `HintService`, `BackupService`, `RestoreService`, `ManualEntryService`, `DebugLogService` |
@@ -308,12 +308,15 @@ classDiagram
         <<interface>>
         +parse(Path) ParsedStatement
     }
-    class DepositStatementParser
-    class CardStatementParser
-    class PropertyStatementParser
-    StatementParser <|.. DepositStatementParser
-    StatementParser <|.. CardStatementParser
-    StatementParser <|.. PropertyStatementParser
+    class StatementParserRegistry {
+        +get(String id) StatementParser
+        +ids() Set
+    }
+    class NorthwindStatementParser
+    class PrivateParsers["(parsers for real statements)"]
+    StatementParser <|.. NorthwindStatementParser
+    StatementParser <|.. PrivateParsers
+    StatementParserRegistry o-- StatementParser : discovers by id
 
     class SwitchableDataSource {
         +getConnection()
@@ -496,10 +499,10 @@ erDiagram
   list is verified against the entities by test, because a missing column is
   invisible until the day someone adds a constant to it.
 - **A statement is reconciled before it is stored.** `IngestService` checks the parse
-  against the control totals the statement itself prints — Bayside's signed transactions
-  must equal ending minus beginning balance; Crestline's positives and negatives must equal
-  the printed purchases and credits — and refuses the import when they disagree. A
-  parser that cannot determine a statement date, a year, or (Ridgeline) which rows
+  against the control totals the statement itself prints — a deposit account's signed
+  transactions must equal ending minus beginning balance; a card's positives and negatives
+  must equal the printed purchases and credits — and refuses the import when they disagree. A
+  parser that cannot determine a statement date, a year, or which rows
   belong to this cycle throws rather than guessing. Every outcome is written to the
   debug log, success included, so silence there means the ingest never ran.
 - **Every per-transaction decision with no rule behind it survives a re-map.** Two have
@@ -524,7 +527,7 @@ erDiagram
   hand.** `signedSpend` negates `PAYMENT`, `CREDIT` and `DEPOSIT` alike, so a parked one
   would *subtract* from the month — hence the default. The exception is narrow and
   deliberate: `inSpendBuckets` admits a money-in row only when its status is
-  `MAPPED_MANUAL`, it has an entry id, and its reason is `ASSIGNED_BY_HAND`. The Bayside
+  `MAPPED_MANUAL`, it has an entry id, and its reason is `ASSIGNED_BY_HAND`. A deposit-account
   parser types every positive line `DEPOSIT`, so a refund and a paycheck are
   indistinguishable by type, and a decision about one specific transaction is the only
   reliable signal. A remembered `MANUAL` merchant rule is not enough — that would let one

@@ -7,13 +7,11 @@ import com.pigpurchases.model.StatementImport;
 import com.pigpurchases.model.StatementSource;
 import com.pigpurchases.model.Transaction;
 import com.pigpurchases.model.TransactionMapping;
-import com.pigpurchases.parser.DepositStatementParser;
-import com.pigpurchases.parser.CardStatementParser;
 import com.pigpurchases.parser.ExclusionRule;
-import com.pigpurchases.parser.PropertyStatementParser;
 import com.pigpurchases.parser.ParsedStatement;
 import com.pigpurchases.parser.ParsedTransaction;
 import com.pigpurchases.parser.StatementParser;
+import com.pigpurchases.parser.StatementParserRegistry;
 import com.pigpurchases.repository.AnalysisRunSourceRepository;
 import com.pigpurchases.repository.StatementImportRepository;
 import com.pigpurchases.repository.TransactionMappingRepository;
@@ -68,16 +66,14 @@ public class IngestService {
     @Autowired
     private DebugLogService debugLog;
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
-
     /**
-     * Parsers whose statements print control totals, so having none means the summary box
-     * did not match and the parse cannot be verified. Ridgeline is deliberately absent:
-     * its only "total" is derived from the rows being checked, so it can never reconcile
-     * and is guarded by the divider check in the parser instead.
+     * Every parser on the classpath, which is not necessarily the same set in every
+     * checkout — see {@link StatementParserRegistry}.
      */
-    private static final java.util.Set<String> MUST_RECONCILE = java.util.Set.of(
-            "card-pdf", "deposit-checking-pdf", "deposit-business-pdf");
+    @Autowired
+    private StatementParserRegistry parserRegistry;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** A prior mapping, held by transaction *content* so it can outlive the row's id. */
     private record CarriedMapping(Long runId, TransactionMapping.Status status,
@@ -434,7 +430,7 @@ public class IngestService {
             return;
         }
 
-        if (MUST_RECONCILE.contains(parserId)) {
+        if (parserRegistry.get(parserId).printsControlTotals()) {
             // This parser prints totals and none of them parsed, which means the summary box
             // did not match either — the same layout change that makes transaction rows go
             // missing. Refusing beats storing an unverifiable parse from a format that is
@@ -443,9 +439,10 @@ public class IngestService {
                     + " cannot be verified. The layout has probably changed");
         }
 
-        // Ridgeline prints no independent total — utilitiesTotal is derived from the very
-        // rows being checked, so it cannot catch anything. Its guard is the divider check in
-        // the parser instead. Say so rather than implying the parse was verified.
+        // This parser declares that it prints no INDEPENDENT total — one derived from the
+        // very rows being checked cannot catch anything, so such a parser carries a
+        // structural guard of its own instead. Say so rather than implying the parse was
+        // verified. See StatementParser.printsControlTotals.
         debugLog.warn("ingest", "No independent control totals for " + fileName
                 + " (parser " + parserId + "), so the parse could not be reconciled. "
                 + statement.getTransactions().size() + " transactions totalling " + net + ".");
@@ -472,13 +469,17 @@ public class IngestService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
+    /**
+     * The parser for a source's configured id.
+     *
+     * <p>Was a switch naming the three parser classes directly, which meant this file had to
+     * be edited to add a parser and would not compile without all of them. Parsers are now
+     * discovered as beans, so the set can differ between checkouts — the ones written
+     * against real personal statements live outside this repository, and the ones here are
+     * demonstration parsers. Nothing in the ingest path knows the difference.
+     */
     private StatementParser parserFor(String parserId) {
-        return switch (parserId) {
-            case "card-pdf" -> new CardStatementParser();
-            case "deposit-checking-pdf", "deposit-business-pdf" -> new DepositStatementParser();
-            case "property-rent-pdf" -> new PropertyStatementParser();
-            default -> throw new IllegalArgumentException("No parser configured for id: '" + parserId + "'");
-        };
+        return parserRegistry.get(parserId);
     }
 
     private JsonNode readRules(String parserRules) {

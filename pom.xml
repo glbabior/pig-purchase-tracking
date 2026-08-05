@@ -114,4 +114,72 @@
             </plugin>
         </plugins>
     </build>
+
+    <!--
+        Statement parsers can live OUTSIDE this repository.
+
+        The parsers here in src/main are demonstration parsers, written against invented
+        formats so that this project can be cloned and run by someone who has none of its
+        author's data. Parsers for real statements are a different matter: a parser is its
+        issuer, since the product names in its regexes identify the account whatever the
+        class is called. Those are maintained in a separate private repository.
+
+        Set the parsers.dir property to a source tree laid out like this one and its
+        src/main/java and src/test/java are compiled alongside these, so external parsers
+        and their tests are edited and run in place with no install step. Set it once in
+        ~/.m2/settings.xml and it applies to every build on that machine:
+
+            <profile>
+              <id>local-parsers</id>
+              <properties><parsers.dir>D:/path/to/my-parsers</parsers.dir></properties>
+            </profile>
+
+        Where the property is undefined, which is every machine but the author's, the
+        profile never activates and the build is unaffected. Nothing lists the parsers
+        anywhere either way: StatementParserRegistry discovers them as beans and indexes
+        them by the ids they declare.
+
+        Deliberately a property rather than a conventional directory beside this one. A
+        path in the pom would be a path of the author's, published in a public repository,
+        which is most of what this arrangement exists to avoid.
+    -->
+    <profiles>
+        <profile>
+            <id>external-parsers</id>
+            <activation>
+                <property><name>parsers.dir</name></property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>build-helper-maven-plugin</artifactId>
+                        <version>3.6.0</version>
+                        <executions>
+                            <execution>
+                                <id>add-private-parser-sources</id>
+                                <phase>generate-sources</phase>
+                                <goals><goal>add-source</goal></goals>
+                                <configuration>
+                                    <sources>
+                                        <source>${parsers.dir}/src/main/java</source>
+                                    </sources>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>add-private-parser-tests</id>
+                                <phase>generate-test-sources</phase>
+                                <goals><goal>add-test-source</goal></goals>
+                                <configuration>
+                                    <sources>
+                                        <source>${parsers.dir}/src/test/java</source>
+                                    </sources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

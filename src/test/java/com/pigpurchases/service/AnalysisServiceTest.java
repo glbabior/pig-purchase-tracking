@@ -82,12 +82,12 @@ class AnalysisServiceTest {
         entryRepo.save(new BudgetEntry("Metro Station", new BigDecimal("30.00")));
 
         StatementSource source = new StatementSource("Crestline Test", dir.toString());
-        source.setParserRules("{\"parser\":\"card-pdf\","
+        source.setParserRules("{\"parser\":\"northwind-demo-pdf\","
                 + "\"excludeFromSpend\":[{\"contains\":\"BIG PURCHASE\",\"reason\":\"transfer\"}]}");
         source = sourceRepo.save(source);
 
         Path pdf = dir.resolve("june.pdf");
-        TestPdfs.write(pdf, TestPdfs.CHASE_LINES);
+        TestPdfs.write(pdf, TestPdfs.NORTHWIND_LINES);
         Long importId = ingestService.ingest(source, pdf).importId();
 
         AnalysisRun run = mappingService.createRun("2026-06",

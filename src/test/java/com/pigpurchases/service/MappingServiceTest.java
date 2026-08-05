@@ -74,21 +74,21 @@ class MappingServiceTest {
         entryRepo.save(metro);
 
         StatementSource source = new StatementSource("Crestline Test", dir.toString());
-        source.setParserRules("{\"parser\":\"card-pdf\","
+        source.setParserRules("{\"parser\":\"northwind-demo-pdf\","
                 + "\"excludeFromSpend\":[{\"contains\":\"BIG PURCHASE\",\"reason\":\"transfer\"}]}");
         source = sourceRepo.save(source);
         sourceId = source.getId();
 
         Path june = dir.resolve("june.pdf");
-        TestPdfs.write(june, TestPdfs.CHASE_LINES);
+        TestPdfs.write(june, TestPdfs.NORTHWIND_LINES);
         juneImportId = ingestService.ingest(source, june).importId();
 
         // A second statement for the same source, so "consumed" has something to hide.
         Path may = dir.resolve("may.pdf");
         TestPdfs.write(may, List.of(
-                "Opening/Closing Date 04/12/26 - 05/11/26",
-                "Purchases +$4.10",
-                "04/22 COFFEE SHOP ANYTOWN CA 4.10"));
+                "Statement Period Ending 05/11/2026",
+                "Total Purchases $4.10",
+                "04/22/26 COFFEE SHOP ANYTOWN CA 4.10"));
         mayImportId = ingestService.ingest(source, may).importId();
     }
 
@@ -288,10 +288,10 @@ class MappingServiceTest {
         StatementSource source = sourceRepo.findById(sourceId).orElseThrow();
         Path twins = tempDir.resolve("twins.pdf");
         List<String> lines = List.of(
-                "Opening/Closing Date 03/12/26 - 04/11/26",
-                "Purchases +$8.20",
-                "03/22 COFFEE SHOP ANYTOWN CA 4.10",
-                "03/22 COFFEE SHOP ANYTOWN CA 4.10");
+                "Statement Period Ending 04/11/2026",
+                "Total Purchases $8.20",
+                "03/22/26 COFFEE SHOP ANYTOWN CA 4.10",
+                "03/22/26 COFFEE SHOP ANYTOWN CA 4.10");
         TestPdfs.write(twins, lines);
         Long importId = ingestService.ingest(source, twins).importId();
 
@@ -326,19 +326,19 @@ class MappingServiceTest {
         StatementSource source = sourceRepo.findById(sourceId).orElseThrow();
         Path grew = tempDir.resolve("grew.pdf");
         TestPdfs.write(grew, List.of(
-                "Opening/Closing Date 02/12/26 - 03/11/26",
-                "Purchases +$4.10",
-                "02/22 COFFEE SHOP ANYTOWN CA 4.10"));
+                "Statement Period Ending 03/11/2026",
+                "Total Purchases $4.10",
+                "02/22/26 COFFEE SHOP ANYTOWN CA 4.10"));
         Long importId = ingestService.ingest(source, grew).importId();
         mappingService.mapUnmapped();
         assertEquals(1, mappingRepo.findByAnalysisRunId(runFor(importId)).size());
 
         // The re-parse now finds a second line it previously missed.
         TestPdfs.write(grew, List.of(
-                "Opening/Closing Date 02/12/26 - 03/11/26",
-                "Purchases +$4.45",
-                "02/22 COFFEE SHOP ANYTOWN CA 4.10",
-                "02/23 METRO STATION CITY CA .35"));
+                "Statement Period Ending 03/11/2026",
+                "Total Purchases $4.45",
+                "02/22/26 COFFEE SHOP ANYTOWN CA 4.10",
+                "02/23/26 METRO STATION CITY CA 0.35"));
         Long newImportId = ingestService.ingest(source, grew).importId();
 
         for (com.pigpurchases.model.Transaction txn : txnRepo.findByStatementImportId(newImportId)) {
