@@ -114,4 +114,67 @@
             </plugin>
         </plugins>
     </build>
+
+    <!--
+        Parsers written against real personal statements are maintained in a SEPARATE,
+        PRIVATE repository, checked out beside this one:
+
+            code/
+            ├── PigPurchases/                     (this, public)
+            └── pigpurchases-private-parsers/     (private)
+
+        When that directory is present its sources are compiled as part of this build, so
+        the parsers and their validation tests are edited and run in place. When it is
+        absent — which is every clone but the author's — the profile never activates and
+        the build is unaffected.
+
+        The parsers here in src/main are demonstration parsers for generated sample
+        statements. Both sets register through StatementParserRegistry; nothing in the
+        ingest path knows which is which.
+
+        A sibling rather than a subdirectory on purpose: nested, the whole arrangement
+        would rest on one .gitignore line, and mistyping it starts staging private files
+        into a public repository.
+    -->
+    <profiles>
+        <profile>
+            <id>private-parsers</id>
+            <activation>
+                <file>
+                    <exists>${basedir}/../pigpurchases-private-parsers/src/main/java</exists>
+                </file>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>build-helper-maven-plugin</artifactId>
+                        <version>3.6.0</version>
+                        <executions>
+                            <execution>
+                                <id>add-private-parser-sources</id>
+                                <phase>generate-sources</phase>
+                                <goals><goal>add-source</goal></goals>
+                                <configuration>
+                                    <sources>
+                                        <source>${basedir}/../pigpurchases-private-parsers/src/main/java</source>
+                                    </sources>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>add-private-parser-tests</id>
+                                <phase>generate-test-sources</phase>
+                                <goals><goal>add-test-source</goal></goals>
+                                <configuration>
+                                    <sources>
+                                        <source>${basedir}/../pigpurchases-private-parsers/src/test/java</source>
+                                    </sources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

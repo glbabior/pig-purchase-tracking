@@ -7,13 +7,11 @@ import com.pigpurchases.model.StatementImport;
 import com.pigpurchases.model.StatementSource;
 import com.pigpurchases.model.Transaction;
 import com.pigpurchases.model.TransactionMapping;
-import com.pigpurchases.parser.DepositStatementParser;
-import com.pigpurchases.parser.CardStatementParser;
 import com.pigpurchases.parser.ExclusionRule;
-import com.pigpurchases.parser.PropertyStatementParser;
 import com.pigpurchases.parser.ParsedStatement;
 import com.pigpurchases.parser.ParsedTransaction;
 import com.pigpurchases.parser.StatementParser;
+import com.pigpurchases.parser.StatementParserRegistry;
 import com.pigpurchases.repository.AnalysisRunSourceRepository;
 import com.pigpurchases.repository.StatementImportRepository;
 import com.pigpurchases.repository.TransactionMappingRepository;
@@ -67,6 +65,13 @@ public class IngestService {
      */
     @Autowired
     private DebugLogService debugLog;
+
+    /**
+     * Every parser on the classpath, which is not necessarily the same set in every
+     * checkout — see {@link StatementParserRegistry}.
+     */
+    @Autowired
+    private StatementParserRegistry parserRegistry;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -472,13 +477,17 @@ public class IngestService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
+    /**
+     * The parser for a source's configured id.
+     *
+     * <p>Was a switch naming the three parser classes directly, which meant this file had to
+     * be edited to add a parser and would not compile without all of them. Parsers are now
+     * discovered as beans, so the set can differ between checkouts — the ones written
+     * against real personal statements live outside this repository, and the ones here are
+     * demonstration parsers. Nothing in the ingest path knows the difference.
+     */
     private StatementParser parserFor(String parserId) {
-        return switch (parserId) {
-            case "card-pdf" -> new CardStatementParser();
-            case "deposit-checking-pdf", "deposit-business-pdf" -> new DepositStatementParser();
-            case "property-rent-pdf" -> new PropertyStatementParser();
-            default -> throw new IllegalArgumentException("No parser configured for id: '" + parserId + "'");
-        };
+        return parserRegistry.get(parserId);
     }
 
     private JsonNode readRules(String parserRules) {
