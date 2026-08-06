@@ -66,34 +66,63 @@ public class DemoDataInitializer implements ApplicationRunner {
             new String[] {"Dining out",    "150.00", "match: TAQUERIA\nmatch: PIZZA"},
             new String[] {"Subscriptions",  "20.00", "match: STREAMFLIX"});
 
+    /** The seeded source's name, and the key that says whether it has been seeded already. */
+    private static final String SOURCE_NAME = "Northwind Checking (demo)";
+
+    /**
+     * Seed anything that is missing, and only that.
+     *
+     * <p>Each of the three seeded things is guarded on <b>its own</b> existence. One shared
+     * guard on "are there any budget entries" was wrong in a way that produced wrong money:
+     * deleting the six seeded categories to start entering your own — the obvious first
+     * thing to try — made the count zero again, so the next start seeded a <i>second</i>
+     * statement source over the same folder. Ingest is idempotent per source and statement
+     * date, so the same PDF then loaded twice, and a run covering both sources counted every
+     * transaction twice. The demo's month doubled, in the one place a newcomer is being
+     * shown how the numbers are computed.
+     */
     @Override
     public void run(ApplicationArguments args) throws Exception {
         Path dir = Path.of(demoDir);
         writeStatements(dir);
 
-        if (budgetEntryRepository.count() > 0) {
-            log.info("Demo data already present; leaving it alone. Statements are in {}", dir);
-            return;
+        int seededEntries = 0;
+        if (budgetEntryRepository.count() == 0) {
+            for (String[] e : ENTRIES) {
+                BudgetEntry entry = new BudgetEntry(e[0], new BigDecimal(e[1]));
+                entry.setQuantity(1);
+                entry.setHints(e[2]);
+                budgetEntryRepository.save(entry);
+            }
+            seededEntries = ENTRIES.size();
         }
 
-        for (String[] e : ENTRIES) {
-            BudgetEntry entry = new BudgetEntry(e[0], new BigDecimal(e[1]));
-            entry.setQuantity(1);
-            entry.setHints(e[2]);
-            budgetEntryRepository.save(entry);
+        // By name rather than by count: a demo where the user added a second source of their
+        // own should still not gain a duplicate Northwind one.
+        boolean sourceExists = sourceRepository.findAll().stream()
+                .anyMatch(s -> SOURCE_NAME.equals(s.getName()));
+        if (!sourceExists) {
+            StatementSource source = new StatementSource(SOURCE_NAME, dir.toString());
+            source.setParserRules("{\"parser\":\"northwind-demo-pdf\"}");
+            sourceRepository.save(source);
         }
 
-        StatementSource source = new StatementSource("Northwind Checking (demo)", dir.toString());
-        source.setParserRules("{\"parser\":\"northwind-demo-pdf\"}");
-        sourceRepository.save(source);
-
+        // Only when unset. Re-stamping 12000 on every start silently reverted an annual
+        // budget the user had changed while looking around, which moves every variance on
+        // the Spend screens.
         AppSettings settings = appSettingsRepository.findById(1L).orElseGet(AppSettings::new);
-        settings.setAnnualBudget(new BigDecimal("12000.00"));
-        appSettingsRepository.save(settings);
+        if (settings.getAnnualBudget() == null || settings.getAnnualBudget().signum() == 0) {
+            settings.setAnnualBudget(new BigDecimal("12000.00"));
+            appSettingsRepository.save(settings);
+        }
 
-        log.info("Demo ready: {} budget entries, 1 statement source, statements in {}."
-                + " Open http://localhost:8080, go to Ingest, and load one.",
-                ENTRIES.size(), dir);
+        if (seededEntries == 0 && sourceExists) {
+            log.info("Demo data already present; leaving it alone. Statements are in {}", dir);
+        } else {
+            log.info("Demo ready: {} budget entries seeded, statement source {}, statements in {}."
+                    + " Open http://localhost:8080, go to Ingest, and load one.",
+                    seededEntries, sourceExists ? "already present" : "seeded", dir);
+        }
     }
 
     /** Three months of statements, rewritten each start so the folder is never half-built. */

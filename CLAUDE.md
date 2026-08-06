@@ -103,13 +103,21 @@ own instead; one that returns true has its parse refused when the totals cannot 
 
 `demo.cmd` runs the app on generated sample statements with no data of anyone's own:
 `application-demo.properties` redirects the database, redirects the backup directory
-**and** disables backups, and turns AI off.
+**and** disables backups, redirects the restore-preview directory, and turns AI off.
 
-All three of those matter together. Redirecting the datasource alone is not enough,
-because the backup scheduler is configured independently — a demo left on the default
-backup directory writes dumps of the demo database over the real daily backup, under the
-same one-file-per-day name. If you add a setting that touches the filesystem or the
-network, ask whether demo mode needs to redirect it too.
+All four of those matter together, and each was configured independently of the datasource,
+which is the whole reason the list keeps growing. Redirecting the datasource alone is not
+enough, because the backup scheduler is configured independently — a demo left on the
+default backup directory writes dumps of the demo database over the real daily backup,
+under the same one-file-per-day name. Backups being *off* is not enough either: `backupNow()`
+ignores the enabled flag, so "Back up now" then Restore → Preview builds a preview database,
+and that path was a bare `${user.home}` interpolation with no property key until it was
+given one — so no profile could move it, and a demo preview landed in `~/.pigpurchases`,
+the live database's own folder.
+
+If you add a setting that touches the filesystem or the network, ask whether demo mode
+needs to redirect it too. This has now been missed twice; assume it will be missed again
+unless asked deliberately.
 
 `DemoStatements` computes each statement's control totals from its own rows rather than
 printing constants, because `IngestService` refuses a statement whose rows disagree with

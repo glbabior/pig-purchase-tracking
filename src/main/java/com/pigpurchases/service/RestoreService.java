@@ -48,7 +48,18 @@ public class RestoreService {
 
     @Value("${pigpurchases.backup.dir:${user.home}/pigpurchases-backups}")
     private String backupDir;
-    @Value("${user.home}/.pigpurchases/preview/preview-db")
+    /**
+     * Where a restore preview's throwaway database is built.
+     *
+     * <p>A real property with the historical path as its default, so a profile can move it.
+     * It used to be a bare {@code ${user.home}} interpolation with no key, which no profile
+     * could override — so demo mode, which carefully redirects the datasource, the backup
+     * directory and the statement folder, still wrote its preview database into
+     * {@code ~/.pigpurchases}, the one folder that is supposed to hold only real data. The
+     * demo can reach it: {@code backupNow()} ignores the enabled flag, so "Back up now"
+     * followed by Restore → Preview is enough.
+     */
+    @Value("${pigpurchases.restore.preview-dir:${user.home}/.pigpurchases/preview}/preview-db")
     private String previewDbBase;
 
     // Preview state (single-user, in-memory). Cleared on commit/cancel and never

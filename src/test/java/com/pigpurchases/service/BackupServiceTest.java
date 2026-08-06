@@ -249,6 +249,66 @@ class BackupServiceTest {
         }
     }
 
+    /**
+     * The anti-clobber guard used to switch itself off the moment it was needed.
+     *
+     * <p>The baseline was seeded from the NEWEST sidecar, so once one backup recorded zero
+     * mapped rows, {@code lastGoodRichness} became 0 — and the guard's own
+     * {@code lastGoodRichness >= 20} floor is false at 0. From then on every empty backup
+     * overwrote the day's real file in silence, and nothing was ever filed
+     * {@code .SUSPECT}. It was found on a real machine with two consecutive daily backups
+     * holding no mappings and no warning anywhere.
+     */
+    @Test
+    void anEmptyBackupDoesNotDisarmTheGuardForEveryBackupAfterIt() throws IOException {
+        writeBackupPair("pigpurchases-2020-01-01.sql", 214, "startup");
+        writeBackupPair("pigpurchases-2020-01-02.sql", 0, "startup"); // the poisoned newest
+
+        // The live database here has no mappings, so this run's richness is 0 — a collapse
+        // against the 214 that is still in force, and the guard must say so.
+        backupService.onReady();
+
+        assertTrue(suspectFileExists(), "a drop to zero must be filed .SUSPECT, not written"
+                + " over the daily file, even when the newest sidecar already said zero");
+    }
+
+    /**
+     * The other half, and the reason the baseline cannot simply be the maximum on disk.
+     *
+     * <p>Accepting a deliberate drop must survive a restart. Seeding from the highest
+     * richness of all time would re-flag an accepted database on every start — the exact
+     * bug {@code acceptCurrentAsNormal} was written to end.
+     */
+    @Test
+    void anAcceptedDropStaysAcceptedAcrossARestart() throws IOException {
+        writeBackupPair("pigpurchases-2020-01-01.sql", 214, "startup");
+        writeBackupPair("pigpurchases-2020-01-02.sql", 0, "baseline-accepted");
+
+        backupService.onReady();
+
+        assertFalse(suspectFileExists(), "a drop the user already accepted must not be"
+                + " re-flagged from a sidecar older than the acceptance");
+    }
+
+    /** A backup file and its sidecar, as BackupService would have left them. */
+    private static void writeBackupPair(String name, int richness, String trigger) throws IOException {
+        Files.createDirectories(DIR);
+        Files.writeString(DIR.resolve(name), "-- dump placeholder; seeding reads the sidecar\n");
+        // A signature that cannot match the live one, so the startup run is never skipped
+        // as "nothing changed" before it reaches the guard.
+        Files.writeString(DIR.resolve(name + ".meta"),
+                "richness=" + richness + "\n"
+                        + "at=2020-01-01T00:00:00\n"
+                        + "signature=stale-" + name + "\n"
+                        + "trigger=" + trigger + "\n");
+    }
+
+    private static boolean suspectFileExists() throws IOException {
+        try (Stream<Path> s = Files.list(DIR)) {
+            return s.anyMatch(p -> p.getFileName().toString().contains(".SUSPECT."));
+        }
+    }
+
     private static void removeStagingDirectory(Path staging) throws IOException {
         for (int attempt = 0; attempt < 20 && Files.exists(staging); attempt++) {
             try {

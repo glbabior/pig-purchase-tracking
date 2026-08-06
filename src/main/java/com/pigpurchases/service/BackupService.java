@@ -31,6 +31,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 
 /**
  * Automatic, versioned database backups so a corrupted or reverted live database
@@ -481,28 +482,77 @@ public class BackupService {
         return sqlFile.resolveSibling(sqlFile.getFileName().toString() + ".meta");
     }
 
-    /** Restore the anti-clobber baseline across restarts from the newest good backup's sidecar. */
+    /**
+     * Triggers that record a <b>deliberate</b> new normal. Anything older than one of these
+     * is superseded history: the user (or a restore commit) has said the current, smaller
+     * database is what normal looks like now.
+     */
+    private static final Set<String> ACCEPTED_TRIGGERS = Set.of("baseline-accepted", "post-restore");
+
+    /**
+     * Restore the anti-clobber baseline across restarts from the existing sidecars.
+     *
+     * <p>The baseline is the <b>highest richness still in force</b>, not the newest one.
+     * Seeding from the newest alone let the guard disarm itself, which is the one failure it
+     * must not have: a backup recording zero mapped rows became the baseline, and
+     * {@code lastGoodRichness >= 20} is false from then on, so every later empty backup
+     * overwrote the day's real file in silence and nothing was ever filed {@code .SUSPECT}.
+     * The condition the guard exists to detect switched the guard off.
+     *
+     * <p>The scan stops at the newest deliberate new normal, because accepting a drop — or
+     * committing a restore — is precisely the statement that everything older no longer
+     * applies. That is what lets an accepted baseline survive a restart instead of being
+     * re-flagged by yesterday's high count, which is why this cannot simply take the maximum
+     * over every sidecar on disk.
+     */
     private void seedFromNewestBackup() {
         try {
             List<Path> files = normalBackups(Paths.get(backupDir));
             if (files.isEmpty()) return;
-            Path newest = files.get(0); // sorted newest-first
-            Path meta = metaPath(newest);
-            if (Files.exists(meta)) {
-                Properties p = new Properties();
-                for (String line : Files.readAllLines(meta)) {
-                    int eq = line.indexOf('=');
-                    if (eq > 0) p.setProperty(line.substring(0, eq), line.substring(eq + 1));
-                }
+
+            // Change detection and the displayed "last backup" still come from the newest
+            // file. Only the guard's baseline looks further back.
+            Properties newest = readMeta(files.get(0));
+            if (newest == null) return;
+            lastSignature = newest.getProperty("signature");
+            lastBackupFile = files.get(0).getFileName().toString();
+
+            int baseline = -1;
+            String from = null;
+            for (Path f : files) { // newest-first
+                Properties p = readMeta(f);
+                if (p == null) continue;
                 String r = p.getProperty("richness");
-                if (r != null) lastGoodRichness = Integer.parseInt(r.trim());
-                lastSignature = p.getProperty("signature");
-                lastBackupFile = newest.getFileName().toString();
-                log.info("Seeded backup baseline from {} (mappings={}).", newest.getFileName(), lastGoodRichness);
+                if (r != null) {
+                    int value = Integer.parseInt(r.trim());
+                    if (value > baseline) {
+                        baseline = value;
+                        from = f.getFileName().toString();
+                    }
+                }
+                String trigger = p.getProperty("trigger");
+                if (trigger != null && ACCEPTED_TRIGGERS.contains(trigger.trim())) {
+                    break;
+                }
             }
+            lastGoodRichness = baseline;
+            log.info("Seeded backup baseline: {} mapped row(s), the highest still in force (from {}).",
+                    lastGoodRichness, from);
         } catch (Exception e) {
             log.warn("Could not seed backup baseline from existing backups", e);
         }
+    }
+
+    /** One backup's sidecar as properties, or null when it has none. */
+    private Properties readMeta(Path backup) throws IOException {
+        Path meta = metaPath(backup);
+        if (!Files.exists(meta)) return null;
+        Properties p = new Properties();
+        for (String line : Files.readAllLines(meta)) {
+            int eq = line.indexOf('=');
+            if (eq > 0) p.setProperty(line.substring(0, eq), line.substring(eq + 1));
+        }
+        return p;
     }
 
     private void prune(Path dir, int keep) {
