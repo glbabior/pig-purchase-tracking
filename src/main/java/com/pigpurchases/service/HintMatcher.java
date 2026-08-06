@@ -16,8 +16,8 @@ import java.util.Locale;
  * of punctuation and spacing that the budget entry name doesn't have:
  * <pre>
  *   "City Power"  -> "citypower"   matches "CITYPOWER 800-555-0142 CA"
- *   "Novacell"     -> "novacell"    matches "NOVA-CELL PCS SVC"
- *   "Daily Grind"    -> "dailygrind"    matches "DAILYGRIND*COFFEE"
+ *   "Novacell"    -> "novacell"    matches "NOVA-CELL PCS SVC"
+ *   "Daily Grind" -> "dailygrind"  matches "DAILYGRIND*COFFEE"
  * </pre>
  *
  * <p><b>Hints.</b> Hints are primarily prose written for the AI pass to read
@@ -45,7 +45,7 @@ import java.util.Locale;
  * automatic answer is worse than parking a transaction for review:
  * <ul>
  *   <li>Patterns shorter than {@link #MIN_PATTERN_LENGTH} normalized characters
- *       are ignored. The entry "Gas" would otherwise match "CITYPOWER" and
+ *       are ignored. The entry "Pow" would otherwise match "CITYPOWER" and
  *       "POWELL ST GARAGE".</li>
  *   <li>When several entries match, the longest pattern wins as the most
  *       specific ("Harbor Park Pass" over "Harbor Park"). If the longest is a tie
@@ -62,7 +62,7 @@ public class HintMatcher {
     /**
      * Inside a composite (two or more '+'-joined parts) a shorter discriminator is
      * safe, because it is the AND of all parts that provides the specificity — e.g.
-     * "KP" alone matches too much, but "MP + MAILORDER" does not.
+     * "MP" alone matches too much, but "MP + MAILORDER" does not.
      */
     static final int MIN_COMPOSITE_PART_LENGTH = 2;
 
@@ -120,7 +120,7 @@ public class HintMatcher {
                 // Drop the WHOLE hint, not just the offending part.
                 //
                 // Dropping parts individually turned an AND the user wrote into a bare
-                // substring: "match: T + MOBILE" lost the "t" and registered as `mobile`,
+                // substring: "match: N + MOBILE" lost the "t" and registered as `mobile`,
                 // which matches "MOBILE DEPOSIT" and "UNITED MOBILE INC"; "match: 7 + ELEVEN"
                 // became `eleven` and matched "CORNER BISTRO PARK". The transaction then
                 // landed in the wrong category, and the review screen showed the reason as

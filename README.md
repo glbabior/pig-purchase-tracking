@@ -178,9 +178,9 @@ Both sides are lowercased and stripped of everything that isn't a letter or digi
 before comparing, because statement text carries punctuation the entry name doesn't:
 
 ```
-"City Power" -> citypower   matches  "CITYPOWER 800-555-0142 CA"
+"City Power"  -> citypower   matches  "CITYPOWER 800-555-0142 CA"
 "Novacell"    -> novacell    matches  "NOVA-CELL PCS SVC"
-"Daily Grind"   -> dailygrind    matches  "DAILYGRIND*COFFEE"
+"Daily Grind" -> dailygrind  matches  "DAILYGRIND*COFFEE"
 ```
 
 The entry's **name** is always used as a pattern. Hints are otherwise prose written
@@ -207,7 +207,7 @@ Two rules keep this pass conservative, because a wrong automatic answer is worse
 than parking a transaction for review:
 
 - Patterns that are too short are ignored, and there are three thresholds. A
-  category **name** needs 4 normalized characters — "Gas" would otherwise match
+  category **name** needs 4 normalized characters — "Pow" would otherwise match
   "CITYPOWER" and "POWELL ST GARAGE". An explicit `match:` hint needs 3, because you wrote
   it deliberately. A part inside a `+` composite needs only 2, since the AND is what
   makes it specific. Break the limit and the **whole** hint is discarded, not just

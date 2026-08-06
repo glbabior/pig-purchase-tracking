@@ -176,7 +176,7 @@ class AppMathTest {
         // re-render. Array.prototype.sort has been required to be stable since ES2019.
         assertEquals(List.of("Groceries", "Phone", "Roadster", "Media"),
                 orderOf(HINT_ROWS, "{key:'matched', dir:-1}", "sortHintCategories", "name"));
-        assertEquals(List.of("Roadster", "Groceries", "Media", "Phone"),
+        assertEquals(List.of("Groceries", "Media", "Phone", "Roadster"),
                 orderOf(HINT_ROWS, "{key:'name', dir:1}", "sortHintCategories", "name"));
     }
 

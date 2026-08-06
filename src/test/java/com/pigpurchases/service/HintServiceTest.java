@@ -62,9 +62,9 @@ class HintServiceTest {
     void anIgnoredRuleSaysWhyRatherThanVanishing() {
         // The exact shape that silently stopped working: a composite whose part is too short
         // is discarded whole, which is right — but it used to happen with no explanation.
-        HintMatcher.HintProblem problem = HintMatcher.validate("T + MOBILE");
+        HintMatcher.HintProblem problem = HintMatcher.validate("N + MOBILE");
         assertNotNull(problem, "a one-character composite part must be reported");
-        assertTrue(problem.problem().contains("T"), problem.problem());
+        assertTrue(problem.problem().contains("N"), problem.problem());
 
         assertNotNull(HintMatcher.validate("ab"), "a bare two-character rule matches too much");
         assertNull(HintMatcher.validate("DAILYGRIND"));
@@ -73,7 +73,7 @@ class HintServiceTest {
 
     @Test
     void theHintListReportsIgnoredRulesAndHowMuchEachMatches() {
-        entry("Phone", "This is my phone bill\nmatch: T + MOBILE\nmatch: NOVACELL");
+        entry("Phone", "This is my phone bill\nmatch: N + MOBILE\nmatch: NOVACELL");
         txn("NOVACELL PCS SVC 800-555-0188");
         txn("NOVACELL AUTOPAY THANK YOU");
         txn("DAILYGRIND STORE 1234");
@@ -82,7 +82,7 @@ class HintServiceTest {
         assertEquals(2, rows.size(), "prose lines are not rules and must not be listed");
 
         HintService.HintRow broken = rows.stream()
-                .filter(r -> r.hint().equals("T + MOBILE")).findFirst().orElseThrow();
+                .filter(r -> r.hint().equals("N + MOBILE")).findFirst().orElseThrow();
         assertNotNull(broken.problem(), "the ignored rule must carry its reason");
         assertEquals(0, broken.matchCount(), "an ignored rule matches nothing by definition");
 
@@ -114,8 +114,8 @@ class HintServiceTest {
         // The quieter case: the longer rule wins silently and the other never fires, which
         // is invisible from any screen that only shows the outcome.
         entry("Harbor Park", "match: HARBOR PARK");
-        entry("Harbor Park tickets", "match: HARBORPARKPASS");
-        txn("HARBORPARKPASS RIVERTON CA");
+        entry("Harbor Park tickets", "match: HARBOR PARKTICKET");
+        txn("HARBOR PARKTICKET RIVERTON CA");
 
         List<HintService.Conflict> conflicts = hintService.conflicts();
         assertEquals(1, conflicts.size());
@@ -139,8 +139,8 @@ class HintServiceTest {
     @Test
     void previewShowsTheBlastRadiusBeforeSaving() {
         BudgetEntry coffee = entry("Coffee", null);
-        txn("DAILYGRIND STORE 1234 RIVERTON CA");
-        txn("DAILYGRIND STORE 9876 RIVERTON CA");
+        txn("DAILYGRIND STORE 1234 RIVERTON WA");
+        txn("DAILYGRIND STORE 9876 RIVERTON OR");
         txn("GREENGROCER 0123 RIVERTON CA");
 
         HintService.Preview p = hintService.preview(coffee.getId(), "DAILYGRIND");
@@ -205,7 +205,7 @@ class HintServiceTest {
         BudgetEntry phone = entry("Phone", null);
         txn("NOVACELL PCS SVC");
 
-        HintService.Preview p = hintService.preview(phone.getId(), "T + MOBILE");
+        HintService.Preview p = hintService.preview(phone.getId(), "N + MOBILE");
         assertNotNull(p.problem(), "an unusable rule must be reported, not previewed as working");
         assertEquals(0, p.matchCount());
     }

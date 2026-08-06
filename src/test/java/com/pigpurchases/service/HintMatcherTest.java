@@ -38,13 +38,13 @@ class HintMatcherTest {
 
     /**
      * A composite whose part is too short used to lose that part and register as a bare
-     * substring, so "T + MOBILE" quietly became `mobile` and matched anything containing
+     * substring, so "N + MOBILE" quietly became `mobile` and matched anything containing
      * it. An AND the user wrote must never become an OR-of-one — the whole hint is
      * discarded instead, and the transaction parks for review.
      */
     @Test
     void aCompositeWithATooShortPartIsDiscardedRatherThanBroadened() {
-        HintMatcher phone = new HintMatcher(List.of(entry(1, "Phone bill", "match: T + MOBILE")));
+        HintMatcher phone = new HintMatcher(List.of(entry(1, "Phone bill", "match: N + MOBILE")));
         assertTrue(phone.match("MOBILE DEPOSIT 12345", "MOBILE DEPOSIT").isEmpty(),
                 "a deposit is not a phone bill");
         assertTrue(phone.match("UNITED MOBILE INC", "UNITED MOBILE").isEmpty());
@@ -56,16 +56,16 @@ class HintMatcherTest {
         // Composites whose parts are all long enough are untouched — this is the documented
         // way to pair an ambiguous token with a distinctive one.
         HintMatcher rx = new HintMatcher(List.of(entry(1, "Pharmacy", "match: MP + MAILORDER")));
-        assertEquals("Pharmacy", rx.match("MP RX00042 MAILORDER80 800-555-0175 CA", "KP RX")
+        assertEquals("Pharmacy", rx.match("MP RX00042 MAILORDER80 800-555-0175 CA", "MP RX")
                 .orElseThrow().entry().getName());
     }
 
     @Test
     void ignoresPatternsTooShortToTrust() {
-        // "Gas" would otherwise match CITYPOWER and POWELL ST GARAGE.
-        HintMatcher matcher = new HintMatcher(List.of(entry(1, "Gas", null)));
+        // "Pow" would otherwise match CITYPOWER and POWELL ST GARAGE.
+        HintMatcher matcher = new HintMatcher(List.of(entry(1, "Pow", null)));
         assertTrue(matcher.match("CITYPOWER 800-555-0142", "CITYPOWER").isEmpty());
-        assertTrue(matcher.match("POWELL ST GARAGE CA", "HOTEL").isEmpty());
+        assertTrue(matcher.match("POWELL ST GARAGE CA", "POWELL").isEmpty());
     }
 
     @Test
@@ -80,8 +80,8 @@ class HintMatcherTest {
     @Test
     void equallySpecificRivalsAreParkedRatherThanGuessed() {
         HintMatcher matcher = new HintMatcher(List.of(
-                entry(1, "Puppy food", "match: PETMART"),
-                entry(2, "Kid gifts", "match: PETMART")));
+                entry(1, "Pet supplies", "match: PETMART"),
+                entry(2, "Gift budget", "match: PETMART")));
         assertTrue(matcher.match("PETMART.COM 800-555-0163", "PETMART").isEmpty(),
                 "two entries claim the same pattern; guessing would be worse than parking");
     }
@@ -132,7 +132,7 @@ class HintMatcherTest {
 
     @Test
     void compositeHintAllowsShortDiscriminatorPairedWithSpecificOne() {
-        // Real case: a mail-order pharmacy copay. "KP" alone is too short to trust,
+        // A mail-order pharmacy copay. "MP" alone is too short to trust,
         // but "MP + MAILORDER" is safe because both must appear.
         HintMatcher matcher = new HintMatcher(List.of(entry(1, "Pharmacy", "match: MP + MAILORDER")));
         assertEquals("Pharmacy",

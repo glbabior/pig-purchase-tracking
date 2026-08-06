@@ -791,7 +791,7 @@
                   <code>City Power</code> catches <code>CITYPOWER 800-555-0142 CA</code>.</li>
                 <li>Join parts with <code>+</code> to require all of them:
                   <code>match: MP + MAILORDER</code> catches the the pharmacy pharmacy line without
-                  <code>KP</code> grabbing everything else.</li>
+                  <code>MP</code> grabbing everything else.</li>
                 <li>Any other line is plain prose, read only by the AI pass — “this is my auto loan”.</li>
               </ul>
               <p>The entry's own name is always matched too, so an entry called “Fresh Market” needs no hint
@@ -814,9 +814,9 @@
               <p>Both sides are lowercased and stripped of everything that isn't a letter or digit
                 before comparing, because statement text carries punctuation your category name
                 doesn't:</p>
-              <pre>City Power  →  citypower   matches  CITYPOWER 800-555-0142 CA
+              <pre>City Power   →  citypower   matches  CITYPOWER 800-555-0142 CA
 Novacell     →  novacell    matches  NOVA-CELL PCS SVC
-Daily Grind    →  dailygrind    matches  DAILYGRIND*COFFEE</pre>
+Daily Grind  →  dailygrind  matches  DAILYGRIND*COFFEE</pre>
               <p>The category's own <strong>name</strong> is always a rule, so a category called
                 “Fresh Market” needs nothing written at all.</p>
 
@@ -825,7 +825,7 @@ Daily Grind    →  dailygrind    matches  DAILYGRIND*COFFEE</pre>
                 reach for when one token is too vague on its own, or when a description changes every
                 month:</p>
               <pre>match: MP + MAILORDER              catches the the pharmacy pharmacy line
-                                   without KP grabbing everything else
+                                   without MP grabbing everything else
 
 match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
                                    ID changes every statement</pre>
@@ -838,13 +838,13 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
               <p>Two limits keep this conservative, because a wrong automatic answer is worse than a
                 transaction held for review:</p>
               <ul>
-                <li>A plain rule needs <strong>3+</strong> letters or digits. “Gas” would otherwise
+                <li>A plain rule needs <strong>3+</strong> letters or digits. “Pow” would otherwise
                   catch <code>CITYPOWER</code> and <code>POWELL ST GARAGE</code>.</li>
                 <li>Inside a <code>+</code> rule each part needs <strong>2+</strong>, since the AND is
                   what provides the specificity.</li>
               </ul>
               <p>A rule breaking either is <strong>ignored entirely</strong> — not partially applied.
-                <code>match: T + MOBILE</code> does nothing, rather than quietly becoming
+                <code>match: N + MOBILE</code> does nothing, rather than quietly becoming
                 <code>MOBILE</code> and catching “MOBILE DEPOSIT”. Ignored rules are flagged on this
                 screen with the reason, which is the only way to tell one from a rule that simply
                 hasn't matched anything yet.</p>
@@ -1025,8 +1025,8 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
             ones you've never seen. When two hints match, the longer (more specific) one wins.</p>
           <p><strong>A hint can require several parts at once.</strong> Join them with <code>+</code> and a charge
             matches only when it contains <em>all</em> of them. Use this when one word is too broad on its own:
-            <code>MP + MAILORDER</code> catches a mail-order pharmacy copay (<code>MP RX00042 MAILORDER80 …</code>)
-            without <code>KP</code> grabbing everything else, and <code>HPK + monthly</code> singles out the
+            <code>MP + MAILORDER</code> catches a the pharmacy pharmacy copay (<code>MP RX00042 MAILORDER80 …</code>)
+            without <code>MP</code> grabbing everything else, and <code>HPK + monthly</code> singles out the
             monthly annual-pass charge while a plain <code>HPK</code> still catches the rest.</p>
           <p><strong>So:</strong> when you categorize a parked item, take the offer to add a hint — it turns one
             fix into a rule. To apply a new hint to items already parked, use “Re-run mapping” on that statement.</p>

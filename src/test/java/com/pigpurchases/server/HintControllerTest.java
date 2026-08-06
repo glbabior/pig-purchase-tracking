@@ -65,8 +65,9 @@ class HintControllerTest {
         List<String> names = new ArrayList<>();
         body.get("entries").forEach(e -> names.add(e.get("name").asText()));
 
-        assertEquals(List.of("roadster", "Dining", "Groceries", "Utilities"), names,
-                "sorted by name, and 'roadster' must not sort after 'Utilities' for its case");
+        assertEquals(List.of("Dining", "Groceries", "roadster", "Utilities"), names,
+                "sorted by name, and 'roadster' must land between Groceries and Utilities rather"
+                        + " than after both, which is where a case-sensitive sort would put it");
     }
 
     @Test
