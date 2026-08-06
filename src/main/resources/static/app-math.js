@@ -144,8 +144,32 @@ const HINT_SORT_VALUES = {
   attention: (r) => (r.ignored ? 3 : r.idle ? 2 : r.hintCount ? 0 : 1),
 };
 
+/**
+ * A statement source and where its statements live. Shared by the two screens that list
+ * sources — Statement Sources, and the top table on Ingest — because both sort the same two
+ * columns of the same objects, and two copies would be free to disagree.
+ */
+const SOURCE_SORT_VALUES = {
+  name: (s) => String(s.name || '').toLowerCase(),
+  folderPath: (s) => String(s.folderPath || '').toLowerCase(),
+};
+
+/**
+ * Ingest, bottom table: every loaded statement across all sources.
+ *
+ * Dates are ISO strings, so they compare correctly as text — and a statement with no date
+ * cannot exist, because a parser that cannot determine one refuses the import rather than
+ * storing rows against no month.
+ */
+const INGEST_IMPORT_SORT_VALUES = {
+  sourceName: (i) => String(i.sourceName || '').toLowerCase(),
+  statementDate: (i) => i.statementDate || null,
+};
+
 function sortRunFiles(files, sort) { return sortRows(files, sort, RUN_SORT_VALUES); }
 function sortHintCategories(rows, sort) { return sortRows(rows, sort, HINT_SORT_VALUES); }
+function sortSources(rows, sort) { return sortRows(rows, sort, SOURCE_SORT_VALUES); }
+function sortIngestImports(rows, sort) { return sortRows(rows, sort, INGEST_IMPORT_SORT_VALUES); }
 
 /**
  * Escape text for interpolation into markup. Statement descriptions are merchant-controlled

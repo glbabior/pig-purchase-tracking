@@ -135,6 +135,28 @@ class StatementSourceControllerTest {
                 .andExpect(status().is4xxClientError());
     }
 
+    /**
+     * "Open folder" on a source whose folder is gone must say so rather than doing nothing.
+     *
+     * <p>A moved folder or an unmounted drive is the ordinary case, and a button that fails
+     * silently reads as a broken button rather than a missing folder.
+     *
+     * <p>Only the refusal path is exercised, deliberately. The success path starts a real
+     * file-manager process, and a suite that pops open Explorer windows every run is one
+     * people stop running — so what is pinned here is the guard, not the launch.
+     */
+    @Test
+    void openingAMissingSourceFolderIsRefused(@TempDir Path folder) throws Exception {
+        Path gone = folder.resolve("folder-that-moved-away");
+        String created = mvc.perform(post("/api/statement-sources").contentType(APPLICATION_JSON)
+                        .content(json(Map.of("name", "Gone", "folderPath", gone.toString()))))
+                .andReturn().getResponse().getContentAsString();
+        long id = om.readTree(created).get("id").asLong();
+
+        mvc.perform(post("/api/statement-sources/" + id + "/open"))
+                .andExpect(status().is4xxClientError());
+    }
+
     @Test
     void ingestThenServeSourceFileAndTraceTransaction(@TempDir Path folder) throws Exception {
         Files.createDirectories(folder.resolve("2026"));

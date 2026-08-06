@@ -140,19 +140,9 @@
       .icon-btn:hover { background: #f4e7d5; }
       th .arrow { color: #b57a2b; }
       .muted { color: #7a6753; font-size: 0.9rem; }
-      .chip { display: inline-block; background: #f4e7d5; color: #6b3b00; border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.8rem; margin: 0.1rem 0.15rem 0.1rem 0; cursor: help; }
-      a.chip, button.chip { text-decoration: none; cursor: pointer; border: none; font: inherit; }
-      a.chip:hover, button.chip:hover { background: #e9d5b8; }
-      /* A loaded statement: the date opens it in the PDF app, 📁 reveals it in
-         its folder. Paired so they read as one control. */
-      .chip-pair { display: inline-flex; align-items: stretch; margin: 0.1rem 0.15rem 0.1rem 0; }
-      .chip-pair .chip { margin: 0; }
-      .chip-pair .chip:first-child { border-radius: 999px 0 0 999px; padding-right: 0.45rem; }
-      .chip-pair .chip.reveal { border-radius: 0 999px 999px 0; padding-left: 0.35rem; border-left: 1px solid #e2cfae; }
       .actions button { margin-right: 0.5rem; }
       /* Statement-source action buttons sit on their own line just above each
          source row: left-aligned, no divider, so they hug the row below. */
-      tr.actions-row td { border-bottom: none; padding-top: 0.9rem; padding-bottom: 0.15rem; }
       /* Mapping runs */
       .run-error { color: #b3261e; font-size: 0.9rem; margin-top: 0.8rem; min-height: 1.2rem; }
       .run-source-pick { margin-top: 0.9rem; display: flex; flex-direction: column; gap: 0.3rem; }
@@ -186,11 +176,10 @@
       .log-level.WARN { color: #8a4b00; }
       .log-level.ERROR { color: #b3261e; }
       @media (max-width: 640px) { .log-row { grid-template-columns: 1fr; gap: 0.15rem; } }
-      .ingest-source { padding: 1rem 0; border-bottom: 1px solid #eee; }
-      .ingest-source:last-child { border-bottom: none; }
-      .ingest-source h3 { margin: 0 0 0.2rem; color: #6b3b00; }
-      .ingest-source .path { color: #7a6753; font-size: 0.85rem; word-break: break-all; }
-      .history-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.6rem; align-items: center; }
+      /* A source's folder on the Ingest screen. Paths are long and have no spaces to wrap on,
+         so let them break anywhere rather than forcing the whole table wide; the full path is
+         also in the cell's tooltip. */
+      .path-cell { color: #7a6753; font-size: 0.85rem; word-break: break-all; }
       .modal-body.wide { width: min(640px, 100%); }
       .modal-body.guide-modal { width: min(880px, 100%); }
       .browse-path { color: #7a6753; font-size: 0.85rem; margin-top: 0.3rem; word-break: break-all; }
@@ -211,7 +200,14 @@
       @keyframes spin { to { transform: rotate(360deg); } }
 
       /* Modal */
-      .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: none; align-items: center; justify-content: center; padding: 1rem; }
+      /* The z-index is load-bearing, not decoration. Without it a modal is positioned but
+         z-index:auto, and the pinned table chrome above (thead th / tfoot td, z-index: 2)
+         paints OVER it — a positive z-index always beats auto, whatever the DOM order, and
+         overflow:auto on .table-scroll does not trap them in a stacking context of their
+         own. On both Spend screens the drill-down dialog came up with the category table's
+         header row and pinned Total row drawn across it. Kept below .busy-overlay (1000)
+         so a slow operation still covers an open dialog, as it always did. */
+      .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: none; align-items: center; justify-content: center; padding: 1rem; z-index: 900; }
       .modal.open { display: flex; }
       /* Hint/help dialogs open from within other dialogs, so they must stack above them. */
       #hintModal, #helpModal { z-index: 1100; }
@@ -417,16 +413,18 @@
               <div class="toolbar">
                 <button class="primary" id="addSourceBtn">Add Source</button>
               </div>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Folder Path</th>
-                    <th>Excluded from spend</th>
-                  </tr>
-                </thead>
-                <tbody id="sourcesTableBody"></tbody>
-              </table>
+              <div class="table-scroll">
+                <table class="runs-table">
+                  <thead>
+                    <tr>
+                      <th class="sortable" data-source-sort="name" data-label="Source">Source</th>
+                      <th class="sortable" data-source-sort="folderPath" data-label="Folder">Folder</th>
+                      <th colspan="3"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="sourcesTableBody"></tbody>
+                </table>
+              </div>
               <div id="sourcesEmptyState" class="empty">No statement sources yet. Add one to get started.</div>
             </section>
 
@@ -435,12 +433,41 @@
                 <h2 class="view-title">Ingest Statements</h2>
                 <button class="view-help" data-guide="ingest" title="Help for this screen">? Help</button>
               </div>
-              <p class="hint">Load each source's statement. Click &ldquo;Load statement&hellip;&rdquo;, drill into the folder, and pick the PDF. Loaded statements are listed by date (mm/dd/yy) &mdash; click one to open it in Acrobat, or &#128193; to show it in its folder.</p>
+              <p class="hint">Load each source's statement. Click &ldquo;Load statement&hellip;&rdquo; on its row, drill into the folder, and pick the PDF. Everything you have loaded is listed below, newest first &mdash; open one in Acrobat, or show it in its folder.</p>
               <div class="toolbar" style="justify-content:flex-start;margin-bottom:0.8rem;">
                 <button class="secondary" id="addManualBtn">+ Add manual transaction</button>
               </div>
               <p class="hint" style="margin-top:0;">Manual entries are for spend that never appears on a statement (e.g. a Venmo balance).</p>
-              <div id="ingestSources"></div>
+
+              <h3 class="section-title">Sources</h3>
+              <div class="table-scroll">
+                <table class="runs-table">
+                  <thead>
+                    <tr>
+                      <th class="sortable" data-ingest-source-sort="name" data-label="Source">Source</th>
+                      <th class="sortable" data-ingest-source-sort="folderPath" data-label="Folder">Folder</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="ingestSourcesBody"></tbody>
+                </table>
+              </div>
+              <div id="ingestSourcesEmpty" class="empty">No statement sources yet. Add one on the Statement Sources screen.</div>
+
+              <h3 class="section-title">Loaded statements</h3>
+              <div class="table-scroll">
+                <table class="runs-table">
+                  <thead>
+                    <tr>
+                      <th class="sortable" data-ingest-import-sort="sourceName" data-label="Source">Source</th>
+                      <th class="sortable" data-ingest-import-sort="statementDate" data-label="Statement date">Statement date</th>
+                      <th colspan="2"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="ingestImportsBody"></tbody>
+                </table>
+              </div>
+              <div id="ingestImportsEmpty" class="empty">No statements loaded yet. Use &ldquo;Load statement&hellip;&rdquo; on a source above.</div>
             </section>
 
             <section id="mappingView" style="display:none">
@@ -851,10 +878,14 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
             <section id="guide-sources">
               <h3>Statement Sources</h3>
               <p>One row per account, each pointing at the folder where that account's statement PDFs
-                live. Give the absolute path; the app only ever reads from it.</p>
-              <p>“Excluded from spend” shows the transfers this source drops automatically — a credit
-                card payment made from your checking account is real on both statements, but counting
-                it twice would be wrong. These come from the source's parser rules.</p>
+                live. Give the absolute path; the app only ever reads from it. Sort by either column
+                heading, and use <strong>Open folder</strong> to show that folder in your file
+                manager — handy for checking a path is still right, or for dropping a freshly
+                downloaded statement in before loading it on Ingest.</p>
+              <p>Each source can also drop transfers automatically — a credit card payment made from
+                your checking account is real on both statements, but counting it twice would be
+                wrong. Those carve-outs come from the source's parser rules and are applied at
+                ingest; they are no longer listed on this screen.</p>
               <p><strong>Known gap:</strong> the form edits the name and folder only. Which parser
                 reads the PDFs still has to be set through the API
                 (<code>PUT /api/statement-sources/{id}/parser-rules</code>), so a source created here
@@ -864,9 +895,14 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
 
             <section id="guide-ingest">
               <h3>Ingest</h3>
-              <p>Where statements become transactions. Click “Load statement…”, drill into the
-                folder, pick the PDF. Loaded statements appear as date chips — click one to open it
-                in Acrobat, or 📁 to show it in its folder.</p>
+              <p>Where statements become transactions. The screen is in three parts: manual entry
+                at the top, your <strong>Sources</strong> in the middle, and every
+                <strong>Loaded statement</strong> at the bottom.</p>
+              <p>To load one, find its source in the middle table and click “Load statement…”, then
+                drill into the folder and pick the PDF. It appears in the bottom table, which lists
+                every statement you have loaded across all sources — newest first, with buttons to
+                open it in Acrobat or show it in its folder. Both tables sort by any column
+                heading; hover a folder or a button for the full path and file name.</p>
               <p><strong>Re-loading the same statement is safe.</strong> Loading a statement the app
                 already has for that source and date replaces the old copy rather than duplicating
                 it, so you can re-load freely if something looked wrong. Your categorizations are
@@ -1160,13 +1196,21 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
       let entries = [];
       let editingId = null;
       let sortState = { key: null, dir: 1 };
-      // Sort state for the two tables wired by wireSort() during init below. Declared HERE,
-      // with the other state, because wireSort takes them as arguments — a `let` further down
-      // the file is in the temporal dead zone at that point and throws, which kills the rest
-      // of init and leaves the whole page inert. The closure that used to hold these was safe
-      // only because it read them on click, long after the script had finished.
+      // Sort state for the sortable tables, wired by wireSort() during init below. Declared
+      // HERE, with the other state, because wireSort takes them as arguments — a `let` further
+      // down the file is in the temporal dead zone at that point and throws, which kills the
+      // rest of init and leaves the whole page inert. The closure that used to hold these was
+      // safe only because it read them on click, long after the script had finished.
       let runsSort = { key: null, dir: 1 };
       let hintsSort = { key: null, dir: 1 };
+      // Ingest opens on the two orders the screen is actually read in: sources alphabetically,
+      // and statements newest first. Both tables are otherwise re-sortable like any other.
+      let ingestSourcesSort = { key: 'name', dir: 1 };
+      let ingestImportsSort = { key: 'statementDate', dir: -1 };
+      // Statement Sources lists the same objects as Ingest's top table, and sorts them with
+      // the same comparator — but its own state, so sorting one screen does not reorder the
+      // other under the user.
+      let sourcesSort = { key: 'name', dir: 1 };
       let settings = { annualBudget: '0', monthlyAllowance: '0' };
       let sources = [];
       let editingSourceId = null;
@@ -1314,6 +1358,9 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
       // Headers are static markup, so these bind once. Clicking the active column again
       // reverses it, matching Budget Entries and the Spend tables.
       wireSort('data-run-sort', runsSort, renderRuns);
+      wireSort('data-ingest-source-sort', ingestSourcesSort, renderIngestSources);
+      wireSort('data-ingest-import-sort', ingestImportsSort, renderIngestImports);
+      wireSort('data-source-sort', sourcesSort, renderSources);
       wireSort('data-hint-sort', hintsSort, renderHints);
       document.getElementById('reRunMappingBtn').addEventListener('click', openRemapPicker);
       document.getElementById('remapGoBtn').addEventListener('click', doRemapSelected);
@@ -2075,39 +2122,44 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
       }
 
       function renderSources() {
-        sourcesTableBody.innerHTML = '';
-        if (!sources.length) {
-          sourcesEmptyState.style.display = 'block';
-          return;
+        updateSortArrows('data-source-sort', sourcesSort);
+        const rows = sortSources(sources.slice(), sourcesSort);
+        sourcesEmptyState.style.display = rows.length ? 'none' : 'block';
+        // One row per source, actions on the row itself. They used to sit on a separate row
+        // ABOVE each source, which read as belonging to the source before it.
+        sourcesTableBody.innerHTML = rows.map((s) => {
+          const folder = escapeHtml(s.folderPath || '');
+          return `<tr>
+            <td>${escapeHtml(s.name || '')}</td>
+            <td class="path-cell" title="${folder}">${folder}</td>
+            <td><button class="secondary btn-sm" data-open-folder="${s.id}"
+                  title="Show ${folder} in the file manager">📁 Open folder</button></td>
+            <td><button class="secondary btn-sm" data-edit="${s.id}">Edit</button></td>
+            <td><button class="secondary btn-sm" data-delete="${s.id}">Delete</button></td>
+          </tr>`;
+        }).join('');
+        sourcesTableBody.querySelectorAll('[data-open-folder]').forEach((el) =>
+          el.addEventListener('click', () => openSourceFolder(el.getAttribute('data-open-folder'))));
+        sourcesTableBody.querySelectorAll('[data-edit]').forEach((el) =>
+          el.addEventListener('click', () => editSource(Number(el.getAttribute('data-edit')))));
+        sourcesTableBody.querySelectorAll('[data-delete]').forEach((el) =>
+          el.addEventListener('click', () => deleteSource(Number(el.getAttribute('data-delete')))));
+      }
+
+      /**
+       * Open a source's folder in the file manager.
+       *
+       * <p>Reports the reason rather than failing quietly: a source whose folder has moved or
+       * whose drive is not mounted is the common case, and a button that does nothing at all
+       * looks like a broken button rather than a missing folder.
+       */
+      async function openSourceFolder(sourceId) {
+        try {
+          const r = await fetch(`/api/statement-sources/${sourceId}/open`, { method: 'POST' });
+          if (!r.ok) throw new Error((await r.text()) || ('HTTP ' + r.status));
+        } catch (err) {
+          alert('Could not open the folder.\n\n' + err.message);
         }
-        sourcesEmptyState.style.display = 'none';
-        sources.forEach((source) => {
-          const exclusions = source.exclusions || [];
-          const exclusionsHtml = exclusions.length
-            ? exclusions.map((e) => `<span class="chip" title="${escapeHtml(e.reason || '')}">${escapeHtml(e.contains || '')}</span>`).join(' ')
-            : '<span class="muted">—</span>';
-
-          const actionsRow = document.createElement('tr');
-          actionsRow.className = 'actions-row';
-          actionsRow.innerHTML = `
-            <td class="actions" colspan="3">
-              <button class="secondary" data-edit>Edit</button>
-              <button class="secondary" data-delete>Delete</button>
-            </td>
-          `;
-          actionsRow.querySelector('[data-edit]').addEventListener('click', () => editSource(source.id));
-          actionsRow.querySelector('[data-delete]').addEventListener('click', () => deleteSource(source.id));
-
-          const row = document.createElement('tr');
-          row.innerHTML = `
-            <td>${escapeHtml(source.name || '')}</td>
-            <td class="muted">${escapeHtml(source.folderPath || '')}</td>
-            <td>${exclusionsHtml}</td>
-          `;
-
-          sourcesTableBody.appendChild(actionsRow);
-          sourcesTableBody.appendChild(row);
-        });
       }
 
       function openAddSource() {
@@ -2202,38 +2254,69 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
       }
 
       function renderIngest() {
-        const container = document.getElementById('ingestSources');
-        container.innerHTML = '';
-        if (!sources.length) {
-          container.innerHTML = '<div class="empty">No statement sources yet. Add one on the Statement Sources screen.</div>';
-          return;
-        }
+        renderIngestSources();
+        renderIngestImports();
+      }
+
+      /**
+       * Every loaded statement across every source, flattened and carrying its source's name.
+       *
+       * <p>The screen used to nest imports under a card per source, which meant "what did I
+       * load most recently?" could only be answered by reading every card. One table sorted
+       * by date answers it directly, and the source becomes a column like any other.
+       */
+      function allIngestImports() {
+        const out = [];
         sources.forEach((source) => {
-          const imports = ingestImports[source.id] || [];
-          const chips = imports.length
-            ? imports.map((im) => {
-                const label = `${escapeHtml(im.fileName || '')} — ${im.transactionCount} transactions`;
-                return `<span class="chip-pair"
-                  ><button class="chip" data-open="${im.id}" title="${label} — click to open in your PDF app">${formatMmDdYy(im.statementDate)}</button
-                  ><button class="chip reveal" data-reveal="${im.id}" title="Show this file in its folder">📁</button
-                ></span>`;
-              }).join(' ')
-            : '<span class="muted">No statements loaded yet.</span>';
-          const card = document.createElement('div');
-          card.className = 'ingest-source';
-          card.innerHTML = `
-            <h3>${escapeHtml(source.name || '')}</h3>
-            <div class="path">${escapeHtml(source.folderPath || '')}</div>
-            <div style="margin-top:0.6rem;"><button class="primary" data-load>Load statement…</button></div>
-            <div class="history-chips"><span class="muted" style="margin-right:0.3rem;">Loaded:</span>${chips}</div>
-          `;
-          card.querySelector('[data-load]').addEventListener('click', () => openBrowser(source.id, source.name || ''));
-          card.querySelectorAll('[data-open]').forEach((el) =>
-            el.addEventListener('click', () => openStatementFile(el.getAttribute('data-open'))));
-          card.querySelectorAll('[data-reveal]').forEach((el) =>
-            el.addEventListener('click', () => revealStatementFile(el.getAttribute('data-reveal'))));
-          container.appendChild(card);
+          (ingestImports[source.id] || []).forEach((im) =>
+            out.push(Object.assign({}, im, { sourceName: source.name || '' })));
         });
+        return out;
+      }
+
+      function renderIngestSources() {
+        const body = document.getElementById('ingestSourcesBody');
+        const empty = document.getElementById('ingestSourcesEmpty');
+        updateSortArrows('data-ingest-source-sort', ingestSourcesSort);
+        const rows = sortSources(sources.slice(), ingestSourcesSort);
+        empty.style.display = rows.length ? 'none' : 'block';
+        body.innerHTML = rows.map((s) => `<tr>
+            <td>${escapeHtml(s.name || '')}</td>
+            <td class="path-cell" title="${escapeHtml(s.folderPath || '')}">${escapeHtml(s.folderPath || '')}</td>
+            <td><button class="primary btn-sm" data-load="${s.id}">Load statement…</button></td>
+          </tr>`).join('');
+        body.querySelectorAll('[data-load]').forEach((el) =>
+          el.addEventListener('click', () => {
+            const id = Number(el.getAttribute('data-load'));
+            const source = sources.find((s) => s.id === id);
+            openBrowser(id, source ? (source.name || '') : '');
+          }));
+      }
+
+      function renderIngestImports() {
+        const body = document.getElementById('ingestImportsBody');
+        const empty = document.getElementById('ingestImportsEmpty');
+        updateSortArrows('data-ingest-import-sort', ingestImportsSort);
+        const rows = sortIngestImports(allIngestImports(), ingestImportsSort);
+        empty.style.display = rows.length ? 'none' : 'block';
+        // File name and transaction count ride in the tooltips rather than taking columns of
+        // their own: they are what the old date chips carried, and a button that launches
+        // something should say what it will launch before you click it.
+        body.innerHTML = rows.map((im) => {
+          const detail = `${im.fileName || ''} — ${im.transactionCount} transaction(s)`;
+          return `<tr>
+            <td>${escapeHtml(im.sourceName || '')}</td>
+            <td class="nowrap">${formatMmDdYy(im.statementDate)}</td>
+            <td><button class="secondary btn-sm" data-open="${im.id}"
+                  title="Open ${escapeHtml(detail)} in your PDF app">📄 Open statement</button></td>
+            <td><button class="secondary btn-sm" data-reveal="${im.id}"
+                  title="Show ${escapeHtml(im.fileName || '')} in its folder">📁 Show in folder</button></td>
+          </tr>`;
+        }).join('');
+        body.querySelectorAll('[data-open]').forEach((el) =>
+          el.addEventListener('click', () => openStatementFile(el.getAttribute('data-open'))));
+        body.querySelectorAll('[data-reveal]').forEach((el) =>
+          el.addEventListener('click', () => revealStatementFile(el.getAttribute('data-reveal'))));
       }
 
       /**
@@ -3107,14 +3190,32 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
         return true;
       }
 
+      /**
+       * The dropdown label for one month. ONE definition, used both when the list is first
+       * built and whenever it is repainted. It was inline in loadSpendMonthly, which meant
+       * the only way to refresh a label was to rebuild the whole screen: ticking "Complete"
+       * updated the checkbox and the hint but left the option still reading "partial" until
+       * you navigated away and back.
+       */
+      function monthOptionLabel(m) {
+        if (m.complete) return m.month + ' — complete';
+        return m.month + (m.unmapped ? ` — partial, ${m.unmapped} unmapped` : ' — partial');
+      }
+
+      /** Repaint the month dropdown from monthInfos, keeping the current selection. */
+      function renderMonthOptions() {
+        const select = document.getElementById('analysisMonth');
+        const chosen = select.value;
+        select.innerHTML = monthInfos.map((m) =>
+          `<option value="${m.month}">${escapeHtml(monthOptionLabel(m))}</option>`).join('');
+        if (chosen) select.value = chosen;
+      }
+
       async function loadSpendMonthly() {
         const months = await loadMappedMonths();
         if (!toggleSpendView('monthlyEmpty', 'monthlyBody', months)) return;
         const select = document.getElementById('analysisMonth');
-        select.innerHTML = months.map((m) => {
-          const tag = m.complete ? ' — complete' : (m.unmapped ? ` — partial, ${m.unmapped} unmapped` : ' — partial');
-          return `<option value="${m.month}">${escapeHtml(m.month + tag)}</option>`;
-        }).join('');
+        renderMonthOptions();
         select.onchange = () => loadMonth(select.value);
         document.getElementById('monthCompleteToggle').onchange = onMonthCompleteToggle;
         // Keep the chosen month across visits if it's still valid.
@@ -3142,6 +3243,8 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
           await putJson(`/api/analysis/months/${encodeURIComponent(month)}/complete`, { complete });
           const info = monthInfos.find((m) => m.month === month);
           if (info) info.complete = complete;
+          // The dropdown carries the same fact as the checkbox, so it has to move with it.
+          renderMonthOptions();
           renderMonthStatusControls(month);
         } catch (err) {
           alert('Could not update month status: ' + err.message);

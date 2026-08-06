@@ -350,6 +350,51 @@ public class BudgetController {
         return Map.of("revealed", true, "file", file.toString());
     }
 
+    /**
+     * Show a statement source's folder in the OS file manager.
+     *
+     * <p>Deliberately <b>not</b> routed through {@link #launch}. That method's Windows
+     * open branch goes through {@code cmd /c start} and therefore needs
+     * {@link #refuseShellMetacharacters}; a folder needs no shell at all, so this takes the
+     * {@code explorer.exe} route where the path is a plain argument. There is nothing for a
+     * metacharacter to break out of, which means a source living under a folder like
+     * {@code D:\Docs\Bank & Trust\} opens fine here while its statement files still cannot be
+     * launched — the guard is on the shell branch, not on the path.
+     *
+     * <p>POST rather than GET because it starts a process on this machine. That is exactly
+     * the kind of side effect {@code LocalOriginFilter} exists to stop another page causing,
+     * and the filter only inspects state-changing methods.
+     */
+    @PostMapping("/statement-sources/{id}/open")
+    public Map<String, Object> openSourceFolder(@PathVariable Long id) throws IOException {
+        StatementSource source = statementSourceRepository.findById(id).orElseThrow();
+        Path dir = Path.of(source.getFolderPath()).toAbsolutePath().normalize();
+        if (!Files.isDirectory(dir)) {
+            // The usual cause is a folder that moved or a drive that is not mounted, so say
+            // which one rather than failing silently after the click does nothing.
+            throw new IllegalArgumentException("This source's folder was not found: " + dir);
+        }
+        launchFolder(dir);
+        return Map.of("opened", true, "folder", dir.toString());
+    }
+
+    /** Hand a directory to the desktop file manager. No shell on any platform. */
+    private void launchFolder(Path dir) throws IOException {
+        String os = System.getProperty("os.name", "").toLowerCase();
+        String path = dir.toAbsolutePath().toString();
+        ProcessBuilder pb;
+        if (os.contains("win")) {
+            pb = new ProcessBuilder("explorer.exe", path);
+        } else if (os.contains("mac")) {
+            pb = new ProcessBuilder("open", path);
+        } else {
+            pb = new ProcessBuilder("xdg-open", path);
+        }
+        pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+        pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+        pb.start();
+    }
+
     /** The on-disk PDF an import came from, resolved safely under its source folder. */
     private Path importFile(Long importId) {
         StatementImport imp = statementImportRepository.findById(importId).orElseThrow();
