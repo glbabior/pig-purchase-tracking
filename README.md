@@ -33,9 +33,9 @@ never leave the machine** — see [Privacy](#privacy).
 
 The UI is a single browser tab with nine screens, worked roughly left to right.
 
-The four long tables — **Budget Entries**, **Matching Hints**, **Mapping**, and the
-category breakdown on both Spend screens — scroll inside themselves with their header
-row pinned, so the columns stay labelled however far down you are. On the Spend
+The long tables — **Budget Entries**, **Matching Hints**, both tables on **Ingest**,
+**Mapping**, and the category breakdown on both Spend screens — scroll inside themselves
+with their header row pinned, so the columns stay labelled however far down you are. On the Spend
 screens the **Total** row is pinned to the bottom for the same reason: it is the one
 row you want readable while scrolling everything above it.
 
@@ -62,14 +62,21 @@ that finds transactions claimed by more than one category, distinguishing a tie 
 parks the transaction) from an uneven overlap (where the longer hint silently wins).
 
 **Statement Sources** — the named accounts, each with the folder its statements
-live in. Add / edit / delete, with per-source spend exclusions shown inline.
+live in. One sortable table: source, folder, and per-row **Open folder** (shows it in
+your file manager), **Edit** and **Delete**. Per-source spend exclusions are still
+applied at ingest but are no longer displayed here — they come from the source's parser
+rules, which the form does not edit either (see [Known gaps](#known-gaps)).
 
-**Ingest** — browse a source's folder, load a statement, and see the import
-history as date chips. Clicking a date opens the PDF in Acrobat; 📁 reveals it in
-its folder. Re-loading the same source + statement date **replaces** the prior
-import rather than duplicating it. This screen is also where you add a **manual
-transaction** — spend that never hits a statement (a Venmo balance, cash) — with a
-same-day duplicate check.
+**Ingest** — three sections, top to bottom. At the top, the **manual transaction**
+button — spend that never hits a statement (a Venmo balance, cash), with a same-day
+duplicate check. In the middle, a table of your **sources**: name, folder, and a
+**Load statement…** button per row that opens the folder browser. At the bottom, every
+**loaded statement** across all sources in one table — source and statement date, with
+buttons to open the PDF in Acrobat or show it in its folder. Both tables sort by any
+column heading; the bottom one opens newest first, which is the order that answers
+"what did I load last?". The file name and transaction count are in the buttons' hover
+text rather than taking columns of their own. Re-loading the same source + statement
+date **replaces** the prior import rather than duplicating it.
 
 **Mapping** — the categorization screen. One scrolling table, header pinned and
 sortable, with a row per ingested statement: source, statement date, a 📄 icon that
@@ -345,9 +352,22 @@ transactions and then become categories is the part worth seeing. Two merchants 
 statement match no hint on purpose, so they land in "Other" and give the review screen and
 the parked bucket something to show.
 
+Three rows park per statement, not two. The third is the `PAYMENT THANK YOU` line, which
+matches no hint either — and it is worth looking at, because it demonstrates the rule that
+is easiest to get wrong: it sits in "Other" without adding its amount to "Other", since
+money in stays out of spend unless you assign that exact row by hand (see
+[Known gaps](#known-gaps)).
+
 Everything it touches is disposable and separate from a normal launch — its own database
-under `~/.pigpurchases-demo`, backups disabled, and AI off so it makes no API calls and
-costs nothing. Delete that folder to start over.
+under `~/.pigpurchases-demo`, its own backup directory *and* backups disabled, its own
+restore-preview directory, and AI off so it makes no API calls and costs nothing. Delete
+that folder to start over.
+
+Four filesystem redirects, not one, because each is configured independently of the
+datasource. The backup directory matters even with backups off, since "Back up now"
+ignores that flag; the preview directory matters because previewing any backup builds a
+throwaway database, and left at its default it landed in `~/.pigpurchases` — the live
+database's own folder.
 
 `NorthwindStatementParser` is a demonstration, not a toy: it prints control totals and is
 reconciled against them, and it refuses an undated statement rather than storing rows
@@ -404,10 +424,20 @@ independent of the live `.mv.db`.
   graceful shutdown, and on demand. Each run computes a cheap change signature and
   **skips writing when nothing changed**.
 - **Anti-clobber guard**: if a snapshot shows real mappings dropping by more than
-  half versus the last good backup — the "reverted to an empty state" failure — it
+  half versus the baseline — the "reverted to an empty state" failure — it
   is saved as `pigpurchases-YYYY-MM-DD-HHMMSS.SUSPECT.sql` with a warning in
   Settings **instead of overwriting** the good daily backup. `.SUSPECT` files are
   never auto-pruned.
+
+  The baseline is the **highest mapped-row count still in force**, read back from the
+  backups' `.meta` sidecars at startup — not simply the newest one's. Seeding from the
+  newest let the guard disarm itself: one backup recording zero mapped rows became the
+  baseline, and the guard's own floor (it stays quiet below 20 rows, so a new database
+  isn't nagged) is not met at zero, so every later empty backup then overwrote the day's
+  real file in silence. The scan stops at the newest **deliberate** new normal — a
+  "baseline accepted" or a restore commit — because that is exactly the statement that
+  everything older no longer applies, which is what lets an accepted drop survive a
+  restart instead of being re-flagged by last week's higher count.
 
 ### Restoring
 
@@ -476,6 +506,10 @@ unresolved transactions stay in "Other".
 There is no login, because this is one person on their own machine and a password
 would be theatre. That is not the same as no protection:
 
+- **The socket is loopback-only.** `server.address=127.0.0.1` in
+  `application.properties`. Spring Boot's default is to bind *every* interface, which put
+  the whole API — every amount, every statement PDF, and every state-changing POST — within
+  reach of anything that could route to this machine.
 - **Requests must come from this machine.** `LocalOriginFilter` refuses any POST,
   PUT, PATCH or DELETE whose `Origin` or `Referer` names a host that is not
   loopback. Without it, any web page the browser had open could silently drive the
@@ -483,19 +517,32 @@ would be theatre. That is not the same as no protection:
   baseline. It could never *read* a response, so the damage was all one-way and
   invisible. Requests with neither header are allowed: a browser always sends one
   for a page-initiated state change, so what is left is `curl` and local tooling.
-- **The page cannot be framed, and injected code cannot phone home.** Every
+
+  **These two are a pair, and neither is sufficient alone.** The filter guards against a
+  hostile *page*; the bind address is what makes its header-absent allowance safe. A `curl`
+  from another machine sends neither header, so while the socket was open to the network
+  that allowance let a stranger read and write everything. Binding to loopback is what
+  makes the heading above true of the socket rather than only of the browser.
+- **The page cannot be framed, and injected code cannot open a channel home.** Every
   response carries `X-Frame-Options: DENY`, `frame-ancestors 'none'`,
   `X-Content-Type-Options: nosniff` and a CSP whose `default-src`/`connect-src` are
   `'self'`. `'unsafe-inline'` is allowed for scripts and styles because the
-  frontend is one inline block by design — the value here is `connect-src`, which
-  means even a successful injection has nowhere off-machine to send what it reads.
+  frontend is one inline block by design — the value here is `connect-src`, which stops
+  injected code opening a `fetch` or a socket to another host. It is **not** a complete
+  exfiltration seal, and it should not be read as one: no CSP directive covers top-level
+  navigation, so script that assigns to `location` can still carry data off in a URL. It
+  raises the cost of an injection; it does not make one harmless.
 - **The H2 web console is off.** It had no password of its own and fronted a
   datasource using `sa` with a blank one.
 - **Files are not opened through a shell if their name could be a command.**
   `cmd /c start` leaves an unquoted path when it contains no space, so an `&` in a
   statement filename would separate commands. Such a path is refused with an
   explanation rather than quoted, because quoting has to be perfect and refusing
-  does not.
+  does not. Only that one branch touches a shell — revealing a file, and opening a
+  source's folder from Statement Sources, hand the path to `explorer.exe` (or
+  `open` / `xdg-open`) as a plain argument, so there is nothing to break out of and
+  no refusal needed. A source under `D:\Docs\Bank & Trust\` therefore opens fine
+  while its statement files still cannot be launched.
 - **Backup file names may not contain a quote**, which would otherwise escape the
   `RUNSCRIPT FROM '<name>'` that loads them.
 
@@ -511,6 +558,13 @@ Security, the spend semantics, the hint-length rules, the parser wiring and demo
 were each checked against the source, and the project layout against the tree.
 `docs/ARCHITECTURE.md` and `docs/architecture.html` were brought level with the same
 material on the same date._
+
+_Re-verified 2026-08-05 after a review pass. Demo mode was run end to end and its numbers
+checked against the running app; the API reference was confirmed endpoint by endpoint
+against the nine controllers; and four defects found by that pass were fixed here — the
+server now binds loopback only, demo mode redirects the restore-preview directory, the
+demo seeds each thing on its own guard, and the backup baseline is the highest count still
+in force rather than the newest. The portable suite is 143 green with nothing skipped._
 
 ### Working
 
@@ -546,9 +600,9 @@ material on the same date._
   with none listed too, hints that are *ignored* separated from hints that merely
   *match nothing yet*, a before-you-save preview of what a hint would catch and what
   it would take from another category, and a conflict check across all categories
-- **Security for a local app**: state-changing requests must come from this machine,
-  the page cannot be framed, and account identifiers are stripped from anything sent
-  to the Claude API — see [Security](#security)
+- **Security for a local app**: the server binds loopback only, state-changing requests
+  must come from this machine, the page cannot be framed, and account identifiers are
+  stripped from anything sent to the Claude API — see [Security](#security)
 - **Spend analysis**: monthly and rolling budget-vs-actual, per category and total,
   transaction-count columns, click-through to the transactions behind any figure,
   a trend chart, and a per-category spend-over-time chart. Months are grouped by
@@ -583,8 +637,9 @@ material on the same date._
   negated by `signedSpend` (`AnalysisService.java:480-487`) — that is the part they have
   in common, and confusing the two rules is what put `CREDIT` in this list until
   2026-08-04. The distinction is load-bearing: it is why a card payment mistyped as
-  `CREDIT` would subtract its full amount from the month with no control total catching
-  it (`CardStatementParser.java:151-176`). Each *statement* is now reconciled against its own
+  `CREDIT` would subtract its full amount from the month, since `signedSpend` negates it
+  (`AnalysisService.java:480-487`) and no keep-out rule stops it reaching the buckets.
+  Each *statement* is now reconciled against its own
   printed control totals at ingest and refused if it doesn't tie out, but nothing
   checks a whole month's computed spend against the statements that fed it.
 - **Only PDF is supported.** CSV and OFX are not implemented.
@@ -625,6 +680,8 @@ notification day, backup retention)
 
 **Statement sources** — `GET|POST /api/statement-sources`,
 `PUT|DELETE /api/statement-sources/{id}`,
+`POST /api/statement-sources/{id}/open` (show the source's folder in the file manager;
+refuses when the folder is missing, and reaches no shell on any platform),
 `GET|PUT /api/statement-sources/{id}/parser-rules` *(not surfaced in the UI — see
 Known gaps)*
 
@@ -704,9 +761,10 @@ PigPurchaseTracking/
 │   ├── static/index.html          the frontend: markup, styles, and all DOM/fetch code
 │   ├── static/app-math.js         its pure functions (money, dates, escaping, sorting), split out
 │   │                              so AppMathTest can cover them. Plain <script>, no bundler
-│   ├── application.properties     H2, backups, DevTools, AI settings
+│   ├── application.properties     H2, loopback bind, backups, DevTools, AI settings
 │   └── application-demo.properties  demo mode: separate DB, backups off and
-│                                  redirected, AI off, sample-statement folder
+│                                  redirected, restore-preview redirected, AI off,
+│                                  sample-statement folder
 ├── src/test/java/com/pigpurchases/
 │   ├── TestPdfs.java              generates PDFs so tests need no real statements
 │   ├── config/                    EnumColumnMigration (ENUM → VARCHAR) tests

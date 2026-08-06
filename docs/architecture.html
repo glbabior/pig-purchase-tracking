@@ -248,9 +248,9 @@
       <li><strong><code>SwitchableDataSource</code> sits between JPA and H2</strong> so a restore can be <em>previewed</em>
         against a backup without touching the live database until you commit.</li>
       <li><strong>No login is not the same as no protection.</strong> A password would be theatre for one person on
-        their own machine, but any web page that browser has open could still <em>send</em> requests here.
-        <code>LocalOriginFilter</code> refuses state-changing requests that name a foreign origin, and sets the CSP
-        and anti-framing headers. See §8.</li>
+        their own machine, but any web page that browser has open could still <em>send</em> requests here. The server
+        binds <code>127.0.0.1</code> only, <code>LocalOriginFilter</code> refuses state-changing requests that name a
+        foreign origin, and it sets the CSP and anti-framing headers. The bind and the filter are a pair. See §8.</li>
     </ul>
 
     <figure class="plate">
@@ -294,8 +294,9 @@ flowchart LR
           <tr><td><code>parser</code></td><td>Turn one issuer's PDF into a parsed statement. Strategy pattern, wired by discovery.</td><td><code>StatementParser</code> (interface), <code>StatementParserRegistry</code>, <code>NorthwindStatementParser</code> (demonstration), <code>ExclusionRule</code></td></tr>
           <tr><td><code>model</code></td><td>JPA entities — the persistent domain (12 total).</td><td><code>Transaction</code>, <code>BudgetEntry</code>, <code>AnalysisRun</code>, <code>TransactionMapping</code>, <code>MerchantCategory</code></td></tr>
           <tr><td><code>repository</code></td><td>Spring Data JPA interfaces, one per aggregate.</td><td><code>TransactionRepository</code>, <code>AnalysisRunRepository</code></td></tr>
-          <tr><td><code>service</code></td><td>All business logic: ingest, categorization pipeline, analysis math, AI, backup/restore.</td><td><code>IngestService</code>, <code>MappingService</code>, <code>AnalysisService</code>, <code>AiCategorizationService</code>, <code>HintMatcher</code>, <code>HintService</code></td></tr>
-          <tr><td><code>server</code></td><td>REST controllers + <code>DataInitializer</code>. Thin — marshal JSON, delegate.</td><td><code>BudgetController</code>, <code>MappingController</code>, <code>AnalysisController</code>, <code>HintController</code></td></tr>
+          <tr><td><code>service</code></td><td>All business logic: ingest, categorization pipeline, analysis math, AI, backup/restore, the durable debug log.</td><td><code>IngestService</code>, <code>MappingService</code>, <code>AnalysisService</code>, <code>AiCategorizationService</code>, <code>HintMatcher</code>, <code>HintService</code>, <code>BackupService</code>, <code>RestoreService</code>, <code>ManualEntryService</code>, <code>DebugLogService</code> (10 in all)</td></tr>
+          <tr><td><code>server</code></td><td>REST controllers + <code>DataInitializer</code>. Thin — marshal JSON, delegate.</td><td><code>BudgetController</code>, <code>MappingController</code>, <code>AnalysisController</code>, <code>HintController</code>, <code>ManualEntryController</code>, <code>BackupController</code>, <code>RestoreController</code>, <code>DebugLogController</code>, <code>NotificationController</code> (9 in all)</td></tr>
+          <tr><td><code>demo</code></td><td>Generates sample statements and seed data so the app can be run with no data of anyone's own. Active only under the <code>demo</code> profile.</td><td><code>DemoDataInitializer</code>, <code>DemoStatements</code></td></tr>
           <tr><td><code>config</code></td><td>Switchable-datasource plumbing, startup schema fixes, and the request-origin / security-header filter.</td><td><code>DataSourceConfig</code>, <code>SwitchableDataSource</code>, <code>EnumColumnMigration</code>, <code>LocalOriginFilter</code></td></tr>
         </tbody>
       </table>
@@ -334,7 +335,9 @@ flowchart LR
       <div class="plate-body">
 <pre class="mermaid">
 flowchart TD
-    T["Each transaction in the run"] --&gt; EX{excludeFromSpend?}
+    T["Each transaction in the run"] --&gt; P0{"a decision about THIS row&lt;br/&gt;on a previous pass?&lt;br/&gt;(excluded once / hand-parked /&lt;br/&gt;hand-assigned)"}
+    P0 --"yes"--&gt; CARRY["carried over verbatim&lt;br/&gt;(no rule exists to rebuild it from)"]
+    P0 --"no"--&gt; EX{excludeFromSpend?}
     EX --"yes"--&gt; EXCL["EXCLUDED&lt;br/&gt;(parser rule, never counted)"]
     EX --"no"--&gt; P1
     P1["Pass 1 — HintMatcher&lt;br/&gt;deterministic substring match on&lt;br/&gt;names + explicit 'match:' hints"] --&gt; P1Q{matched?}
@@ -371,9 +374,15 @@ flowchart TD
     <h3>Demo mode <span class="tag">no data of your own</span></h3>
     <p><code>demo.cmd</code> runs the app against generated sample statements.
       <code>application-demo.properties</code> redirects the database, redirects the backup directory <strong>and</strong>
-      disables backups, and turns AI off. All three matter together, and the second is the non-obvious one: the backup
-      scheduler is configured independently of the datasource, so a demo pointed only at a different database would write
-      dumps of that database over the real daily backup, under the same one-file-per-day name.</p>
+      disables backups, redirects the restore-preview directory, and turns AI off.</p>
+    <p><strong>Four filesystem paths, each configured independently of the datasource</strong>, which is why redirecting
+      the database alone is never enough. The backup directory matters even with backups off, because
+      <code>backupNow()</code> ignores the enabled flag — a demo left on the default would write dumps of the demo
+      database over the real daily backup, under the same one-file-per-day name. The preview directory matters because
+      previewing any backup builds a throwaway database; it used to be a bare <code>${user.home}</code> interpolation
+      with no property key, so no profile could move it, and the demo's preview landed in
+      <code>~/.pigpurchases</code> — the live database's own folder. The rule this keeps re-teaching: a new setting that
+      touches the filesystem or the network needs asking whether demo mode has to redirect it too.</p>
     <p><code>DemoStatements</code> computes each statement's control totals from its own rows rather than printing
       constants — ingest refuses a statement whose rows disagree with its printed totals, so hardcoded ones would
       produce files the app rejects.</p>
@@ -388,6 +397,14 @@ flowchart TD
       <li><strong><code>BackupService</code></strong> writes a consistent SQL dump to <code>~/pigpurchases-backups/</code>,
         one file per day named by date, refreshed only when data actually changed, pruned to a configurable retention.
         Backups live outside both OneDrive and the live-db folder.</li>
+      <li><strong>The anti-clobber baseline is the highest mapped-row count still in force</strong>, recovered at startup
+        from the backups' <code>.meta</code> sidecars. Seeding it from the <em>newest</em> sidecar alone let the guard
+        switch itself off at the one moment it was needed: a backup recording zero mapped rows became the baseline, the
+        guard's own "stay quiet below 20 rows" floor is not met at zero, and every later empty backup then overwrote the
+        day's real file in silence with nothing filed <code>.SUSPECT</code>. The scan stops at the newest
+        <em>deliberate</em> new normal — an accepted baseline, or a restore commit — because that is the statement that
+        everything older no longer applies, and it is what lets an accepted drop survive a restart rather than be
+        re-flagged by last week's higher count.</li>
       <li><strong><code>RestoreService</code> + <code>SwitchableDataSource</code></strong> make restore non-destructive:
         a chosen backup is loaded into a <em>preview</em> datasource and validated; the live DB is overwritten only when
         you explicitly commit.</li>
@@ -476,6 +493,30 @@ classDiagram
         +String month
         +boolean complete
     }
+    class DismissedDuplicate {
+        +Long id
+        +String signature
+    }
+    class AppSettings {
+        +Long id
+        +BigDecimal annualBudget
+        +int debugLogRetentionDays
+        +int notificationDayOfMonth
+        +int backupRetentionCount
+    }
+    class AppLogEntry {
+        +Long id
+        +LocalDateTime createdAt
+        +Level level
+        +String category
+        +String message
+    }
+    class LogLevel {
+        &lt;&lt;enumeration&gt;&gt;
+        INFO
+        WARN
+        ERROR
+    }
     class RunStatus {
         &lt;&lt;enumeration&gt;&gt;
         DRAFT
@@ -507,6 +548,7 @@ classDiagram
     AnalysisRun --&gt; RunStatus
     TransactionMapping --&gt; MappingStatus
     MerchantCategory --&gt; MerchantSource
+    AppLogEntry --&gt; LogLevel
 </pre>
       </div>
     </figure>
@@ -714,8 +756,16 @@ erDiagram
     APP_SETTINGS {
         bigint id PK "singleton id=1"
         decimal annual_budget
+        int debug_log_retention_days
         int notification_day_of_month
         int backup_retention_count
+    }
+    APP_LOG_ENTRIES {
+        bigint id PK
+        datetime created_at
+        string level "INFO | WARN | ERROR"
+        string category
+        string message
     }
 </pre>
       </div>
@@ -783,10 +833,19 @@ erDiagram
       <li>A request carrying <em>neither</em> header is allowed. A browser always sends one for a page-initiated state
         change, so what remains is <code>curl</code> and local tooling — and anything already running code on this
         machine has better options than an endpoint.</li>
+      <li><strong>That allowance is only safe because the socket is loopback-only</strong>
+        (<code>server.address=127.0.0.1</code>). Spring Boot's default binds every interface, and a
+        <code>curl</code> from another machine on the network sends neither header — so while the bind was open, the
+        allowance above handed a stranger every read and every write, financial data included. The filter guards
+        against a hostile page; the bind address is what makes the filter's own premise true. Neither is sufficient
+        alone.</li>
       <li>The same filter sets <code>frame-ancestors 'none'</code> and <code>X-Frame-Options: DENY</code>, because
         framing would hand back the DELETEs and PUTs the origin check puts out of reach by borrowing your clicks. Its
         CSP allows <code>'unsafe-inline'</code> — the frontend genuinely is one inline script — so the value is in
-        <code>connect-src 'self'</code>: even a successful injection has nowhere off-machine to send what it reads.</li>
+        <code>connect-src 'self'</code>, which stops injected code opening a socket or a <code>fetch</code> to another
+        host. It is <em>not</em> a complete exfiltration seal: no CSP directive covers top-level navigation, so script
+        that assigns to <code>location</code> can still carry data off in a URL. Treat it as raising the cost of an
+        injection, not as making one harmless.</li>
     </ul>
   </section>
 </main>

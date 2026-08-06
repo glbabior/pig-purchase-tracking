@@ -11,7 +11,7 @@ the deterministic rules can't place.
 - **Stack:** Spring Boot 3.5.16, Java 25, Spring Data JPA / Hibernate, embedded Tomcat on `:8080`.
 - **Database:** H2 file database, one file, `ddl-auto=update` (no migration scripts; one programmatic column-type fix in `EnumColumnMigration` — see §7).
 - **UI:** two hand-written files, no build step: `static/index.html` (markup, styles, DOM and fetch code) and `static/app-math.js` (the pure functions — money, dates, escaping, table sorting — split out so `AppMathTest` can run them). Vanilla JS, talking to a REST API.
-- **Shape:** you run `PigPurchasesApplication`, a browser tab is the whole client. No multi-user, no cloud, and no login — but not no protection: `LocalOriginFilter` refuses state-changing requests that did not come from this machine, and sets a CSP and anti-framing headers. See §7.
+- **Shape:** you run `PigPurchasesApplication`, a browser tab is the whole client. No multi-user, no cloud, and no login — but not no protection: the server binds `127.0.0.1` only, `LocalOriginFilter` refuses state-changing requests that did not come from this machine, and it sets a CSP and anti-framing headers. The bind and the filter are a pair — see §7.
 
 ---
 
@@ -62,7 +62,8 @@ Two deliberate facts about this picture:
 | `model` | JPA entities — the persistent domain. | `Transaction`, `BudgetEntry`, `AnalysisRun`, `TransactionMapping`, `MerchantCategory`, … (12 total) |
 | `repository` | Spring Data JPA interfaces, one per aggregate. | `TransactionRepository`, `AnalysisRunRepository`, … |
 | `service` | All business logic. Ingest, the categorization pipeline, analysis math, AI, backup/restore. | `IngestService`, `MappingService`, `AnalysisService`, `AiCategorizationService`, `HintMatcher`, `HintService`, `BackupService`, `RestoreService`, `ManualEntryService`, `DebugLogService` |
-| `server` | `@RestController`s (the `/api` surface) + `DataInitializer`. Thin — they marshal JSON and delegate. | `BudgetController`, `MappingController`, `AnalysisController`, `ManualEntryController`, `BackupController`, `RestoreController`, `HintController` |
+| `server` | `@RestController`s (the `/api` surface) + `DataInitializer`. Thin — they marshal JSON and delegate. | `BudgetController`, `MappingController`, `AnalysisController`, `ManualEntryController`, `BackupController`, `RestoreController`, `HintController`, `DebugLogController`, `NotificationController` (9 in all) |
+| `demo` | Generates sample statements and seed data so the app can be run with no data of anyone's own. Active only under the `demo` profile. | `DemoDataInitializer`, `DemoStatements` |
 | `config` | Switchable-datasource plumbing, startup schema fixes, and the request-origin / security-header filter. | `DataSourceConfig`, `SwitchableDataSource`, `EnumColumnMigration`, `LocalOriginFilter` |
 
 The dependency rule is the usual one: `server` → `service` → `repository` → `model`.
@@ -111,8 +112,8 @@ cheapest first, so the expensive one only ever sees what's left:
 
 ```mermaid
 flowchart TD
-    T["Each transaction in the run"] --> P0{"excluded once<br/>on a previous pass?"}
-    P0 -- yes --> EXCL1["EXCLUDED_ONCE<br/>(carried over; no rule exists)"]
+    T["Each transaction in the run"] --> P0{"a decision about THIS row<br/>on a previous pass?<br/>(excluded once / hand-parked /<br/>hand-assigned)"}
+    P0 -- yes --> EXCL1["carried over verbatim<br/>(no rule exists to rebuild it from)"]
     P0 -- no --> EX{excludeFromSpend?}
     EX -- yes --> EXCL["EXCLUDED<br/>(parser rule; never counted)"]
     EX -- no --> P1
@@ -170,12 +171,20 @@ so a half-loaded month can't skew the typical-month numbers.
 
 `demo.cmd` runs the app against generated sample statements, so it can be tried with no
 data of anyone's own. `application-demo.properties` redirects the database, redirects the
-backup directory **and** disables backups, and turns AI off.
+backup directory **and** disables backups, redirects the restore-preview directory, and
+turns AI off.
 
-All three redirections matter together, and the second is the non-obvious one: the backup
-scheduler is configured independently of the datasource, so a demo pointed only at a
-different database would write dumps of that database over the real daily backup, under
-the same one-file-per-day name.
+**Four filesystem paths, each configured independently of the datasource**, which is why
+redirecting the database alone is never enough. The backup directory matters even with
+backups off, because `backupNow()` ignores the enabled flag — a demo left on the default
+would write dumps of the demo database over the real daily backup, under the same
+one-file-per-day name. The preview directory matters because previewing any backup builds
+a throwaway database, and it used to be a bare `${user.home}` interpolation with no
+property key, so no profile could move it: the demo's preview landed in `~/.pigpurchases`,
+the live database's own folder.
+
+The general rule this keeps re-teaching: a new setting that touches the filesystem or the
+network needs asking whether demo mode has to redirect it too.
 
 `DemoStatements` computes each statement's control totals from its own rows rather than
 printing constants — ingest refuses a statement whose rows disagree with its printed
@@ -192,6 +201,15 @@ current design is built around never repeating that:
   changed, pruned to a configurable retention count. Backups live outside both
   OneDrive and the live-db folder, so whatever can corrupt the live DB can't reach
   the history.
+- **The anti-clobber baseline is the highest mapped-row count still in force**, recovered
+  at startup from the backups' `.meta` sidecars. Seeding it from the *newest* sidecar
+  alone let the guard switch itself off at the one moment it was needed: a backup that
+  recorded zero mapped rows became the baseline, the guard's own "stay quiet below 20 rows"
+  floor is not met at zero, and from then on every empty backup overwrote the day's real
+  file in silence with nothing filed `.SUSPECT`. The scan stops at the newest *deliberate*
+  new normal — a baseline the user accepted, or a restore commit — because that is the
+  statement that everything older no longer applies, and it is what lets an accepted drop
+  survive a restart rather than be re-flagged by last week's higher count.
 - **`RestoreService` + `SwitchableDataSource`** make restore non-destructive: a
   chosen backup is loaded into a *preview* datasource and validated; the live DB is
   only overwritten when you explicitly commit. Both paths re-run
@@ -542,12 +560,19 @@ erDiagram
   parser that cannot determine a statement date, a year, or which rows
   belong to this cycle throws rather than guessing. Every outcome is written to the
   debug log, success included, so silence there means the ingest never ran.
-- **Every per-transaction decision with no rule behind it survives a re-map.** Two have
-  that shape: a one-off exclusion, and parking a row by hand. Neither writes a
+- **Every per-transaction decision with no rule behind it survives a re-map.** Three have
+  that shape (`MappingService.isPerTransactionDecision`): a one-off exclusion, parking a
+  row by hand, and assigning a row to a category by hand. The first two write no
   `merchant_categories` rule — parking actively deletes one — so neither can be rebuilt
-  from the cache, and `doMap` carries both across the rebuild. Only a *deliberate* park
-  qualifies, distinguished by its reason string: `PARKED` is also the status of everything
-  no pass could place, and those must stay free for a newly added hint to claim.
+  from the cache. The third *does* write a rule, but the rule is keyed on the merchant
+  rather than the row, so pass 2 rebuilds it as `MAPPED_MANUAL` with the reason
+  "Remembered — your earlier categorization", which is exactly what
+  `AnalysisService.inSpendBuckets` refuses to treat as a per-row decision; a refund the
+  user had put into a category therefore left it again on the next re-map, and that
+  category's total rose. `doMap` carries all three across the rebuild. Only a *deliberate*
+  park qualifies, distinguished by its reason string: `PARKED` is also the status of
+  everything no pass could place, and those must stay free for a newly added hint to
+  claim.
 - **A decision you made by hand outranks a hint.** Pass 2 considers hint-matched rows,
   but only a `MANUAL` merchant rule may override one; an `AI` answer may not, because
   the pattern is the user's own explicit rule and a guess is not. Without this, a
@@ -581,11 +606,11 @@ erDiagram
   Rows that are invisible anyway — excluded, or money-in the user never assigned — do
   not block the delete; they are re-parked with the reason "Category deleted" and their
   runs recounted.
-- **A one-off exclusion survives a re-map.** `EXCLUDED_ONCE` deliberately writes no
-  `merchant_categories` rule, so it is the one manual decision `doMap` cannot
-  rebuild from the cache; it snapshots those rows before deleting and re-applies
-  them ahead of every pass. `TransactionMapping.countsAsSpend()` is the single test
-  for "is this spend" — callers never compare statuses themselves.
+- **`TransactionMapping.countsAsSpend()` is the single test for "is this spend"** —
+  callers never compare statuses themselves. A null status counts as spend, deliberately:
+  unattributed money is still real money and must never silently vanish from a total.
+  (For how `EXCLUDED_ONCE` and the other two per-row decisions survive a rebuild, see the
+  per-transaction-decision invariant above.)
 - **Local-first everywhere.** Amounts never leave the machine; only descriptions and
   vendor strings are sent to Claude, and only for transactions no rule could place —
   and both are passed through `AiCategorizationService.scrubIdentifiers` first. A bank
@@ -596,6 +621,15 @@ erDiagram
   on the way OUT only: the stored description is what hints match on and what the
   merchant cache is keyed by, so rewriting it would invalidate every existing hint and
   remembered answer.
+- **The socket is loopback-only, and that is half of the origin rule rather than a
+  separate concern.** `server.address=127.0.0.1`. Spring Boot's default binds every
+  interface, which put the whole API within reach of anything that could route to this
+  machine — and `LocalOriginFilter` does not compensate, because it *allows* a request
+  carrying neither `Origin` nor `Referer` on the reasoning that only local tooling sends
+  neither. That reasoning holds exactly as long as the socket is local. A `curl` from
+  another machine sends neither header, so while the bind was open the allowance handed a
+  stranger every read and every write. The filter guards against a hostile page; the bind
+  address is what makes the filter's own premise true.
 - **A state-changing request must not name a foreign origin.** `LocalOriginFilter`
   refuses any POST / PUT / PATCH / DELETE whose `Origin` or `Referer` resolves to a host
   that is not loopback, and refuses a literal `null` origin — the opaque origin a
