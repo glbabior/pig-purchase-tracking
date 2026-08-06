@@ -310,6 +310,18 @@ flowchart LR
       configured rules, parses the PDF, records a <code>StatementImport</code> (the batch), and persists
       <code>Transaction</code> rows. Per-source <code>ExclusionRule</code>s mark transfers/payments as
       <code>excludeFromSpend</code> at parse time — kept so every line is accounted for, but never counted as spend.</p>
+    <p><strong>Parsers are plugins.</strong> <code>StatementParser</code> declares the ids it answers to and
+      <code>StatementParserRegistry</code> indexes every implementation on the classpath, so the ingest path names no
+      parser and does not need editing to add one. The set can therefore differ between checkouts: this repository ships
+      <code>NorthwindStatementParser</code> for an invented format, and setting the <code>parsers.dir</code> Maven
+      property to another source tree compiles its parsers and tests alongside. Dispatch is per <em>statement
+      source</em> — each stores a parser id — so which parser runs is a property of the data, not of the build. A
+      duplicate id fails at startup rather than letting bean ordering decide which parser reads a statement.</p>
+    <p><strong>Reconciliation is the parser's own claim.</strong> <code>printsControlTotals()</code> says whether an
+      issuer's statements print totals the parse can be checked against. True, and a statement whose totals cannot be
+      read is refused — a summary box that stopped matching is the same layout change that makes rows go missing.
+      False, and the parser carries a structural guard instead, because a total derived from the rows being checked
+      cannot disagree with them.</p>
 
     <h3>Mapping <span class="tag">transactions → categories · the heart</span></h3>
     <p>Mapping is <strong>per statement file</strong>. Each <code>AnalysisRun</code> consumes exactly one
@@ -355,6 +367,16 @@ flowchart TD
       <code>transactionDate</code></strong> (not the statement/ingest month), so a complete calendar month is assembled
       regardless of which file each charge arrived in. A month folds into the <strong>rolling average</strong> only once
       you mark it complete (<code>MonthStatus</code>), so a half-loaded month can't skew the typical-month numbers.</p>
+
+    <h3>Demo mode <span class="tag">no data of your own</span></h3>
+    <p><code>demo.cmd</code> runs the app against generated sample statements.
+      <code>application-demo.properties</code> redirects the database, redirects the backup directory <strong>and</strong>
+      disables backups, and turns AI off. All three matter together, and the second is the non-obvious one: the backup
+      scheduler is configured independently of the datasource, so a demo pointed only at a different database would write
+      dumps of that database over the real daily backup, under the same one-file-per-day name.</p>
+    <p><code>DemoStatements</code> computes each statement's control totals from its own rows rather than printing
+      constants — ingest refuses a statement whose rows disagree with its printed totals, so hardcoded ones would
+      produce files the app rejects.</p>
   </section>
 
   <section id="safety">

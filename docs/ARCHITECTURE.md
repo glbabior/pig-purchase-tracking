@@ -80,6 +80,28 @@ source's configured rules, parses the PDF into `ParsedTransaction`s, records a
 (per source) mark transfers/payments as `excludeFromSpend` at parse time — they're
 *kept* so every line is accounted for, but never counted as spend.
 
+**Parsers are plugins.** `StatementParser` declares the ids it answers to and
+`StatementParserRegistry` indexes every implementation on the classpath, so the ingest
+path names no parser and does not need editing to add one. Two consequences:
+
+- **The set of parsers can differ between checkouts.** This repository ships
+  `NorthwindStatementParser`, a demonstration parser for an invented format. Setting the
+  `parsers.dir` Maven property to another source tree compiles its parsers and tests
+  alongside; leaving it undefined changes nothing. Dispatch is per *statement source* —
+  each stores a parser id in its `parserRules` — so which parser runs is a property of
+  the data, not of the build.
+- **A duplicate id fails at startup**, rather than letting bean ordering decide which
+  parser reads a statement. That kind of wrong reconciles to nothing and gets blamed on
+  the statement.
+
+**Reconciliation is the parser's own claim.** `printsControlTotals()` says whether an
+issuer's statements print totals the parse can be checked against. True, and a statement
+whose totals cannot be read is refused — a summary box that stopped matching is the same
+layout change that makes rows go missing. False, and the parser needs a structural guard
+of its own, because a "total" derived from the rows being checked cannot disagree with
+them. This lived in `IngestService` as a hardcoded set of parser ids, which put knowledge
+of specific issuers in a path that is otherwise parser-agnostic.
+
 ### 3b. Mapping (transactions → budget categories) — the heart of the app
 
 Mapping is **per statement file**. Each `AnalysisRun` consumes exactly one
@@ -143,6 +165,21 @@ only folded into the **rolling average** once you mark it complete (`MonthStatus
 so a half-loaded month can't skew the typical-month numbers.
 
 ---
+
+### 3d. Demo mode
+
+`demo.cmd` runs the app against generated sample statements, so it can be tried with no
+data of anyone's own. `application-demo.properties` redirects the database, redirects the
+backup directory **and** disables backups, and turns AI off.
+
+All three redirections matter together, and the second is the non-obvious one: the backup
+scheduler is configured independently of the datasource, so a demo pointed only at a
+different database would write dumps of that database over the real daily backup, under
+the same one-file-per-day name.
+
+`DemoStatements` computes each statement's control totals from its own rows rather than
+printing constants — ingest refuses a statement whose rows disagree with its printed
+totals, so hardcoded totals would produce files the app rejects.
 
 ## 4. Data safety (learned the hard way)
 

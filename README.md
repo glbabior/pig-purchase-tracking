@@ -256,7 +256,8 @@ For the design view rather than the class view, read
 
 Wait for the log line `Started PigPurchasesApplication` (about 6 seconds), then
 open <http://localhost:8080> — the server does not open it for you. Stop with
-`Ctrl+C`, or `.\stop.cmd`.
+`Ctrl+C`, or `.\stop.cmd` — which frees port 8080 only if *this* app is holding it,
+and tells you what has the port otherwise rather than killing a bystander.
 
 Start it from your **own terminal**. That puts the server in your desktop session,
 which is what makes "open in Acrobat" work. A server started from a service or a
@@ -506,8 +507,10 @@ file from anywhere other than this app should not be previewed.
 ## Current status
 
 _Code-verified 2026-08-05 — the screen descriptions, the API reference, Privacy,
-Security, the spend semantics, the hint-length rules and the parser wiring were each
-checked against the source._
+Security, the spend semantics, the hint-length rules, the parser wiring and demo mode
+were each checked against the source, and the project layout against the tree.
+`docs/ARCHITECTURE.md` and `docs/architecture.html` were brought level with the same
+material on the same date._
 
 ### Working
 
@@ -560,8 +563,9 @@ checked against the source._
 
 - **Parser rules are not editable in the UI.** Which parser runs comes from the
   source's `parserRules` JSON, but the source form only edits name and folder path.
-  A source created through the UI therefore has no parser and ingest fails with
-  `No parser configured for id: ''`. Set them via
+  A source created through the UI therefore has no parser, and ingest fails with
+  `No parser configured for id: ''` — followed by the ids that would have worked,
+  which `StatementParserRegistry` lists. Set one via
   `PUT /api/statement-sources/{id}/parser-rules` until this is surfaced.
 - **Spend semantics are type-based, with one deliberate exception.** Spend nets by
   transaction type — purchases add, refunds subtract — and drops excluded transfers.
@@ -673,7 +677,7 @@ means the ingest never ran rather than that it was fine.
 ## Project layout
 
 ```
-PigPurchases/
+PigPurchaseTracking/
 ├── src/main/java/com/pigpurchases/
 │   ├── PigPurchasesApplication.java   Spring Boot entry (root package, so
 │   │                                  component/entity/repository scan works)
@@ -683,6 +687,8 @@ PigPurchases/
 │   │               StatementImport, AnalysisRun, AnalysisRunSource,
 │   │               TransactionMapping, MerchantCategory, MonthStatus,
 │   │               DismissedDuplicate, AppSettings, AppLogEntry
+│   ├── demo/       DemoDataInitializer + DemoStatements — generate sample
+│   │               statements and seed data; active only under the demo profile
 │   ├── parser/     StatementParser (interface) + StatementParserRegistry,
 │   │               NorthwindStatementParser (the demonstration parser),
 │   │               ParsedStatement, ParsedTransaction, ExclusionRule
@@ -698,10 +704,13 @@ PigPurchases/
 │   ├── static/index.html          the frontend: markup, styles, and all DOM/fetch code
 │   ├── static/app-math.js         its pure functions (money, dates, escaping, sorting), split out
 │   │                              so AppMathTest can cover them. Plain <script>, no bundler
-│   └── application.properties     H2, backups, DevTools, AI settings
+│   ├── application.properties     H2, backups, DevTools, AI settings
+│   └── application-demo.properties  demo mode: separate DB, backups off and
+│                                  redirected, AI off, sample-statement folder
 ├── src/test/java/com/pigpurchases/
 │   ├── TestPdfs.java              generates PDFs so tests need no real statements
 │   ├── config/                    EnumColumnMigration (ENUM → VARCHAR) tests
+│   ├── demo/                      proves the generated demo statements reconcile
 │   ├── web/                       AppMathTest — runs static/app-math.js and checks its
 │   │                              signedSpend still agrees with the server's
 │   ├── parser/                    portable parser tests + *ValidationTest
@@ -714,6 +723,7 @@ PigPurchases/
 │                                  way so docs/ is only what a reader wants
 ├── .github/workflows/ci.yml       mvnw test on Temurin 25
 ├── launch.cmd / stop.cmd / restart.cmd / restore.db.cmd
+│                                  stop.cmd identifies the process before killing it
 ├── javadoc.cmd                    generate the API docs from the source comments
 │                                  and open them (built under target/, gitignored)
 ├── demo.cmd                       run with generated sample statements and seed data
