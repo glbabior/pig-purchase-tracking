@@ -5,6 +5,12 @@
 Any **functional** change — behavior, API surface, schema, or an invariant —
 is not done until the docs have been checked against it:
 
+- `QUICKSTART.md` — the two launch commands and how they differ, and the one-line
+  description of each screen. It is on this list for the same reason
+  `architecture.html` had to be added to it: a doc nobody is told to check is a doc
+  that goes stale. It is also the **first** file a stranger reads, so it is the worst
+  one to be wrong. Renaming a screen, adding one, or changing what `demo.cmd` sets up
+  lands here.
 - `README.md` — the API reference, the Working / Known gaps / Planned lists, and
   the `_Code-verified <date>_` stamp
 - `docs/ARCHITECTURE.md` — diagrams, the layer map, and the invariants in §7

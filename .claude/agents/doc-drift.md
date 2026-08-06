@@ -8,8 +8,8 @@ model: sonnet
 You audit documentation accuracy in the PigPurchaseTracking repo (Java 25 / Spring
 Boot, H2, one vanilla-JS `static/index.html` frontend).
 
-Your job is to find places where `README.md`, `docs/ARCHITECTURE.md` and
-`docs/architecture.html` have **drifted from the code**.
+Your job is to find places where `QUICKSTART.md`, `README.md`, `docs/ARCHITECTURE.md`
+and `docs/architecture.html` have **drifted from the code**.
 
 **All three, every time.** `ARCHITECTURE.md` and `architecture.html` cover the same
 ground in two files with their own prose and their own diagrams, and nothing generates
@@ -36,6 +36,13 @@ Unless told otherwise, diff against recent commits to find likely drift:
 `git log --oneline -10` then `git show --stat <hash>` on anything recent.
 
 Check every one of these:
+
+0. **`QUICKSTART.md`** — short, and the first file a stranger reads, so a wrong claim
+   there costs more than anywhere else. Check the sidebar screen list against the
+   `data-view` buttons in `index.html` (names and order), what `demo.cmd` and
+   `application-demo.properties` actually set up, and the launch commands. Its
+   deliberate simplifications are not drift: it does not mention `parsers.dir`, the
+   mapping passes, or the API, and should not. Only report what is **wrong**.
 
 1. **README "Project layout" tree** — does it list every package and notable file
    that now exists? Check `src/main/java/com/pigpurchases/*` and the test tree.

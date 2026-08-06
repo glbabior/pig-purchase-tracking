@@ -10,6 +10,9 @@ transaction's *description and vendor text*, sent to the Claude API to categoriz
 the handful of transactions the deterministic rules can't place. **Dollar amounts
 never leave the machine** — see [Privacy](#privacy).
 
+> **Just want to run it?** [QUICKSTART.md](QUICKSTART.md) is a page: the two commands,
+> how they differ, and what each screen is for. Start there and come back here for detail.
+
 > **Design documentation lives in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** —
 > runtime topology, the layer map, UML class / state / ER diagrams, and the
 > reasoning behind the key invariants. This file covers what the app does, how to
