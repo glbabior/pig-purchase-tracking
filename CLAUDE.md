@@ -1,4 +1,4 @@
-# PigPurchases — working agreements
+# PigPurchaseTracking — working agreements
 
 ## Documentation upkeep (standing rule)
 
@@ -74,6 +74,48 @@ Write the report yourself rather than granting the agent `Write`. A read-only
 auditor cannot edit the docs it is auditing, and that guarantee is worth more
 than the convenience of it saving its own file.
 
+## Parsers are plugins, and some of them are not in this repository
+
+`StatementParser` declares the ids it answers to; `StatementParserRegistry` discovers
+every implementation on the classpath and indexes it. Nothing lists parsers anywhere, so
+the set can differ between checkouts and the ingest path never needs editing to add one.
+
+- **In this repository:** `NorthwindStatementParser`, a demonstration parser for a bank
+  that does not exist, reading a format this project invents. It is what makes `demo.cmd`
+  work and what someone writing their own parser should copy.
+- **Outside it:** set the `parsers.dir` property to a source tree laid out like this one
+  and its `src/main/java` and `src/test/java` are compiled alongside. Set once in
+  `~/.m2/settings.xml`, it applies to every build on that machine. Undefined, the
+  `external-parsers` profile never activates.
+
+Two consequences worth holding on to:
+
+- **The test count differs by machine, legitimately.** With an external parser tree
+  present you will see more tests than a bare clone does. Neither number is wrong.
+- **Never put a filesystem path in the pom or in any tracked file.** That is what the
+  property exists to prevent.
+
+`printsControlTotals()` belongs to the parser, not to the ingest path. A parser whose
+statements print no *independent* total returns false and needs a structural guard of its
+own instead; one that returns true has its parse refused when the totals cannot be read.
+
+## Demo mode
+
+`demo.cmd` runs the app on generated sample statements with no data of anyone's own:
+`application-demo.properties` redirects the database, redirects the backup directory
+**and** disables backups, and turns AI off.
+
+All three of those matter together. Redirecting the datasource alone is not enough,
+because the backup scheduler is configured independently — a demo left on the default
+backup directory writes dumps of the demo database over the real daily backup, under the
+same one-file-per-day name. If you add a setting that touches the filesystem or the
+network, ask whether demo mode needs to redirect it too.
+
+`DemoStatements` computes each statement's control totals from its own rows rather than
+printing constants, because `IngestService` refuses a statement whose rows disagree with
+its printed totals. Hardcoding them would produce files the app rejects the first time
+anyone tried the demo.
+
 ## Invariants to know before changing anything
 
 - `AnalysisRun.month` is **not** a calendar month — it is the internal token
@@ -88,6 +130,25 @@ than the convenience of it saving its own file.
 
 ## Testing
 
-`*ValidationTest` reconciles the parsers against real statements on this machine
-and skips silently elsewhere. **A green CI run does not prove the parsers still
-reconcile** — run the suite locally after touching a parser.
+Every test in this repository is portable: it builds its own PDFs and needs no personal
+data. `*ValidationTest` classes reconcile a parser against real statements and live with
+the parsers they validate, so an external parser tree brings its own.
+
+They find statements through `LocalStatements`, which resolves a key from a system
+property, an environment variable, or `statements.local.properties` in the project root
+(gitignored). Three behaviours are deliberate and worth not "fixing":
+
+- An **unset** key skips the test. That is CI and any fresh clone.
+- A key that **is set but resolves to nothing** fails. Configuring a key is a statement of
+  intent, and Surefire prints no reason for a skip, so a validation test that quietly
+  stopped running would look exactly like one that passes.
+- Keys describing one reference statement travel as a **group**: all set or all absent.
+
+**A green CI run does not prove a parser still reconciles** — run the suite locally after
+touching one. And treat an unexpected `Skipped:` count as a failure: `LocalStatements`
+reads its config file relative to the process working directory, so running from the wrong
+directory silently skips everything it configures.
+
+Validation tests print statement detail only under `-Dpigpurchases.statements.verbose=true`.
+Leave it off by default: those lines carry real filenames, dates and amounts, which is why
+a review agent once declined to run the suite at all.
