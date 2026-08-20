@@ -175,6 +175,37 @@ function sortSources(rows, sort) { return sortRows(rows, sort, SOURCE_SORT_VALUE
 function sortIngestImports(rows, sort) { return sortRows(rows, sort, INGEST_IMPORT_SORT_VALUES); }
 
 /**
+ * Group a category trend's months into runs of equal budget — the eras as the chart
+ * shows them. Each group carries its month span, the budget in force, the average
+ * actual across its months, and the average variance (budget − avg actual), so the
+ * per-era breakdown under the chart can say "vs $230 for May–Jul: under by $2/mo".
+ *
+ * Consecutive equality, not global: a budget changed and later changed back is two
+ * separate eras on screen, which is what the timeline reader expects.
+ */
+function budgetEraGroups(points) {
+  const groups = [];
+  (points || []).forEach((p) => {
+    const budget = Number(p.budget) || 0;
+    const actual = Number(p.actual) || 0;
+    const last = groups[groups.length - 1];
+    if (last && last.budget === budget) {
+      last.toMonth = p.month;
+      last.months += 1;
+      last.totalActual += actual;
+    } else {
+      groups.push({ fromMonth: p.month, toMonth: p.month, budget, months: 1, totalActual: actual });
+    }
+  });
+  groups.forEach((g) => {
+    g.avgActual = Math.round((g.totalActual / g.months) * 100) / 100;
+    g.variance = Math.round((g.budget - g.avgActual) * 100) / 100;
+    delete g.totalActual;
+  });
+  return groups;
+}
+
+/**
  * Escape text for interpolation into markup. Statement descriptions are merchant-controlled
  * text, so this is the boundary between them and the page.
  *

@@ -2,14 +2,18 @@ package com.pigpurchases.service;
 
 import com.pigpurchases.TestPdfs;
 import com.pigpurchases.model.AnalysisRun;
+import com.pigpurchases.model.AnnualBudgetEra;
 import com.pigpurchases.model.AppSettings;
+import com.pigpurchases.model.BudgetAmountEra;
 import com.pigpurchases.model.BudgetEntry;
 import com.pigpurchases.model.StatementSource;
 import com.pigpurchases.model.Transaction;
 import com.pigpurchases.model.TransactionMapping;
 import com.pigpurchases.repository.AnalysisRunRepository;
 import com.pigpurchases.repository.AnalysisRunSourceRepository;
+import com.pigpurchases.repository.AnnualBudgetEraRepository;
 import com.pigpurchases.repository.AppSettingsRepository;
+import com.pigpurchases.repository.BudgetAmountEraRepository;
 import com.pigpurchases.repository.BudgetEntryRepository;
 import com.pigpurchases.repository.MerchantCategoryRepository;
 import com.pigpurchases.repository.MonthStatusRepository;
@@ -56,6 +60,8 @@ class AnalysisServiceTest {
     @Autowired private MerchantCategoryRepository merchantRepo;
     @Autowired private AppSettingsRepository settingsRepo;
     @Autowired private MonthStatusRepository monthStatusRepo;
+    @Autowired private BudgetAmountEraRepository eraRepo;
+    @Autowired private AnnualBudgetEraRepository annualEraRepo;
 
     private Long runId;
 
@@ -69,6 +75,8 @@ class AnalysisServiceTest {
         importRepo.deleteAll();
         sourceRepo.deleteAll();
         entryRepo.deleteAll();
+        eraRepo.deleteAll();
+        annualEraRepo.deleteAll();
 
         // Monthly allowance = annual / 12 = 100.00 is the top-line budget.
         settingsRepo.deleteAll();
@@ -276,5 +284,82 @@ class AnalysisServiceTest {
         assertEquals("2026-05", trend.get(0).month());
         assertEquals(0, new BigDecimal("4.10").compareTo(trend.get(0).actual()));
         assertEquals(0, new BigDecimal("50.00").compareTo(trend.get(0).budget()), "constant category allowance");
+    }
+
+    // ---- budget eras: past months keep the budget they were lived under -----
+
+    private Long coffeeId() {
+        return entryRepo.findAll().stream()
+                .filter(e -> "Coffee Shop".equals(e.getName())).findFirst().orElseThrow().getId();
+    }
+
+    /** Coffee was 50/mo through May 2026 and 20/mo from June — as a forward change records it. */
+    private void splitCoffeeBudgetAtJune() {
+        Long id = coffeeId();
+        eraRepo.save(new BudgetAmountEra(id, null, new BigDecimal("50.00")));
+        eraRepo.save(new BudgetAmountEra(id, "2026-06", new BigDecimal("20.00")));
+        BudgetEntry coffee = entryRepo.findById(id).orElseThrow();
+        coffee.setMonthlyAllowance(new BigDecimal("20.00"));
+        entryRepo.save(coffee);
+    }
+
+    @Test
+    void monthUsesTheBudgetInForceThatMonth() {
+        splitCoffeeBudgetAtJune();
+
+        AnalysisService.CategoryRow may = analysisService.month("2026-05").categories().stream()
+                .filter(c -> "Coffee Shop".equals(c.name())).findFirst().orElseThrow();
+        assertEquals(0, new BigDecimal("50.00").compareTo(may.budget()),
+                "May keeps the budget it was lived under");
+        assertEquals(0, new BigDecimal("45.90").compareTo(may.variance()));
+
+        AnalysisService.CategoryRow june = analysisService.month("2026-06").categories().stream()
+                .filter(c -> "Coffee Shop".equals(c.name())).findFirst().orElseThrow();
+        assertEquals(0, new BigDecimal("20.00").compareTo(june.budget()),
+                "June uses the era that starts there");
+    }
+
+    @Test
+    void rollingAveragesTheBudgetInForceAcrossEras() {
+        splitCoffeeBudgetAtJune();
+
+        // A June coffee purchase, so both eras have a lived month.
+        Transaction junePurchase = new Transaction(LocalDate.of(2026, 6, 15),
+                "COFFEE SHOP ANYTOWN CA", "COFFEE SHOP", new BigDecimal("10.00"), "2026-06");
+        junePurchase.setType("PURCHASE");
+        junePurchase = txnRepo.save(junePurchase);
+        TransactionMapping juneMapping = new TransactionMapping();
+        juneMapping.setAnalysisRunId(runId);
+        juneMapping.setTransactionId(junePurchase.getId());
+        juneMapping.setBudgetEntryId(coffeeId());
+        juneMapping.setStatus(TransactionMapping.Status.MAPPED_HINT);
+        mappingRepo.save(juneMapping);
+
+        analysisService.setMonthComplete("2026-05", true);
+        analysisService.setMonthComplete("2026-06", true);
+
+        AnalysisService.RollingSummary r = analysisService.rolling();
+        assertEquals(2, r.months());
+        AnalysisService.CategoryRow coffee = r.categories().stream()
+                .filter(c -> "Coffee Shop".equals(c.name())).findFirst().orElseThrow();
+        assertEquals(0, new BigDecimal("35.00").compareTo(coffee.budget()), "(50 + 20) / 2");
+        assertEquals(0, new BigDecimal("7.05").compareTo(coffee.actual()), "(4.10 + 10.00) / 2");
+        assertEquals(0, new BigDecimal("27.95").compareTo(coffee.variance()),
+                "Budget − Actual = Variance stays true in the row across the change");
+        assertEquals(0, new BigDecimal("100.00").compareTo(r.totalBudget()),
+                "annual budget never changed, so the average of a constant is the constant");
+    }
+
+    @Test
+    void theAnnualBudgetIsEraAwareToo() {
+        annualEraRepo.save(new AnnualBudgetEra(null, new BigDecimal("1200.00")));
+        annualEraRepo.save(new AnnualBudgetEra("2026-06", new BigDecimal("2400.00")));
+        AppSettings settings = settingsRepo.findById(1L).orElseThrow();
+        settings.setAnnualBudget(new BigDecimal("2400.00"));
+        settingsRepo.save(settings);
+
+        assertEquals(0, new BigDecimal("100.00").compareTo(analysisService.month("2026-05").totalBudget()),
+                "May's allowance comes from the annual budget in force in May");
+        assertEquals(0, new BigDecimal("200.00").compareTo(analysisService.month("2026-06").totalBudget()));
     }
 }

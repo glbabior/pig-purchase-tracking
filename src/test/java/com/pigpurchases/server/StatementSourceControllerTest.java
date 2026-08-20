@@ -205,6 +205,88 @@ class StatementSourceControllerTest {
                 .andExpect(jsonPath("$.sourceName").value("Trace Test"));
     }
 
+    /**
+     * The two kinds of budget edit: "forward" records the old amount as history so
+     * past months keep the budget they were lived under; "correct" changes the value
+     * without growing the history. Removing the change merges everything back to the
+     * no-history state — the common case, where the current amount has always applied.
+     */
+    @Test
+    void budgetChangesRecordHistoryAndCorrectionsDoNot() throws Exception {
+        String created = mvc.perform(post("/api/entries").contentType(APPLICATION_JSON)
+                        .content(json(Map.of("title", "Disney Ticket", "quantity", 1, "monthlyBudget", "230.00"))))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        long id = om.readTree(created).get("id").asLong();
+
+        // No history until the amount actually changes.
+        mvc.perform(get("/api/entries/" + id + "/budget-history"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+
+        // Forward change: the old amount becomes the since-the-beginning era.
+        mvc.perform(put("/api/entries/" + id).contentType(APPLICATION_JSON)
+                        .content(json(Map.of("title", "Disney Ticket", "quantity", 1,
+                                "monthlyBudget", "100.00", "budgetChange", "forward"))))
+                .andExpect(status().isOk());
+        String history = mvc.perform(get("/api/entries/" + id + "/budget-history"))
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].startMonth").isEmpty())
+                .andExpect(jsonPath("$[0].amount").value("230.00"))
+                .andExpect(jsonPath("$[1].amount").value("100.00"))
+                .andReturn().getResponse().getContentAsString();
+        long latestEraId = om.readTree(history).get(1).get("id").asLong();
+
+        // Correction: the value moves, the history does not grow.
+        mvc.perform(put("/api/entries/" + id).contentType(APPLICATION_JSON)
+                        .content(json(Map.of("title", "Disney Ticket", "quantity", 1,
+                                "monthlyBudget", "95.00", "budgetChange", "correct"))))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/entries/" + id + "/budget-history"))
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[1].amount").value("95.00"));
+
+        // Removing the change collapses back to no history, and the current amount
+        // re-syncs to the surviving statement — the original 230.
+        mvc.perform(delete("/api/entries/" + id + "/budget-eras/" + latestEraId))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/entries/" + id + "/budget-history"))
+                .andExpect(jsonPath("$.length()").value(0));
+        String entries = mvc.perform(get("/api/entries")).andReturn().getResponse().getContentAsString();
+        String monthlyBudget = null;
+        for (JsonNode node : om.readTree(entries)) {
+            if (node.get("id").asLong() == id) {
+                monthlyBudget = node.get("monthlyBudget").asText();
+            }
+        }
+        assertEquals("230.00", monthlyBudget);
+
+        mvc.perform(delete("/api/entries/" + id)).andExpect(status().isOk());
+    }
+
+    /** The annual budget is versioned the same way, but only by an explicit change here. */
+    @Test
+    void theAnnualBudgetRecordsHistoryOnForwardChanges() throws Exception {
+        mvc.perform(put("/api/settings").contentType(APPLICATION_JSON)
+                        .content(json(Map.of("annualBudget", "1200.00", "annualBudgetChange", "correct"))))
+                .andExpect(status().isOk());
+
+        String response = mvc.perform(put("/api/settings").contentType(APPLICATION_JSON)
+                        .content(json(Map.of("annualBudget", "2400.00", "annualBudgetChange", "forward"))))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        JsonNode eras = om.readTree(response).get("annualBudgetHistory");
+        assertTrue(eras.size() >= 2, "the old annual budget is recorded as history");
+        assertEquals("2400.00", eras.get(eras.size() - 1).get("amount").asText());
+
+        // Leave the shared settings row the way this test found it — other tests
+        // assume a zero annual budget. "correct" rewrites in place, growing nothing.
+        mvc.perform(put("/api/settings").contentType(APPLICATION_JSON)
+                        .content(json(Map.of("annualBudget", "0.00", "annualBudgetChange", "correct"))))
+                .andExpect(status().isOk());
+    }
+
     private JsonNode findByName(String name) throws Exception {
         String list = mvc.perform(get("/api/statement-sources")).andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();

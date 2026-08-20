@@ -292,9 +292,9 @@ flowchart LR
         <thead><tr><th>Package</th><th>Role</th><th>Notable types</th></tr></thead>
         <tbody>
           <tr><td><code>parser</code></td><td>Turn one issuer's PDF into a parsed statement. Strategy pattern, wired by discovery.</td><td><code>StatementParser</code> (interface), <code>StatementParserRegistry</code>, <code>NorthwindStatementParser</code> (demonstration), <code>ExclusionRule</code></td></tr>
-          <tr><td><code>model</code></td><td>JPA entities — the persistent domain (12 total).</td><td><code>Transaction</code>, <code>BudgetEntry</code>, <code>AnalysisRun</code>, <code>TransactionMapping</code>, <code>MerchantCategory</code></td></tr>
+          <tr><td><code>model</code></td><td>JPA entities — the persistent domain (14 total).</td><td><code>Transaction</code>, <code>BudgetEntry</code>, <code>BudgetAmountEra</code>, <code>AnnualBudgetEra</code>, <code>AnalysisRun</code>, <code>TransactionMapping</code>, <code>MerchantCategory</code></td></tr>
           <tr><td><code>repository</code></td><td>Spring Data JPA interfaces, one per aggregate.</td><td><code>TransactionRepository</code>, <code>AnalysisRunRepository</code></td></tr>
-          <tr><td><code>service</code></td><td>All business logic: ingest, categorization pipeline, analysis math, AI, backup/restore, the durable debug log.</td><td><code>IngestService</code>, <code>MappingService</code>, <code>AnalysisService</code>, <code>AiCategorizationService</code>, <code>HintMatcher</code>, <code>HintService</code>, <code>BackupService</code>, <code>RestoreService</code>, <code>ManualEntryService</code>, <code>DebugLogService</code> (10 in all)</td></tr>
+          <tr><td><code>service</code></td><td>All business logic: ingest, categorization pipeline, analysis math, budget history, AI, backup/restore, the durable debug log.</td><td><code>IngestService</code>, <code>MappingService</code>, <code>AnalysisService</code>, <code>BudgetHistoryService</code>, <code>AiCategorizationService</code>, <code>HintMatcher</code>, <code>HintService</code>, <code>BackupService</code>, <code>RestoreService</code>, <code>ManualEntryService</code>, <code>DebugLogService</code> (11 in all)</td></tr>
           <tr><td><code>server</code></td><td>REST controllers + <code>DataInitializer</code>. Thin — marshal JSON, delegate.</td><td><code>BudgetController</code>, <code>MappingController</code>, <code>AnalysisController</code>, <code>HintController</code>, <code>ManualEntryController</code>, <code>BackupController</code>, <code>RestoreController</code>, <code>DebugLogController</code>, <code>NotificationController</code> (9 in all)</td></tr>
           <tr><td><code>demo</code></td><td>Generates sample statements and seed data so the app can be run with no data of anyone's own. Active only under the <code>demo</code> profile.</td><td><code>DemoDataInitializer</code>, <code>DemoStatements</code></td></tr>
           <tr><td><code>config</code></td><td>Switchable-datasource plumbing, startup schema fixes, and the request-origin / security-header filter.</td><td><code>DataSourceConfig</code>, <code>SwitchableDataSource</code>, <code>EnumColumnMigration</code>, <code>LocalOriginFilter</code></td></tr>
@@ -459,6 +459,17 @@ classDiagram
         +Integer quantity
         +String hints
     }
+    class BudgetAmountEra {
+        +Long id
+        +Long budgetEntryId
+        +String startMonth
+        +BigDecimal amount
+    }
+    class AnnualBudgetEra {
+        +Long id
+        +String startMonth
+        +BigDecimal amount
+    }
     class AnalysisRun {
         +Long id
         +String month
@@ -539,6 +550,7 @@ classDiagram
     StatementSource "1" --&gt; "*" StatementImport : imports
     StatementImport "1" --&gt; "*" Transaction : contains
     Transaction "*" --&gt; "0..1" BudgetEntry : budget_entry_id (real FK)
+    BudgetEntry "1" --&gt; "*" BudgetAmountEra : amount history
     AnalysisRun "1" --&gt; "*" AnalysisRunSource : sources
     AnalysisRunSource "*" --&gt; "1" StatementImport : consumes
     AnalysisRun "1" --&gt; "*" TransactionMapping : produces
@@ -681,6 +693,7 @@ erDiagram
     TRANSACTIONS ||--o{ TRANSACTION_MAPPINGS : "mapped in"
     BUDGET_ENTRIES ||--o{ TRANSACTION_MAPPINGS : "assigned"
     BUDGET_ENTRIES ||--o{ MERCHANT_CATEGORIES : "remembered as"
+    BUDGET_ENTRIES ||--o{ BUDGET_AMOUNT_ERAS : "amount history"
     STATEMENT_SOURCES {
         bigint id PK
         string name
@@ -760,6 +773,17 @@ erDiagram
         int notification_day_of_month
         int backup_retention_count
     }
+    BUDGET_AMOUNT_ERAS {
+        bigint id PK
+        bigint budget_entry_id "soft ref"
+        string start_month "YYYY-MM; null = since the beginning"
+        decimal amount
+    }
+    ANNUAL_BUDGET_ERAS {
+        bigint id PK
+        string start_month "YYYY-MM; null = since the beginning"
+        decimal amount
+    }
     APP_LOG_ENTRIES {
         bigint id PK
         datetime created_at
@@ -783,6 +807,14 @@ erDiagram
       <li><strong>Merchant answers are remembered</strong>, so the AI is only ever paid for once per merchant; manual
         answers outrank AI answers in that cache.</li>
       <li><strong>Parked still counts as spend.</strong> Uncategorized real money is never hidden — it lands in "Other."</li>
+      <li><strong>Budgets are era-resolved: each month is compared against the budget in force that month.</strong>
+        A "changed going forward" edit records the old amount as a <code>BudgetAmountEra</code> (the first change also
+        writes the old value as a since-the-beginning era); a "correct" edit amends in place and records nothing. An
+        entry with <em>no</em> era rows resolves to its current amount for every month — the pre-era behaviour, and
+        what a database restored from an old backup gets. The Rolling screen averages the in-force budgets across the
+        complete months, so Budget − Actual = Variance stays true in every row. The annual budget is versioned the
+        same way (<code>AnnualBudgetEra</code>), but only by an explicit change in Settings — never as a side effect
+        of a category change.</li>
       <li><strong>Money-in is kept out of spend unless you assigned that exact row by hand.</strong>
         <code>signedSpend</code> negates <code>PAYMENT</code>, <code>CREDIT</code> and <code>DEPOSIT</code> alike, so a
         parked one would <em>subtract</em> from the month — hence the default. The exception is narrow:

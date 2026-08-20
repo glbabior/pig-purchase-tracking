@@ -4,8 +4,6 @@ import com.pigpurchases.model.BudgetEntry;
 import com.pigpurchases.model.MonthStatus;
 import com.pigpurchases.model.Transaction;
 import com.pigpurchases.model.TransactionMapping;
-import com.pigpurchases.model.AppSettings;
-import com.pigpurchases.repository.AppSettingsRepository;
 import com.pigpurchases.repository.BudgetEntryRepository;
 import com.pigpurchases.repository.MonthStatusRepository;
 import com.pigpurchases.repository.TransactionMappingRepository;
@@ -51,8 +49,8 @@ public class AnalysisService {
     @Autowired private TransactionMappingRepository mappingRepository;
     @Autowired private TransactionRepository transactionRepository;
     @Autowired private BudgetEntryRepository budgetEntryRepository;
-    @Autowired private AppSettingsRepository appSettingsRepository;
     @Autowired private MonthStatusRepository monthStatusRepository;
+    @Autowired private BudgetHistoryService budgetHistoryService;
 
     private static final BigDecimal MONTHS_PER_YEAR = BigDecimal.valueOf(12);
 
@@ -133,61 +131,95 @@ public class AnalysisService {
     @Transactional(readOnly = true)
     public MonthSummary month(String month) {
         MonthAgg agg = aggregateByActualMonth().getOrDefault(month, new MonthAgg());
-        return summarize(month, agg, budgetEntryRepository.findAll());
+        return summarize(month, agg, budgetEntryRepository.findAll(), budgetHistoryService.resolver());
     }
 
+    /**
+     * The typical-month average. Both sides are era-aware: each complete month's
+     * actuals are held against the budget in force <b>that</b> month, and the
+     * Budget column is the average of those in-force budgets — so Budget − Actual
+     * = Variance stays true in every row even when a budget changed mid-history.
+     * For a category whose budget never changed (no eras), the average of a
+     * constant is the constant, and nothing about this screen moves.
+     */
     @Transactional(readOnly = true)
     public RollingSummary rolling() {
         List<BudgetEntry> entries = budgetEntryRepository.findAll();
-        BigDecimal totalBudget = monthlyAllowance();
+        BudgetHistoryService.Resolver resolver = budgetHistoryService.resolver();
 
         Map<String, MonthAgg> byMonth = aggregateByActualMonth();
         Set<String> complete = completeMonths();
         // Only complete months with data feed the average, so a partial month can't skew it.
         List<MonthSummary> all = byMonth.entrySet().stream()
                 .filter(e -> complete.contains(e.getKey()))
-                .map(e -> summarize(e.getKey(), e.getValue(), entries))
+                .map(e -> summarize(e.getKey(), e.getValue(), entries, resolver))
                 .toList();
 
         if (all.isEmpty()) {
+            String now = budgetHistoryService.currentMonth();
+            BigDecimal totalBudget = monthlyAllowanceFor(now, resolver);
             return new RollingSummary(0, totalBudget, BigDecimal.ZERO, totalBudget,
-                    categoryRows(entries, new HashMap<>(), BigDecimal.ZERO, 1, totalBudget, new HashMap<>(), 0));
+                    categoryRows(entries, new HashMap<>(), BigDecimal.ZERO, 1, totalBudget,
+                            new HashMap<>(), 0, e -> resolver.amount(e, now)));
         }
 
         int n = all.size();
+        BigDecimal div = BigDecimal.valueOf(n);
         BigDecimal avgActual = all.stream().map(MonthSummary::totalActual)
-                .reduce(BigDecimal.ZERO, BigDecimal::add).divide(BigDecimal.valueOf(n), 2, RoundingMode.HALF_UP);
+                .reduce(BigDecimal.ZERO, BigDecimal::add).divide(div, 2, RoundingMode.HALF_UP);
+        BigDecimal avgTotalBudget = all.stream().map(MonthSummary::totalBudget)
+                .reduce(BigDecimal.ZERO, BigDecimal::add).divide(div, 2, RoundingMode.HALF_UP);
 
-        // Actuals average over the months; counts are the total number of transactions.
+        // Both actuals AND budgets average over the months (a month that emitted no
+        // "Other" row contributes zero to its sums); counts total across months.
         Map<Long, BigDecimal> summedByEntry = new HashMap<>();
+        Map<Long, BigDecimal> summedBudgetByEntry = new HashMap<>();
         Map<Long, Integer> countByEntry = new HashMap<>();
         BigDecimal summedOther = BigDecimal.ZERO;
+        BigDecimal summedOtherBudget = BigDecimal.ZERO;
         int otherCount = 0;
         for (MonthSummary ms : all) {
             for (CategoryRow row : ms.categories()) {
                 if (row.entryId() == null) {
                     summedOther = summedOther.add(row.actual());
+                    summedOtherBudget = summedOtherBudget.add(row.budget());
                     otherCount += row.count();
                 } else {
                     summedByEntry.merge(row.entryId(), row.actual(), BigDecimal::add);
+                    summedBudgetByEntry.merge(row.entryId(), row.budget(), BigDecimal::add);
                     countByEntry.merge(row.entryId(), row.count(), Integer::sum);
                 }
             }
         }
-        List<CategoryRow> categories = categoryRows(entries, summedByEntry, summedOther, n, totalBudget,
-                countByEntry, otherCount);
-        return new RollingSummary(n, totalBudget, avgActual, totalBudget.subtract(avgActual), categories);
+        List<CategoryRow> categories = new ArrayList<>();
+        for (BudgetEntry entry : entries) {
+            BigDecimal budget = summedBudgetByEntry.getOrDefault(entry.getId(), BigDecimal.ZERO)
+                    .divide(div, 2, RoundingMode.HALF_UP);
+            BigDecimal actual = summedByEntry.getOrDefault(entry.getId(), BigDecimal.ZERO)
+                    .divide(div, 2, RoundingMode.HALF_UP);
+            categories.add(new CategoryRow(entry.getId(), entry.getName(), budget, actual,
+                    round(budget.subtract(actual)), countByEntry.getOrDefault(entry.getId(), 0)));
+        }
+        categories.sort(Comparator.comparing(r -> r.name() == null ? "" : r.name().toLowerCase()));
+        BigDecimal otherBudget = summedOtherBudget.divide(div, 2, RoundingMode.HALF_UP);
+        BigDecimal other = summedOther.divide(div, 2, RoundingMode.HALF_UP);
+        if (otherBudget.signum() != 0 || other.signum() != 0 || otherCount > 0) {
+            categories.add(new CategoryRow(null, "Other (discretionary)", otherBudget, other,
+                    round(otherBudget.subtract(other)), otherCount));
+        }
+        return new RollingSummary(n, avgTotalBudget, avgActual, avgTotalBudget.subtract(avgActual), categories);
     }
 
     @Transactional(readOnly = true)
     public List<TrendPoint> trends() {
         List<BudgetEntry> entries = budgetEntryRepository.findAll();
+        BudgetHistoryService.Resolver resolver = budgetHistoryService.resolver();
         Map<String, MonthAgg> byMonth = aggregateByActualMonth();
         List<String> months = new ArrayList<>(byMonth.keySet());
         months.sort(Comparator.naturalOrder()); // oldest first, for a left-to-right timeline
         List<TrendPoint> points = new ArrayList<>();
         for (String m : months) {
-            MonthSummary ms = summarize(m, byMonth.get(m), entries);
+            MonthSummary ms = summarize(m, byMonth.get(m), entries, resolver);
             points.add(new TrendPoint(m, ms.totalActual(), ms.totalBudget()));
         }
         return points;
@@ -195,7 +227,9 @@ public class AnalysisService {
 
     /**
      * One category's actual spend month by month (most recent 12), for a line
-     * chart. Budget is the category's current allowance, constant across months.
+     * chart. Budget is the allowance in force <b>that month</b>, so a category
+     * whose budget changed plots a stepped budget line with the change visible at
+     * its boundary rather than rewriting history to today's number.
      *
      * <p>This is reached from the Rolling screen, which is defined by the months
      * the user marked complete, so only complete months are plotted — a partial
@@ -209,6 +243,7 @@ public class AnalysisService {
         Long entryId = other ? null : parseEntryId(categoryKey);
 
         List<BudgetEntry> entries = budgetEntryRepository.findAll();
+        BudgetHistoryService.Resolver resolver = budgetHistoryService.resolver();
         Map<String, MonthAgg> byMonth = aggregateByActualMonth();
         Set<String> complete = completeMonths();
         List<String> months = new ArrayList<>(byMonth.keySet());
@@ -221,7 +256,7 @@ public class AnalysisService {
         List<CategoryTrendPoint> points = new ArrayList<>();
         for (String m : months) {
             final Long id = entryId;
-            CategoryRow row = summarize(m, byMonth.get(m), entries).categories().stream()
+            CategoryRow row = summarize(m, byMonth.get(m), entries, resolver).categories().stream()
                     .filter(c -> other ? c.entryId() == null : (c.entryId() != null && c.entryId().equals(id)))
                     .findFirst().orElse(null);
             BigDecimal actual = row != null ? row.actual() : BigDecimal.ZERO;
@@ -318,10 +353,12 @@ public class AnalysisService {
         return counts;
     }
 
-    private MonthSummary summarize(String month, MonthAgg agg, List<BudgetEntry> entries) {
-        BigDecimal totalBudget = monthlyAllowance();
+    /** One month's rows and totals, every budget resolved to the era in force for that month. */
+    private MonthSummary summarize(String month, MonthAgg agg, List<BudgetEntry> entries,
+                                   BudgetHistoryService.Resolver resolver) {
+        BigDecimal totalBudget = monthlyAllowanceFor(month, resolver);
         List<CategoryRow> categories = categoryRows(entries, agg.byEntry, agg.other, 1, totalBudget,
-                agg.countByEntry, agg.otherCount);
+                agg.countByEntry, agg.otherCount, e -> resolver.amount(e, month));
         BigDecimal totalActual = categories.stream().map(CategoryRow::actual)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         return new MonthSummary(month, totalBudget, round(totalActual),
@@ -332,16 +369,21 @@ public class AnalysisService {
     /**
      * Build the per-category rows. {@code actual} values are divided by
      * {@code divisor} (months) so this serves both a single month (divisor 1)
-     * and a rolling average (divisor = month count).
+     * and a rolling average (divisor = month count). {@code budgetFor} supplies
+     * each entry's budget so the caller decides which era (or average) applies.
      */
     private List<CategoryRow> categoryRows(List<BudgetEntry> entries, Map<Long, BigDecimal> actualByEntry,
                                            BigDecimal otherTotal, int divisor, BigDecimal monthlyAllowance,
-                                           Map<Long, Integer> countByEntry, int otherCount) {
+                                           Map<Long, Integer> countByEntry, int otherCount,
+                                           java.util.function.Function<BudgetEntry, BigDecimal> budgetFor) {
         BigDecimal div = BigDecimal.valueOf(Math.max(divisor, 1));
         List<CategoryRow> rows = new ArrayList<>();
         BigDecimal allocated = BigDecimal.ZERO;
         for (BudgetEntry entry : entries) {
-            BigDecimal budget = entry.getMonthlyAllowance() != null ? entry.getMonthlyAllowance() : BigDecimal.ZERO;
+            BigDecimal budget = budgetFor.apply(entry);
+            if (budget == null) {
+                budget = BigDecimal.ZERO;
+            }
             allocated = allocated.add(budget);
             BigDecimal actual = actualByEntry.getOrDefault(entry.getId(), BigDecimal.ZERO)
                     .divide(div, 2, RoundingMode.HALF_UP);
@@ -396,13 +438,9 @@ public class AnalysisService {
         return maxMonth; // months < maxMonth are suggested complete
     }
 
-    private BigDecimal monthlyAllowance() {
-        BigDecimal annual = appSettingsRepository.findById(1L)
-                .map(AppSettings::getAnnualBudget).orElse(BigDecimal.ZERO);
-        if (annual == null) {
-            annual = BigDecimal.ZERO;
-        }
-        return annual.divide(MONTHS_PER_YEAR, 2, RoundingMode.HALF_UP);
+    /** The month's total allowance: the annual budget in force that month, divided by 12. */
+    private BigDecimal monthlyAllowanceFor(String month, BudgetHistoryService.Resolver resolver) {
+        return resolver.annual(month).divide(MONTHS_PER_YEAR, 2, RoundingMode.HALF_UP);
     }
 
     private Long parseEntryId(String categoryKey) {

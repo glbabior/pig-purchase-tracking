@@ -136,6 +136,11 @@ anyone tried the demo.
   `import-{id}`. Calendar grouping comes from each transaction's actual date.
 - `TransactionMapping.countsAsSpend()` is the single authority on whether a row
   counts as spend. Ask it; never compare statuses directly.
+- **Budgets are era-resolved** (`BudgetHistoryService`): each month is compared
+  against the budget in force that month. An entry with no `BudgetAmountEra` rows
+  resolves to its current amount for every month — that fallback is the
+  compatibility guarantee for pre-era databases and restored old backups, so
+  never "backfill" era rows for untouched entries.
 - **Parked counts as spend.** Both flavours of excluded do not.
 - Schema is `ddl-auto=update`, which only ever **adds**. New enum constants and
   new non-null columns are the known trap — see `EnumColumnMigration`.

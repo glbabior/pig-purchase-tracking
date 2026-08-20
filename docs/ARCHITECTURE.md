@@ -59,9 +59,9 @@ Two deliberate facts about this picture:
 | Package | Role | Notable types |
 |---|---|---|
 | `parser` | Turn one issuer's PDF into `ParsedStatement`/`ParsedTransaction`. Strategy pattern, wired by discovery. | `StatementParser` (interface), `StatementParserRegistry`, `NorthwindStatementParser` (demonstration), `ExclusionRule` |
-| `model` | JPA entities — the persistent domain. | `Transaction`, `BudgetEntry`, `AnalysisRun`, `TransactionMapping`, `MerchantCategory`, … (12 total) |
+| `model` | JPA entities — the persistent domain. | `Transaction`, `BudgetEntry`, `BudgetAmountEra`, `AnnualBudgetEra`, `AnalysisRun`, `TransactionMapping`, `MerchantCategory`, … (14 total) |
 | `repository` | Spring Data JPA interfaces, one per aggregate. | `TransactionRepository`, `AnalysisRunRepository`, … |
-| `service` | All business logic. Ingest, the categorization pipeline, analysis math, AI, backup/restore. | `IngestService`, `MappingService`, `AnalysisService`, `AiCategorizationService`, `HintMatcher`, `HintService`, `BackupService`, `RestoreService`, `ManualEntryService`, `DebugLogService` |
+| `service` | All business logic. Ingest, the categorization pipeline, analysis math, budget history, AI, backup/restore. | `IngestService`, `MappingService`, `AnalysisService`, `BudgetHistoryService`, `AiCategorizationService`, `HintMatcher`, `HintService`, `BackupService`, `RestoreService`, `ManualEntryService`, `DebugLogService` |
 | `server` | `@RestController`s (the `/api` surface) + `DataInitializer`. Thin — they marshal JSON and delegate. | `BudgetController`, `MappingController`, `AnalysisController`, `ManualEntryController`, `BackupController`, `RestoreController`, `HintController`, `DebugLogController`, `NotificationController` (9 in all) |
 | `demo` | Generates sample statements and seed data so the app can be run with no data of anyone's own. Active only under the `demo` profile. | `DemoDataInitializer`, `DemoStatements` |
 | `config` | Switchable-datasource plumbing, startup schema fixes, and the request-origin / security-header filter. | `DataSourceConfig`, `SwitchableDataSource`, `EnumColumnMigration`, `LocalOriginFilter` |
@@ -165,6 +165,15 @@ is assembled regardless of which statement file each charge arrived in. A month 
 only folded into the **rolling average** once you mark it complete (`MonthStatus`),
 so a half-loaded month can't skew the typical-month numbers.
 
+**Budgets are era-resolved** (`BudgetHistoryService`): every month is compared
+against the budget in force *that* month, so changing a category's amount "going
+forward" leaves past months measured against what they were lived under. The
+Rolling screen averages the in-force budgets across the complete months — Budget −
+Actual = Variance stays true in every row — and the per-category trend chart draws
+the budget as a stepped line with a per-era breakdown beneath it. An entry with no
+era rows resolves to its current amount for every month, which is the pre-era
+behaviour and the fallback a restored old backup gets.
+
 ---
 
 ### 3d. Demo mode
@@ -266,6 +275,17 @@ classDiagram
         +Integer quantity
         +String hints
     }
+    class BudgetAmountEra {
+        +Long id
+        +Long budgetEntryId
+        +String startMonth
+        +BigDecimal amount
+    }
+    class AnnualBudgetEra {
+        +Long id
+        +String startMonth
+        +BigDecimal amount
+    }
     class AnalysisRun {
         +Long id
         +String month
@@ -339,6 +359,7 @@ classDiagram
     StatementSource "1" --> "*" StatementImport : imports
     StatementImport "1" --> "*" Transaction : contains
     Transaction "*" --> "0..1" BudgetEntry : budget_entry_id (real FK)
+    BudgetEntry "1" --> "*" BudgetAmountEra : amount history
     AnalysisRun "1" --> "*" AnalysisRunSource : sources
     AnalysisRunSource "*" --> "1" StatementImport : consumes
     AnalysisRun "1" --> "*" TransactionMapping : produces
@@ -432,6 +453,7 @@ erDiagram
     TRANSACTIONS ||--o{ TRANSACTION_MAPPINGS : "mapped in"
     BUDGET_ENTRIES ||--o{ TRANSACTION_MAPPINGS : "assigned"
     BUDGET_ENTRIES ||--o{ MERCHANT_CATEGORIES : "remembered as"
+    BUDGET_ENTRIES ||--o{ BUDGET_AMOUNT_ERAS : "amount history"
 
     STATEMENT_SOURCES {
         bigint id PK
@@ -518,6 +540,17 @@ erDiagram
         int notification_day_of_month
         int backup_retention_count
     }
+    BUDGET_AMOUNT_ERAS {
+        bigint id PK
+        bigint budget_entry_id "soft ref"
+        string start_month "YYYY-MM; null = since the beginning"
+        decimal amount
+    }
+    ANNUAL_BUDGET_ERAS {
+        bigint id PK
+        string start_month "YYYY-MM; null = since the beginning"
+        decimal amount
+    }
     APP_LOG_ENTRIES {
         bigint id PK
         datetime created_at
@@ -541,6 +574,16 @@ erDiagram
   merchant; manual answers outrank AI answers in that cache.
 - **Parked still counts as spend.** Uncategorized real money is never hidden from
   the budget totals — it lands in "Other."
+- **Budgets are era-resolved: each month is compared against the budget in force
+  that month.** A "changed going forward" edit records the old amount as a
+  `BudgetAmountEra` (the first change also writes the old value as a
+  since-the-beginning era); a "correct" edit amends in place and records nothing.
+  An entry with **no** era rows resolves to its current amount for every month —
+  the pre-era behaviour, and what a database restored from an old backup gets.
+  The Rolling screen averages the in-force budgets across the complete months, so
+  Budget − Actual = Variance stays true in every row. The annual budget is
+  versioned the same way (`AnnualBudgetEra`), but only by an explicit change in
+  Settings — never as a side effect of a category change.
 - **The database is disposable; the PDFs and backups are not.** The DB stays out of
   synced folders, backups are consistent dumps kept outside the DB folder, and
   restore is preview-then-commit through `SwitchableDataSource`.

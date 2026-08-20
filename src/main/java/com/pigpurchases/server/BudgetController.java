@@ -55,6 +55,9 @@ public class BudgetController {
     private TransactionRepository transactionRepository;
 
     @Autowired
+    private com.pigpurchases.service.BudgetHistoryService budgetHistoryService;
+
+    @Autowired
     private AppSettingsRepository appSettingsRepository;
 
     @Autowired
@@ -147,10 +150,23 @@ public class BudgetController {
         return settingsResponse(loadOrCreateSettings());
     }
 
+    /**
+     * {@code annualBudgetChange} mirrors the entry edit's {@code budgetChange}:
+     * {@code "forward"} (default) records the old annual budget as history so past
+     * months keep their era-correct "Other" budget line; {@code "correct"} amends in
+     * place. The annual budget is only ever versioned here, explicitly — never as a
+     * side effect of a category change.
+     */
     @PutMapping("/settings")
+    @Transactional
     public Map<String, Object> updateSettings(@RequestBody Map<String, Object> payload) {
         AppSettings settings = loadOrCreateSettings();
-        settings.setAnnualBudget(new BigDecimal(String.valueOf(payload.get("annualBudget"))));
+        BigDecimal newAnnual = new BigDecimal(String.valueOf(payload.get("annualBudget")));
+        if ("correct".equals(payload.get("annualBudgetChange"))) {
+            budgetHistoryService.correctAnnualBudget(settings, newAnnual);
+        } else {
+            budgetHistoryService.changeAnnualBudgetForward(settings, newAnnual);
+        }
         if (payload.get("debugLogRetentionDays") != null) {
             int days = ((Number) payload.get("debugLogRetentionDays")).intValue();
             settings.setDebugLogRetentionDays(Math.max(0, days));
@@ -184,6 +200,16 @@ public class BudgetController {
         response.put("debugLogRetentionDays", settings.getDebugLogRetentionDays());
         response.put("notificationDayOfMonth", settings.getNotificationDayOfMonth());
         response.put("backupRetentionCount", settings.getBackupRetentionCount());
+        // The annual budget's eras (empty = never changed), so Settings can show
+        // what past months are measured against without a second fetch.
+        List<Map<String, Object>> history = new ArrayList<>();
+        for (var era : budgetHistoryService.annualEras()) {
+            Map<String, Object> eraMap = new HashMap<>();
+            eraMap.put("startMonth", era.getStartMonth());
+            eraMap.put("amount", era.getAmount().toPlainString());
+            history.add(eraMap);
+        }
+        response.put("annualBudgetHistory", history);
         return response;
     }
 
@@ -668,14 +694,66 @@ public class BudgetController {
         return budgetEntryRepository.save(entry);
     }
 
+    /**
+     * Edit an entry. When the amount changed, {@code budgetChange} says which of two
+     * different facts the user is stating — see {@link BudgetHistoryService}:
+     * {@code "forward"} (the default) records the old amount as history and starts a
+     * new era this month, so past months keep the budget they were lived under;
+     * {@code "correct"} amends the value in force now, creating no history.
+     * An unchanged amount records nothing either way.
+     */
     @PutMapping("/entries/{id}")
+    @Transactional
     public BudgetEntry updateEntry(@PathVariable Long id, @RequestBody Map<String, Object> payload) {
         BudgetEntry entry = budgetEntryRepository.findById(id).orElseThrow();
         entry.setName((String) payload.get("title"));
-        entry.setMonthlyAllowance(new BigDecimal(String.valueOf(payload.get("monthlyBudget"))));
+        BigDecimal newAmount = new BigDecimal(String.valueOf(payload.get("monthlyBudget")));
+        if ("correct".equals(payload.get("budgetChange"))) {
+            budgetHistoryService.correctEntryAmount(entry, newAmount);
+        } else {
+            budgetHistoryService.changeEntryAmountForward(entry, newAmount);
+        }
         entry.setQuantity(((Number) payload.getOrDefault("quantity", 1)).intValue());
         entry.setHints((String) payload.getOrDefault("hints", ""));
         return budgetEntryRepository.save(entry);
+    }
+
+    /**
+     * An entry's budget history: its eras oldest-first, empty when the amount has
+     * never been changed "going forward" (the common case — no rows means the
+     * current amount has always applied).
+     */
+    @GetMapping("/entries/{id}/budget-history")
+    public List<Map<String, Object>> getBudgetHistory(@PathVariable Long id) {
+        budgetEntryRepository.findById(id).orElseThrow();
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (var era : budgetHistoryService.erasFor(id)) {
+            Map<String, Object> map = new HashMap<>();
+            map.put("id", era.getId());
+            map.put("startMonth", era.getStartMonth());
+            map.put("amount", era.getAmount().toPlainString());
+            result.add(map);
+        }
+        return result;
+    }
+
+    /** Fix one era's amount in place — "the budget for those months was actually X". */
+    @PutMapping("/entries/{id}/budget-eras/{eraId}")
+    @Transactional
+    public void amendBudgetEra(@PathVariable Long id, @PathVariable Long eraId,
+                               @RequestBody Map<String, Object> payload) {
+        BudgetEntry entry = budgetEntryRepository.findById(id).orElseThrow();
+        budgetHistoryService.amendEra(entry, eraId, new BigDecimal(String.valueOf(payload.get("amount"))));
+        budgetEntryRepository.save(entry);
+    }
+
+    /** Remove an era boundary, merging its months into the era before it. */
+    @DeleteMapping("/entries/{id}/budget-eras/{eraId}")
+    @Transactional
+    public void deleteBudgetEra(@PathVariable Long id, @PathVariable Long eraId) {
+        BudgetEntry entry = budgetEntryRepository.findById(id).orElseThrow();
+        budgetHistoryService.deleteEra(entry, eraId);
+        budgetEntryRepository.save(entry);
     }
 
     /**
@@ -732,6 +810,7 @@ public class BudgetController {
         // rows as mapped that no longer were, until something else happened to re-map them.
         touchedRuns.forEach(mappingService::recount);
         merchantCategoryRepository.findByBudgetEntryId(id).forEach(merchantCategoryRepository::delete);
+        budgetHistoryService.deleteErasFor(id);
         budgetEntryRepository.deleteById(id);
     }
 

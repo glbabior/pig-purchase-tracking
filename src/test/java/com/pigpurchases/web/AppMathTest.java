@@ -235,6 +235,28 @@ class AppMathTest {
     }
 
     @Test
+    void budgetEraGroupsSplitsOnBudgetChangesAndAverages() {
+        // Two months at 230, then one at 100 — the Disney-pass shape. Consecutive
+        // equality defines a group, and each group averages its own months.
+        Value groups = js.eval("js", "budgetEraGroups(["
+                + "{month:'2026-05', actual: 228, budget: 230},"
+                + "{month:'2026-06', actual: 232, budget: 230},"
+                + "{month:'2026-07', actual: 95,  budget: 100}])");
+        assertEquals(2, groups.getArraySize());
+
+        Value first = groups.getArrayElement(0);
+        assertEquals("2026-05", first.getMember("fromMonth").asString());
+        assertEquals("2026-06", first.getMember("toMonth").asString());
+        assertEquals(2, first.getMember("months").asInt());
+        assertEquals(230.0, first.getMember("avgActual").asDouble(), 0.001, "(228 + 232) / 2");
+        assertEquals(0.0, first.getMember("variance").asDouble(), 0.001, "on budget across that era");
+
+        Value second = groups.getArrayElement(1);
+        assertEquals(1, second.getMember("months").asInt());
+        assertEquals(5.0, second.getMember("variance").asDouble(), 0.001, "under by 5 in the new era");
+    }
+
+    @Test
     void everyFunctionIndexHtmlExpectsIsActuallyDefined() throws IOException {
         // Guards the extraction itself: moving one of these back, renaming it, or dropping
         // the <script> tag would otherwise only show up as a blank screen in the browser.

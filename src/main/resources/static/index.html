@@ -281,6 +281,15 @@
       .trend-month { cursor: pointer; }
       .trend-month:hover { fill: #8a4b00; text-decoration: underline; }
 
+      /* Budget-history (era) lists in the entry dialog and Settings. */
+      .radio-line { display: block; font-weight: normal; font-size: 0.85rem; margin-top: 0.3rem; cursor: pointer; }
+      .radio-line input { margin-right: 0.35rem; }
+      .era-list { margin-top: 0.5rem; font-size: 0.85rem; }
+      .era-list .era-title { font-weight: bold; color: #7a6753; margin-bottom: 0.2rem; }
+      .era-row { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; padding: 0.15rem 0; border-top: 1px dotted #eadfce; }
+      .era-breakdown { margin-top: 0.6rem; font-size: 0.85rem; color: #5f4b32; }
+      .era-breakdown div { padding: 0.1rem 0; }
+
       @media (max-width: 760px) {
         .app { flex-direction: column; }
         .sidebar { width: auto; flex-direction: row; flex-wrap: wrap; align-items: center; }
@@ -567,6 +576,11 @@
                   <label for="annualBudgetInput">Annual budget ($)</label>
                   <input id="annualBudgetInput" type="text" inputmode="decimal" placeholder="e.g. 90000 or 90000.00" />
                   <div class="hint">Your monthly allowance is calculated automatically as annual &divide; 12.</div>
+                  <label class="radio-line"><input type="radio" name="annualChangeMode" value="forward" checked />
+                    If changed: it changed going forward — past months keep the old annual budget</label>
+                  <label class="radio-line"><input type="radio" name="annualChangeMode" value="correct" />
+                    If changed: correct it — this was always the amount</label>
+                  <div id="annualHistoryList" class="era-list"></div>
                 </div>
                 <div class="field">
                   <div class="label muted">Monthly allowance (calculated)</div>
@@ -1178,6 +1192,17 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
           <label for="itemBudget">Dollar amount per unit ($)</label>
           <input id="itemBudget" type="text" inputmode="decimal" placeholder="100 or 100.50" />
         </div>
+        <!-- Which fact a changed amount states. "Forward" writes the old amount into
+             history so past months keep the budget they were lived under; "correct"
+             rewrites in place. Hidden when adding — a new entry has no history. -->
+        <div class="field" id="budgetChangeField" style="display:none">
+          <label>If you change the amount</label>
+          <label class="radio-line"><input type="radio" name="budgetChangeMode" value="forward" checked />
+            It changed going forward — past months keep the old budget</label>
+          <label class="radio-line"><input type="radio" name="budgetChangeMode" value="correct" />
+            Correct it — this was always the amount</label>
+          <div id="budgetHistoryList" class="era-list"></div>
+        </div>
         <div class="field">
           <label for="itemHints">Hints for later mapping (optional)</label>
           <textarea id="itemHints"></textarea>
@@ -1480,6 +1505,14 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
         if (settings.backupRetentionCount != null) {
           document.getElementById('backupKeepInput').value = settings.backupRetentionCount;
         }
+        // The annual budget's eras, when it has ever been changed going forward.
+        const annualHistory = document.getElementById('annualHistoryList');
+        const eras = settings.annualBudgetHistory || [];
+        annualHistory.innerHTML = !eras.length ? '' :
+          '<div class="era-title">Annual budget history</div>' + eras.map((e) => {
+            const from = e.startMonth ? `from ${formatMonthLong(e.startMonth)}` : 'from the beginning';
+            return `<div class="era-row"><span>${formatCurrency(e.amount)} ${escapeHtml(from)}</span></div>`;
+          }).join('');
         // Remainder depends on the monthly allowance too.
         renderRemainder();
       }
@@ -1515,7 +1548,8 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ annualBudget: annual, debugLogRetentionDays: Number(retentionValue),
-              notificationDayOfMonth: Number(notifyValue), backupRetentionCount: Number(keepValue) })
+              notificationDayOfMonth: Number(notifyValue), backupRetentionCount: Number(keepValue),
+              annualBudgetChange: document.querySelector('input[name="annualChangeMode"]:checked').value })
           });
           if (!response.ok) throw new Error('HTTP ' + response.status);
           settings = await response.json();
@@ -2983,6 +3017,9 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
         itemQuantityInput.value = '1';
         itemBudgetInput.value = '';
         itemHintsInput.value = '';
+        // A new entry has no history and no old amount to preserve.
+        document.getElementById('budgetChangeField').style.display = 'none';
+        document.getElementById('budgetHistoryList').innerHTML = '';
         itemModal.classList.add('open');
         itemModal.setAttribute('aria-hidden', 'false');
         itemTitleInput.focus();
@@ -3000,9 +3037,78 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
         // The budget field holds the per-unit amount; the stored value is the total.
         itemBudgetInput.value = (total / quantity).toFixed(2);
         itemHintsInput.value = entry.hints || '';
+        document.getElementById('budgetChangeField').style.display = '';
+        document.querySelector('input[name="budgetChangeMode"][value="forward"]').checked = true;
+        loadBudgetHistory(id);
         itemModal.classList.add('open');
         itemModal.setAttribute('aria-hidden', 'false');
         itemTitleInput.focus();
+      }
+
+      /**
+       * The entry's budget eras, with per-era fix/remove. Empty means the amount has
+       * never been changed going forward — the current value has always applied — and
+       * the list stays hidden rather than inventing a row to say so.
+       */
+      async function loadBudgetHistory(id) {
+        const wrap = document.getElementById('budgetHistoryList');
+        wrap.innerHTML = '';
+        let eras;
+        try {
+          const r = await fetch(`/api/entries/${id}/budget-history`);
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          eras = await r.json();
+        } catch (err) {
+          console.error('Could not load budget history', err);
+          return;
+        }
+        if (!eras.length) return;
+        wrap.innerHTML = '<div class="era-title">Budget history (monthly totals)</div>' + eras.map((e) => {
+          const from = e.startMonth ? `from ${formatMonthLong(e.startMonth)}` : 'from the beginning';
+          return `<div class="era-row"><span>${formatCurrency(e.amount)} ${escapeHtml(from)}</span>
+            <span><button class="secondary btn-sm" data-era-fix="${e.id}" title="Fix this era's amount without moving any dates">Fix amount</button>
+            <button class="secondary btn-sm" data-era-del="${e.id}" title="Remove this change; its months merge into the budget before it">Remove</button></span></div>`;
+        }).join('');
+        wrap.querySelectorAll('[data-era-fix]').forEach((el) =>
+          el.addEventListener('click', () => fixEra(id, Number(el.getAttribute('data-era-fix')))));
+        wrap.querySelectorAll('[data-era-del]').forEach((el) =>
+          el.addEventListener('click', () => removeEra(id, Number(el.getAttribute('data-era-del')))));
+      }
+
+      async function fixEra(entryId, eraId) {
+        const raw = prompt('Monthly budget total for this era ($):');
+        if (raw === null) return;
+        const amount = parseDollarAmount(raw);
+        if (amount === null) {
+          alert('Please enter a valid dollar amount such as 100 or 100.50.');
+          return;
+        }
+        try {
+          const r = await fetch(`/api/entries/${entryId}/budget-eras/${eraId}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ amount })
+          });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          // Fixing the latest era changes the current amount too, so refresh the dialog.
+          await loadEntries();
+          editEntry(entryId);
+        } catch (err) {
+          alert('Could not update the era. Is the server running?');
+          console.error(err);
+        }
+      }
+
+      async function removeEra(entryId, eraId) {
+        if (!confirm('Remove this budget change? Its months merge into the budget before it.')) return;
+        try {
+          const r = await fetch(`/api/entries/${entryId}/budget-eras/${eraId}`, { method: 'DELETE' });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          await loadEntries();
+          editEntry(entryId);
+        } catch (err) {
+          alert('Could not remove the era. Is the server running?');
+          console.error(err);
+        }
       }
 
       function closeModal() {
@@ -3034,6 +3140,11 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
           monthlyBudget: (Number(perUnit) * Number(quantityValue)).toFixed(2),
           hints: itemHintsInput.value.trim()
         };
+        if (editingId !== null) {
+          // Which fact a changed amount states — forward-dated change or correction.
+          // Harmless when the amount is unchanged; the server records nothing then.
+          payload.budgetChange = document.querySelector('input[name="budgetChangeMode"]:checked').value;
+        }
 
         const url = editingId === null ? '/api/entries' : `/api/entries/${editingId}`;
         const method = editingId === null ? 'POST' : 'PUT';
@@ -3770,7 +3881,7 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
           chart.innerHTML = '<div class="empty" style="color:#b3261e">Could not load the trend.</div>';
           return;
         }
-        chart.innerHTML = renderLineChart(points);
+        chart.innerHTML = renderLineChart(points) + eraBreakdownHtml(points);
         // Clicking a month label drills into that month's transactions for this
         // category — the same dialog as clicking a category on the Monthly screen.
         chart.querySelectorAll('.trend-month').forEach((el) => {
@@ -3793,6 +3904,25 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
       function closeCatTrendModal() {
         document.getElementById('catTrendModal').classList.remove('open');
         document.getElementById('catTrendModal').setAttribute('aria-hidden', 'true');
+      }
+
+      /**
+       * "Was I on track" per budget era, under the chart. Only rendered when the
+       * budget actually changed across the plotted months — one era is the ordinary
+       * case, and the chart's single budget line already says everything then.
+       */
+      function eraBreakdownHtml(points) {
+        const groups = budgetEraGroups(points);
+        if (groups.length < 2) return '';
+        const rows = groups.map((g) => {
+          const span = g.fromMonth === g.toMonth ? formatMonthLong(g.fromMonth)
+            : `${formatMonthLong(g.fromMonth)} – ${formatMonthLong(g.toMonth)}`;
+          const verdict = g.variance >= 0
+            ? `under by ${formatCurrency(g.variance)}/mo`
+            : `over by ${formatCurrency(-g.variance)}/mo`;
+          return `<div>${escapeHtml(span)} · budget ${formatCurrency(g.budget)} · avg spend ${formatCurrency(g.avgActual)} · ${escapeHtml(verdict)}</div>`;
+        }).join('');
+        return `<div class="era-breakdown"><strong>By budget era:</strong>${rows}</div>`;
       }
 
       /** One category's actual-over-time as a line, with a dashed budget reference. Inline SVG. */
@@ -3819,13 +3949,28 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
         const actualPath = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(Number(p.actual) || 0).toFixed(1)}`).join(' ');
         const fewPoints = points.length <= 8;
 
-        // Budget is the same each month (the category's current allowance), so show it
-        // as a single labelled horizontal reference line with its dollar value.
-        const budgetVal = Number(points[0].budget) || 0;
-        const budgetY = y(budgetVal);
-        const budgetLine =
-          `<line x1="${leftPad}" y1="${budgetY.toFixed(1)}" x2="${(width - rightPad).toFixed(1)}" y2="${budgetY.toFixed(1)}" stroke="${BUDGET}" stroke-width="2" stroke-dasharray="6 4"/>`
-          + `<text x="${(width - rightPad).toFixed(1)}" y="${(budgetY - 4).toFixed(1)}" text-anchor="end" font-size="8" font-weight="bold" fill="${BUDGET}">Budget ${formatCurrency(budgetVal)}</text>`;
+        // Budget is the allowance in force EACH month, so a category whose budget
+        // changed draws a stepped reference — one horizontal segment per era, joined
+        // by a vertical drop at the change month, each era labelled with its value.
+        const eras = budgetEraGroups(points);
+        const half = slot / 2;
+        let budgetLine = '';
+        {
+          let d = '';
+          points.forEach((p, i) => {
+            const by = y(Number(p.budget) || 0);
+            d += `${i ? 'L' : 'M'}${(x(i) - half).toFixed(1)} ${by.toFixed(1)} L${(x(i) + half).toFixed(1)} ${by.toFixed(1)} `;
+          });
+          budgetLine = `<path d="${d}" fill="none" stroke="${BUDGET}" stroke-width="2" stroke-dasharray="6 4"/>`;
+          let idx = 0;
+          eras.forEach((g) => {
+            const lastIdx = idx + g.months - 1;
+            const lx = x(lastIdx) + half;
+            const ly = y(g.budget) - 4;
+            budgetLine += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="end" font-size="8" font-weight="bold" fill="${BUDGET}">Budget ${formatCurrency(g.budget)}</text>`;
+            idx += g.months;
+          });
+        }
 
         let marks = '';
         points.forEach((p, i) => {

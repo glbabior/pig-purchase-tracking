@@ -47,6 +47,13 @@ row you want readable while scrolling everything above it.
 carries an optional free-text **hints** field, which is the knowledge base that
 categorization gets better from. See [Writing hints](#writing-hints).
 
+Changing an amount asks which fact you are stating: **"it changed going forward"**
+(the default) records the old amount as history, so past months stay measured
+against the budget they were lived under; **"correct it"** rewrites in place. The
+edit dialog lists the entry's budget history when it has one, and each era can be
+fixed or removed there — removing a change merges its months back into the budget
+before it.
+
 **Matching Hints** — one row per category, sortable by any header and by name to start
 with, showing how many hints it has and how much they catch. Sorting by **Needs
 attention** ranks by severity rather than alphabetically: a hint the app cannot honour
@@ -97,14 +104,21 @@ review manual entries, and work through **potential duplicates** (same date + sa
 amount across statements), which you can dismiss permanently as "not duplicates".
 
 **Spend: Monthly** — budget vs. actual for one calendar month: total, variance,
-and a per-category breakdown. Click a category to list the transactions behind it
-and reassign them in bulk. Each month can be flagged **complete**.
+and a per-category breakdown, each measured against the budget **in force that
+month** — changing a budget going forward does not rewrite history. Click a
+category to list the transactions behind it and reassign them in bulk. Each month
+can be flagged **complete**.
 
 **Spend: Rolling** — the typical-month view: rolling average actual vs. budget
 across the months you marked complete, per category and in total, plus a trend
-chart and a per-category spend-over-time line chart.
+chart and a per-category spend-over-time line chart. When a budget changed across
+those months, the Budget column is the **average of the budgets in force**, so
+Budget − Actual = Variance stays true in every row; the per-category chart draws
+the budget as a stepped line and breaks the months down era by era beneath it
+("vs $230 through July: on budget · vs $100 from August: under by $5/mo").
 
-**Settings** — annual budget (the monthly allowance is derived as ÷ 12), debug-log
+**Settings** — annual budget (the monthly allowance is derived as ÷ 12, with the
+same changed-going-forward / correct-it choice as a category amount), debug-log
 retention, mapping-reminder day of month, database backup retention, back up now,
 and restore.
 
@@ -574,6 +588,12 @@ in force rather than the newest. The portable suite is 143 green with nothing sk
 
 - Budget entry CRUD with per-unit amount × quantity; annual budget with derived
   monthly allowance and a "remaining for open spend" readout
+- **Budget history (eras)**: a changed amount can be recorded as "changed going
+  forward", so every month is measured against the budget in force that month;
+  corrections rewrite in place; per-era fix/remove in the edit dialog; the annual
+  budget versioned the same way, only ever explicitly in Settings. No history on
+  an entry means its current amount has always applied — the state every
+  pre-existing database and restored backup is in
 - Statement sources with add / edit / delete and per-source spend exclusions
 - **PDF parsers**, discovered as plugins rather than listed anywhere: a parser
   declares the ids it answers to and `StatementParserRegistry` indexes it, so the
@@ -667,7 +687,13 @@ in force rather than the newest. The portable suite is 143 green with nothing sk
 
 Served by nine controllers on `localhost:8080`.
 
-**Budget entries** — `GET|POST /api/entries`, `PUT|DELETE /api/entries/{id}`,
+**Budget entries** — `GET|POST /api/entries`, `PUT|DELETE /api/entries/{id}`
+(`PUT` takes `budgetChange: "forward" | "correct"` — forward, the default, records a
+changed amount as history; an unchanged amount records nothing either way),
+`GET /api/entries/{id}/budget-history` (the entry's eras, oldest first; empty = the
+current amount has always applied), `PUT /api/entries/{id}/budget-eras/{eraId}`
+`{amount}` (fix one era in place), `DELETE /api/entries/{id}/budget-eras/{eraId}`
+(merge an era's months into the era before it),
 `POST /api/entries/{id}/hints` (append a `match:` line, idempotent),
 `DELETE /api/entries/{id}/hints` `{hint}` (remove one line, leaving the entry's other
 rules and its prose untouched)
@@ -680,7 +706,8 @@ take from elsewhere — `samples` are `{transactionId, date, description, amount
 capped at 25 while `matchCount` stays exact)
 
 **Settings** — `GET|PUT /api/settings` (annual budget, debug-log retention,
-notification day, backup retention)
+notification day, backup retention; `PUT` takes `annualBudgetChange: "forward" |
+"correct"` like an entry edit, and responses carry `annualBudgetHistory`)
 
 **Statement sources** — `GET|POST /api/statement-sources`,
 `PUT|DELETE /api/statement-sources/{id}`,
@@ -744,10 +771,10 @@ PigPurchaseTracking/
 │   │                                  component/entity/repository scan works)
 │   ├── config/     SwitchableDataSource + DataSourceConfig (restore preview),
 │   │               EnumColumnMigration (ENUM → VARCHAR at startup)
-│   ├── model/      JPA entities: BudgetEntry, Transaction, StatementSource,
-│   │               StatementImport, AnalysisRun, AnalysisRunSource,
-│   │               TransactionMapping, MerchantCategory, MonthStatus,
-│   │               DismissedDuplicate, AppSettings, AppLogEntry
+│   ├── model/      JPA entities: BudgetEntry, BudgetAmountEra, AnnualBudgetEra,
+│   │               Transaction, StatementSource, StatementImport, AnalysisRun,
+│   │               AnalysisRunSource, TransactionMapping, MerchantCategory,
+│   │               MonthStatus, DismissedDuplicate, AppSettings, AppLogEntry
 │   ├── demo/       DemoDataInitializer + DemoStatements — generate sample
 │   │               statements and seed data; active only under the demo profile
 │   ├── parser/     StatementParser (interface) + StatementParserRegistry,
@@ -755,8 +782,9 @@ PigPurchaseTracking/
 │   │               ParsedStatement, ParsedTransaction, ExclusionRule
 │   ├── repository/ one Spring Data repo per entity
 │   ├── service/    IngestService, MappingService, HintMatcher,
-│   │               AiCategorizationService, AnalysisService, ManualEntryService,
-│   │               BackupService, RestoreService, DebugLogService, HintService
+│   │               AiCategorizationService, AnalysisService, BudgetHistoryService,
+│   │               ManualEntryService, BackupService, RestoreService,
+│   │               DebugLogService, HintService
 │   └── server/     BudgetController, MappingController, AnalysisController,
 │                   ManualEntryController, BackupController, RestoreController,
 │                   DebugLogController, NotificationController, HintController,
