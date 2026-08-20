@@ -461,6 +461,8 @@
                     <tr>
                       <th class="sortable" data-ingest-import-sort="sourceName" data-label="Source">Source</th>
                       <th class="sortable" data-ingest-import-sort="statementDate" data-label="Statement date">Statement date</th>
+                      <th class="sortable" data-ingest-import-sort="firstTransactionDate" data-label="From">From</th>
+                      <th class="sortable" data-ingest-import-sort="lastTransactionDate" data-label="To">To</th>
                       <th colspan="2"></th>
                     </tr>
                   </thead>
@@ -2307,6 +2309,8 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
           return `<tr>
             <td>${escapeHtml(im.sourceName || '')}</td>
             <td class="nowrap">${formatMmDdYy(im.statementDate)}</td>
+            <td class="nowrap">${im.firstTransactionDate ? formatMmDdYy(im.firstTransactionDate) : ''}</td>
+            <td class="nowrap">${im.lastTransactionDate ? formatMmDdYy(im.lastTransactionDate) : ''}</td>
             <td><button class="secondary btn-sm" data-open="${im.id}"
                   title="Open ${escapeHtml(detail)} in your PDF app">📄 Open statement</button></td>
             <td><button class="secondary btn-sm" data-reveal="${im.id}"

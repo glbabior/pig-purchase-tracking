@@ -35,6 +35,7 @@ import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -299,8 +300,21 @@ public class BudgetController {
 
     @GetMapping("/statement-sources/{id}/imports")
     public List<Map<String, Object>> getImports(@PathVariable Long id) {
+        List<StatementImport> imports = statementImportRepository.findByStatementSourceIdOrderByStatementDateDesc(id);
+
+        // The span of dates each statement actually covers — computed from its rows, not
+        // stored on the import, because it is derivable and would be one more field for
+        // re-ingest to keep honest. One grouped query for all imports of the source.
+        Map<Long, LocalDate[]> dateRanges = new HashMap<>();
+        if (!imports.isEmpty()) {
+            List<Long> importIds = imports.stream().map(StatementImport::getId).toList();
+            for (Object[] row : transactionRepository.transactionDateRangesByImportIds(importIds)) {
+                dateRanges.put((Long) row[0], new LocalDate[] {(LocalDate) row[1], (LocalDate) row[2]});
+            }
+        }
+
         List<Map<String, Object>> result = new ArrayList<>();
-        for (StatementImport imp : statementImportRepository.findByStatementSourceIdOrderByStatementDateDesc(id)) {
+        for (StatementImport imp : imports) {
             Map<String, Object> map = new HashMap<>();
             map.put("id", imp.getId());
             map.put("statementDate", imp.getStatementDate() != null ? imp.getStatementDate().toString() : null);
@@ -308,6 +322,9 @@ public class BudgetController {
             map.put("relativePath", imp.getRelativePath());
             map.put("importedAt", imp.getImportedAt() != null ? imp.getImportedAt().toString() : null);
             map.put("transactionCount", imp.getTransactionCount());
+            LocalDate[] range = dateRanges.get(imp.getId());
+            map.put("firstTransactionDate", range != null && range[0] != null ? range[0].toString() : null);
+            map.put("lastTransactionDate", range != null && range[1] != null ? range[1].toString() : null);
             result.add(map);
         }
         return result;

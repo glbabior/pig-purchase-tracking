@@ -179,6 +179,13 @@ class StatementSourceControllerTest {
                 .andReturn().getResponse().getContentAsString();
         long importId = om.readTree(ingestResp).get("importId").asLong();
 
+        // The imports list carries the span of the statement's own transaction dates —
+        // the fixture's earliest row is the 05/20 payment, its latest the 05/24 purchase.
+        mvc.perform(get("/api/statement-sources/" + sourceId + "/imports"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].firstTransactionDate").value("2026-05-20"))
+                .andExpect(jsonPath("$[0].lastTransactionDate").value("2026-05-24"));
+
         // The original PDF is served back.
         var fileResponse = mvc.perform(get("/api/imports/" + importId + "/file"))
                 .andExpect(status().isOk())

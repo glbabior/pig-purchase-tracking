@@ -159,11 +159,14 @@ const SOURCE_SORT_VALUES = {
  *
  * Dates are ISO strings, so they compare correctly as text — and a statement with no date
  * cannot exist, because a parser that cannot determine one refuses the import rather than
- * storing rows against no month.
+ * storing rows against no month. The From/To pair is the span of the statement's own
+ * transaction dates; an import with no transactions has neither, and sinks.
  */
 const INGEST_IMPORT_SORT_VALUES = {
   sourceName: (i) => String(i.sourceName || '').toLowerCase(),
   statementDate: (i) => i.statementDate || null,
+  firstTransactionDate: (i) => i.firstTransactionDate || null,
+  lastTransactionDate: (i) => i.lastTransactionDate || null,
 };
 
 function sortRunFiles(files, sort) { return sortRows(files, sort, RUN_SORT_VALUES); }

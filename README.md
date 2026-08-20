@@ -74,7 +74,8 @@ rules, which the form does not edit either (see [Known gaps](#known-gaps)).
 button — spend that never hits a statement (a Venmo balance, cash), with a same-day
 duplicate check. In the middle, a table of your **sources**: name, folder, and a
 **Load statement…** button per row that opens the folder browser. At the bottom, every
-**loaded statement** across all sources in one table — source and statement date, with
+**loaded statement** across all sources in one table — source, statement date, the
+**From** and **To** dates of the transactions it actually contains, and
 buttons to open the PDF in Acrobat or show it in its folder. Both tables sort by any
 column heading; the bottom one opens newest first, which is the order that answers
 "what did I load last?". The file name and transaction count are in the buttons' hover
