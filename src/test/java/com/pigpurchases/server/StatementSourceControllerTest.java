@@ -264,6 +264,42 @@ class StatementSourceControllerTest {
         mvc.perform(delete("/api/entries/" + id)).andExpect(status().isOk());
     }
 
+    /**
+     * A change recorded ahead of time ("the pass renews in September") shows nowhere
+     * until its month: the entries list keeps reporting the amount in force now, and
+     * the pending era waits in the history.
+     */
+    @Test
+    void aFutureDatedBudgetChangeShowsWhenItsMonthArrives() throws Exception {
+        String nextMonth = java.time.YearMonth.now().plusMonths(1).toString();
+        String created = mvc.perform(post("/api/entries").contentType(APPLICATION_JSON)
+                        .content(json(Map.of("title", "Season Pass", "quantity", 1, "monthlyBudget", "230.00"))))
+                .andReturn().getResponse().getContentAsString();
+        long id = om.readTree(created).get("id").asLong();
+
+        mvc.perform(put("/api/entries/" + id).contentType(APPLICATION_JSON)
+                        .content(json(Map.of("title", "Season Pass", "quantity", 1, "monthlyBudget", "100.00",
+                                "budgetChange", "forward", "effectiveMonth", nextMonth))))
+                .andExpect(status().isOk());
+
+        mvc.perform(get("/api/entries/" + id + "/budget-history"))
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[1].startMonth").value(nextMonth))
+                .andExpect(jsonPath("$[1].amount").value("100.00"));
+
+        // The list shows the amount in force THIS month — still the old one.
+        String entries = mvc.perform(get("/api/entries")).andReturn().getResponse().getContentAsString();
+        String monthlyBudget = null;
+        for (JsonNode node : om.readTree(entries)) {
+            if (node.get("id").asLong() == id) {
+                monthlyBudget = node.get("monthlyBudget").asText();
+            }
+        }
+        assertEquals("230.00", monthlyBudget, "nothing shows the new amount until its month arrives");
+
+        mvc.perform(delete("/api/entries/" + id)).andExpect(status().isOk());
+    }
+
     /** The annual budget is versioned the same way, but only by an explicit change here. */
     @Test
     void theAnnualBudgetRecordsHistoryOnForwardChanges() throws Exception {

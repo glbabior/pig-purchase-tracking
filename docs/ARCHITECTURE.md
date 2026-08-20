@@ -577,13 +577,17 @@ erDiagram
 - **Budgets are era-resolved: each month is compared against the budget in force
   that month.** A "changed going forward" edit records the old amount as a
   `BudgetAmountEra` (the first change also writes the old value as a
-  since-the-beginning era); a "correct" edit amends in place and records nothing.
-  An entry with **no** era rows resolves to its current amount for every month —
-  the pre-era behaviour, and what a database restored from an old backup gets.
-  The Rolling screen averages the in-force budgets across the complete months, so
-  Budget − Actual = Variance stays true in every row. The annual budget is
-  versioned the same way (`AnnualBudgetEra`), but only by an explicit change in
-  Settings — never as a side effect of a category change.
+  since-the-beginning era) and takes an effective month, which may be in the
+  future — the screens that report "the budget now" (the entries list, Settings)
+  resolve the current month, so a future-dated change shows nowhere until its
+  month arrives and then takes effect on its own. A "correct" edit amends the era
+  in force *now* — not the latest era, which may be the pending one — and records
+  nothing. An entry with **no** era rows resolves to its current amount for every
+  month — the pre-era behaviour, and what a database restored from an old backup
+  gets. The Rolling screen averages the in-force budgets across the complete
+  months, so Budget − Actual = Variance stays true in every row. The annual
+  budget is versioned the same way (`AnnualBudgetEra`), but only by an explicit
+  change in Settings — never as a side effect of a category change.
 - **The database is disposable; the PDFs and backups are not.** The DB stays out of
   synced folders, backups are consistent dumps kept outside the DB folder, and
   restore is preview-then-commit through `SwitchableDataSource`.

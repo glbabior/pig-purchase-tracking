@@ -80,6 +80,21 @@ function formatMonthLong(month) {
   return names[idx] ? `${names[idx]} ${m[1]}` : month;
 }
 
+/**
+ * The current calendar month as the "YYYY-MM" token the server keys eras by.
+ * Built from local date parts, never toISOString() — that renders UTC, and west of
+ * Greenwich the evening of the month's last day would report the wrong month.
+ */
+function currentLocalMonth(now) {
+  const d = now || new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+
+/** True when the value is a well-formed "YYYY-MM" month token. */
+function isValidMonthToken(value) {
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(String(value || ''));
+}
+
 /** "2026-07-22T15:53:38.53" -> "07/22 15:53:38". Also string-only, for the same reason. */
 function formatLogTime(iso) {
   if (!iso) return '';

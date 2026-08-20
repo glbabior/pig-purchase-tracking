@@ -49,10 +49,12 @@ categorization gets better from. See [Writing hints](#writing-hints).
 
 Changing an amount asks which fact you are stating: **"it changed going forward"**
 (the default) records the old amount as history, so past months stay measured
-against the budget they were lived under; **"correct it"** rewrites in place. The
-edit dialog lists the entry's budget history when it has one, and each era can be
-fixed or removed there — removing a change merges its months back into the budget
-before it.
+against the budget they were lived under; **"correct it"** rewrites in place. A
+forward change takes an **"as of"** month, which may be in the future — record in
+August that a pass renews in September, and nothing shows the new amount until
+September arrives, when it takes effect on its own. The edit dialog lists the
+entry's budget history when it has one, and each era can be fixed or removed
+there — removing a change merges its months back into the budget before it.
 
 **Matching Hints** — one row per category, sortable by any header and by name to start
 with, showing how many hints it has and how much they catch. Sorting by **Needs
@@ -687,9 +689,12 @@ in force rather than the newest. The portable suite is 143 green with nothing sk
 
 Served by nine controllers on `localhost:8080`.
 
-**Budget entries** — `GET|POST /api/entries`, `PUT|DELETE /api/entries/{id}`
+**Budget entries** — `GET|POST /api/entries` (the list reports each amount **in
+force this month**, so a future-dated change shows nowhere until its month),
+`PUT|DELETE /api/entries/{id}`
 (`PUT` takes `budgetChange: "forward" | "correct"` — forward, the default, records a
-changed amount as history; an unchanged amount records nothing either way),
+changed amount as history, with an optional `effectiveMonth: "YYYY-MM"` that may be
+in the future; an unchanged amount records nothing either way),
 `GET /api/entries/{id}/budget-history` (the entry's eras, oldest first; empty = the
 current amount has always applied), `PUT /api/entries/{id}/budget-eras/{eraId}`
 `{amount}` (fix one era in place), `DELETE /api/entries/{id}/budget-eras/{eraId}`
@@ -707,7 +712,8 @@ capped at 25 while `matchCount` stays exact)
 
 **Settings** — `GET|PUT /api/settings` (annual budget, debug-log retention,
 notification day, backup retention; `PUT` takes `annualBudgetChange: "forward" |
-"correct"` like an entry edit, and responses carry `annualBudgetHistory`)
+"correct"` and an optional `effectiveMonth` like an entry edit, and responses carry
+`annualBudgetHistory` plus the annual budget in force this month)
 
 **Statement sources** — `GET|POST /api/statement-sources`,
 `PUT|DELETE /api/statement-sources/{id}`,

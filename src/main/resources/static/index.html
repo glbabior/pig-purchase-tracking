@@ -284,6 +284,8 @@
       /* Budget-history (era) lists in the entry dialog and Settings. */
       .radio-line { display: block; font-weight: normal; font-size: 0.85rem; margin-top: 0.3rem; cursor: pointer; }
       .radio-line input { margin-right: 0.35rem; }
+      .effective-line { margin-left: 1.4rem; color: #7a6753; }
+      .effective-line input[type="month"] { margin-left: 0.3rem; font-size: 0.85rem; padding: 0.1rem 0.25rem; }
       .era-list { margin-top: 0.5rem; font-size: 0.85rem; }
       .era-list .era-title { font-weight: bold; color: #7a6753; margin-bottom: 0.2rem; }
       .era-row { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; padding: 0.15rem 0; border-top: 1px dotted #eadfce; }
@@ -578,6 +580,9 @@
                   <div class="hint">Your monthly allowance is calculated automatically as annual &divide; 12.</div>
                   <label class="radio-line"><input type="radio" name="annualChangeMode" value="forward" checked />
                     If changed: it changed going forward — past months keep the old annual budget</label>
+                  <label class="radio-line effective-line">as of
+                    <input id="annualEffectiveMonth" type="month" placeholder="YYYY-MM" title="The month the new annual budget takes effect" />
+                  </label>
                   <label class="radio-line"><input type="radio" name="annualChangeMode" value="correct" />
                     If changed: correct it — this was always the amount</label>
                   <div id="annualHistoryList" class="era-list"></div>
@@ -1199,6 +1204,9 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
           <label>If you change the amount</label>
           <label class="radio-line"><input type="radio" name="budgetChangeMode" value="forward" checked />
             It changed going forward — past months keep the old budget</label>
+          <label class="radio-line effective-line">as of
+            <input id="budgetEffectiveMonth" type="month" placeholder="YYYY-MM" title="The month the new amount takes effect — future months are fine; nothing shows the new amount until then" />
+          </label>
           <label class="radio-line"><input type="radio" name="budgetChangeMode" value="correct" />
             Correct it — this was always the amount</label>
           <div id="budgetHistoryList" class="era-list"></div>
@@ -1505,6 +1513,7 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
         if (settings.backupRetentionCount != null) {
           document.getElementById('backupKeepInput').value = settings.backupRetentionCount;
         }
+        document.getElementById('annualEffectiveMonth').value = currentLocalMonth();
         // The annual budget's eras, when it has ever been changed going forward.
         const annualHistory = document.getElementById('annualHistoryList');
         const eras = settings.annualBudgetHistory || [];
@@ -1538,6 +1547,12 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
           alert('Backups to keep must be a whole number of 1 or more.');
           return;
         }
+        const annualChangeMode = document.querySelector('input[name="annualChangeMode"]:checked').value;
+        const annualEffective = document.getElementById('annualEffectiveMonth').value.trim();
+        if (annualChangeMode === 'forward' && !isValidMonthToken(annualEffective)) {
+          alert('Please enter the effective month as YYYY-MM, e.g. 2026-09.');
+          return;
+        }
         // Requesting notification permission needs a user gesture — this save click is one.
         if (Number(notifyValue) > 0 && 'Notification' in window && Notification.permission === 'default') {
           try { Notification.requestPermission(); } catch (err) { /* older API shape; ignore */ }
@@ -1549,7 +1564,7 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ annualBudget: annual, debugLogRetentionDays: Number(retentionValue),
               notificationDayOfMonth: Number(notifyValue), backupRetentionCount: Number(keepValue),
-              annualBudgetChange: document.querySelector('input[name="annualChangeMode"]:checked').value })
+              annualBudgetChange: annualChangeMode, effectiveMonth: annualEffective })
           });
           if (!response.ok) throw new Error('HTTP ' + response.status);
           settings = await response.json();
@@ -3039,6 +3054,7 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
         itemHintsInput.value = entry.hints || '';
         document.getElementById('budgetChangeField').style.display = '';
         document.querySelector('input[name="budgetChangeMode"][value="forward"]').checked = true;
+        document.getElementById('budgetEffectiveMonth').value = currentLocalMonth();
         loadBudgetHistory(id);
         itemModal.classList.add('open');
         itemModal.setAttribute('aria-hidden', 'false');
@@ -3144,6 +3160,16 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
           // Which fact a changed amount states — forward-dated change or correction.
           // Harmless when the amount is unchanged; the server records nothing then.
           payload.budgetChange = document.querySelector('input[name="budgetChangeMode"]:checked').value;
+          if (payload.budgetChange === 'forward') {
+            // When the month picker degrades to a text box (Firefox), the typed value
+            // still has to be a real YYYY-MM — the server refuses anything else.
+            const effective = document.getElementById('budgetEffectiveMonth').value.trim();
+            if (!isValidMonthToken(effective)) {
+              alert('Please enter the effective month as YYYY-MM, e.g. 2026-09.');
+              return;
+            }
+            payload.effectiveMonth = effective;
+          }
         }
 
         const url = editingId === null ? '/api/entries' : `/api/entries/${editingId}`;

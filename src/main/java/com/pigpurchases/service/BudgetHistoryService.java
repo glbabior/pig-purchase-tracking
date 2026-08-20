@@ -150,46 +150,115 @@ public class BudgetHistoryService {
         return YearMonth.now().toString();
     }
 
-    /**
-     * Record "the amount changed going forward" and update the entry's current
-     * value. On the first change ever, the old value is written as the
-     * since-the-beginning era; a second change in the same calendar month updates
-     * this month's era instead of stacking a zero-width one.
-     */
+    /** Overload for a change effective now — the ordinary case. */
     @Transactional
     public void changeEntryAmountForward(BudgetEntry entry, BigDecimal newAmount) {
-        BigDecimal old = entry.getMonthlyAllowance() != null ? entry.getMonthlyAllowance() : BigDecimal.ZERO;
-        if (old.compareTo(newAmount) == 0) {
-            return;
-        }
-        String month = currentMonth();
-        List<BudgetAmountEra> eras = eraRepository.findByBudgetEntryId(entry.getId());
-        if (eras.isEmpty()) {
-            eraRepository.save(new BudgetAmountEra(entry.getId(), null, old));
-        }
-        BudgetAmountEra thisMonth = eras.stream()
-                .filter(e -> month.equals(e.getStartMonth())).findFirst().orElse(null);
-        if (thisMonth != null) {
-            thisMonth.setAmount(newAmount);
-            eraRepository.save(thisMonth);
-        } else {
-            eraRepository.save(new BudgetAmountEra(entry.getId(), month, newAmount));
-        }
-        entry.setMonthlyAllowance(newAmount);
+        changeEntryAmountForward(entry, newAmount, currentMonth());
     }
 
     /**
-     * Record "this was always the amount": amend the value in force now without
-     * moving any boundary. With history, that is the latest era; without, just the
-     * entry's current value.
+     * Record "the amount changes as of {@code effectiveMonth}". On the first change
+     * ever, the old value is written as the since-the-beginning era; a second change
+     * effective the same month updates that month's era instead of stacking a
+     * zero-width one. A no-op when the amount in force at that month already is
+     * {@code newAmount} — re-saving what the screen shows must record nothing.
+     *
+     * <p>The effective month may be in the future ("the pass renews in September")
+     * or the past ("this actually changed in January"): resolution is by month, so
+     * either is just an era boundary. The entry's stored amount tracks the
+     * <b>latest</b> era; what any screen shows for "now" is resolved per month, so
+     * a future-dated change appears nowhere until its month arrives — and then
+     * appears on its own.
+     */
+    @Transactional
+    public void changeEntryAmountForward(BudgetEntry entry, BigDecimal newAmount, String effectiveMonth) {
+        String month = validMonth(effectiveMonth);
+        BigDecimal current = entry.getMonthlyAllowance() != null ? entry.getMonthlyAllowance() : BigDecimal.ZERO;
+        List<BudgetAmountEra> eras = eraRepository.findByBudgetEntryId(entry.getId());
+        if (inForceAt(eras, month, current).compareTo(newAmount) == 0) {
+            return;
+        }
+        if (eras.isEmpty()) {
+            eraRepository.save(new BudgetAmountEra(entry.getId(), null, current));
+        }
+        BudgetAmountEra atMonth = eras.stream()
+                .filter(e -> month.equals(e.getStartMonth())).findFirst().orElse(null);
+        if (atMonth != null) {
+            atMonth.setAmount(newAmount);
+            eraRepository.save(atMonth);
+        } else {
+            eraRepository.save(new BudgetAmountEra(entry.getId(), month, newAmount));
+        }
+        syncToLatest(entry);
+    }
+
+    /**
+     * Record "this was always the amount": amend the era in force <b>now</b>
+     * without moving any boundary. Not simply the latest era — with a future-dated
+     * change pending, the latest era is the pending one, and a correction is about
+     * the number the user is looking at today. Fixing a specific other era is done
+     * through the era list.
      */
     @Transactional
     public void correctEntryAmount(BudgetEntry entry, BigDecimal newAmount) {
-        latestEra(eraRepository.findByBudgetEntryId(entry.getId())).ifPresent(era -> {
-            era.setAmount(newAmount);
-            eraRepository.save(era);
-        });
-        entry.setMonthlyAllowance(newAmount);
+        List<BudgetAmountEra> eras = eraRepository.findByBudgetEntryId(entry.getId());
+        if (eras.isEmpty()) {
+            entry.setMonthlyAllowance(newAmount);
+            return;
+        }
+        String now = currentMonth();
+        BudgetAmountEra inForce = null;
+        for (BudgetAmountEra era : eras) {
+            String start = era.getStartMonth();
+            if (start == null || start.compareTo(now) <= 0) {
+                if (inForce == null || Resolver.compareStarts(inForce.getStartMonth(), start) < 0) {
+                    inForce = era;
+                }
+            }
+        }
+        if (inForce == null) {
+            inForce = eras.stream().min(Comparator.comparing(BudgetAmountEra::getStartMonth,
+                    Comparator.nullsFirst(Comparator.naturalOrder()))).orElseThrow();
+        }
+        inForce.setAmount(newAmount);
+        eraRepository.save(inForce);
+        syncToLatest(entry);
+    }
+
+    /** The amount the eras (or the stored value, without any) put in force at {@code month}. */
+    private static BigDecimal inForceAt(List<BudgetAmountEra> eras, String month, BigDecimal current) {
+        if (eras.isEmpty()) {
+            return current;
+        }
+        BudgetAmountEra best = null;
+        BudgetAmountEra earliest = null;
+        for (BudgetAmountEra era : eras) {
+            String start = era.getStartMonth();
+            if (start == null || start.compareTo(month) <= 0) {
+                if (best == null || Resolver.compareStarts(best.getStartMonth(), start) < 0) {
+                    best = era;
+                }
+            }
+            if (earliest == null || Resolver.compareStarts(start, earliest.getStartMonth()) < 0) {
+                earliest = era;
+            }
+        }
+        BudgetAmountEra resolved = best != null ? best : earliest;
+        return resolved != null && resolved.getAmount() != null ? resolved.getAmount() : current;
+    }
+
+    /** The stored amount tracks the latest era — same fact stated twice. */
+    private void syncToLatest(BudgetEntry entry) {
+        latestEra(eraRepository.findByBudgetEntryId(entry.getId()))
+                .ifPresent(latest -> entry.setMonthlyAllowance(latest.getAmount()));
+    }
+
+    /** {@code YYYY-MM} or bust; a garbled month must fail the save, not write a stray era. */
+    private static String validMonth(String month) {
+        if (month == null || !month.matches("\\d{4}-(0[1-9]|1[0-2])")) {
+            throw new IllegalArgumentException("Effective month must be YYYY-MM, got: " + month);
+        }
+        return month;
     }
 
     /**
@@ -252,40 +321,87 @@ public class BudgetHistoryService {
 
     // ---- the annual budget, same shape ---------------------------------------
 
-    /** Mirror of {@link #changeEntryAmountForward} for the annual budget. */
+    /** Overload for a change effective now — the ordinary case. */
     @Transactional
     public void changeAnnualBudgetForward(AppSettings settings, BigDecimal newAmount) {
-        BigDecimal old = settings.getAnnualBudget() != null ? settings.getAnnualBudget() : BigDecimal.ZERO;
-        if (old.compareTo(newAmount) == 0) {
+        changeAnnualBudgetForward(settings, newAmount, currentMonth());
+    }
+
+    /** Mirror of {@link #changeEntryAmountForward} for the annual budget. */
+    @Transactional
+    public void changeAnnualBudgetForward(AppSettings settings, BigDecimal newAmount, String effectiveMonth) {
+        String month = validMonth(effectiveMonth);
+        BigDecimal current = settings.getAnnualBudget() != null ? settings.getAnnualBudget() : BigDecimal.ZERO;
+        List<AnnualBudgetEra> eras = annualEraRepository.findAll();
+        if (annualInForceAt(eras, month, current).compareTo(newAmount) == 0) {
             return;
         }
-        String month = currentMonth();
-        List<AnnualBudgetEra> eras = annualEraRepository.findAll();
         if (eras.isEmpty()) {
-            annualEraRepository.save(new AnnualBudgetEra(null, old));
+            annualEraRepository.save(new AnnualBudgetEra(null, current));
         }
-        AnnualBudgetEra thisMonth = eras.stream()
+        AnnualBudgetEra atMonth = eras.stream()
                 .filter(e -> month.equals(e.getStartMonth())).findFirst().orElse(null);
-        if (thisMonth != null) {
-            thisMonth.setAmount(newAmount);
-            annualEraRepository.save(thisMonth);
+        if (atMonth != null) {
+            atMonth.setAmount(newAmount);
+            annualEraRepository.save(atMonth);
         } else {
             annualEraRepository.save(new AnnualBudgetEra(month, newAmount));
         }
-        settings.setAnnualBudget(newAmount);
-    }
-
-    /** Mirror of {@link #correctEntryAmount} for the annual budget. */
-    @Transactional
-    public void correctAnnualBudget(AppSettings settings, BigDecimal newAmount) {
         annualEraRepository.findAll().stream()
                 .max(Comparator.comparing(AnnualBudgetEra::getStartMonth,
                         Comparator.nullsFirst(Comparator.naturalOrder())))
-                .ifPresent(era -> {
-                    era.setAmount(newAmount);
-                    annualEraRepository.save(era);
-                });
-        settings.setAnnualBudget(newAmount);
+                .ifPresent(latest -> settings.setAnnualBudget(latest.getAmount()));
+    }
+
+    /** Mirror of {@link #correctEntryAmount}: amend the era in force now, not the latest. */
+    @Transactional
+    public void correctAnnualBudget(AppSettings settings, BigDecimal newAmount) {
+        List<AnnualBudgetEra> eras = annualEraRepository.findAll();
+        if (eras.isEmpty()) {
+            settings.setAnnualBudget(newAmount);
+            return;
+        }
+        String now = currentMonth();
+        AnnualBudgetEra inForce = null;
+        for (AnnualBudgetEra era : eras) {
+            String start = era.getStartMonth();
+            if (start == null || start.compareTo(now) <= 0) {
+                if (inForce == null || Resolver.compareStarts(inForce.getStartMonth(), start) < 0) {
+                    inForce = era;
+                }
+            }
+        }
+        if (inForce == null) {
+            inForce = eras.stream().min(Comparator.comparing(AnnualBudgetEra::getStartMonth,
+                    Comparator.nullsFirst(Comparator.naturalOrder()))).orElseThrow();
+        }
+        inForce.setAmount(newAmount);
+        annualEraRepository.save(inForce);
+        eras.stream().max(Comparator.comparing(AnnualBudgetEra::getStartMonth,
+                        Comparator.nullsFirst(Comparator.naturalOrder())))
+                .ifPresent(latest -> settings.setAnnualBudget(latest.getAmount()));
+    }
+
+    /** The annual amount the eras (or the stored value, without any) put in force at {@code month}. */
+    private static BigDecimal annualInForceAt(List<AnnualBudgetEra> eras, String month, BigDecimal current) {
+        if (eras.isEmpty()) {
+            return current;
+        }
+        AnnualBudgetEra best = null;
+        AnnualBudgetEra earliest = null;
+        for (AnnualBudgetEra era : eras) {
+            String start = era.getStartMonth();
+            if (start == null || start.compareTo(month) <= 0) {
+                if (best == null || Resolver.compareStarts(best.getStartMonth(), start) < 0) {
+                    best = era;
+                }
+            }
+            if (earliest == null || Resolver.compareStarts(start, earliest.getStartMonth()) < 0) {
+                earliest = era;
+            }
+        }
+        AnnualBudgetEra resolved = best != null ? best : earliest;
+        return resolved != null && resolved.getAmount() != null ? resolved.getAmount() : current;
     }
 
     /** Every annual-budget era, oldest first. */

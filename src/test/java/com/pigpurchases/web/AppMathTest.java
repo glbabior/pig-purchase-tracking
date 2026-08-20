@@ -235,6 +235,21 @@ class AppMathTest {
     }
 
     @Test
+    void monthTokensComeFromLocalDatePartsAndValidateStrictly() {
+        // Local parts, never toISOString(): 11 PM on New Year's Eve is December
+        // locally, but already January in UTC for anyone west of Greenwich.
+        assertEquals("2026-12",
+                js.eval("js", "currentLocalMonth(new Date(2026, 11, 31, 23, 0, 0))").asString());
+        assertEquals("2026-01",
+                js.eval("js", "currentLocalMonth(new Date(2026, 0, 3))").asString(), "zero-padded");
+
+        assertTrue(call("isValidMonthToken", "2026-09").asBoolean());
+        assertTrue(!call("isValidMonthToken", "2026-13").asBoolean(), "no thirteenth month");
+        assertTrue(!call("isValidMonthToken", "2026-9").asBoolean(), "padding required");
+        assertTrue(!call("isValidMonthToken", "September").asBoolean());
+    }
+
+    @Test
     void budgetEraGroupsSplitsOnBudgetChangesAndAverages() {
         // Two months at 230, then one at 100 — the Disney-pass shape. Consecutive
         // equality defines a group, and each group averages its own months.

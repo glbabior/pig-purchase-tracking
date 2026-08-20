@@ -132,6 +132,61 @@ class BudgetHistoryServiceTest {
     }
 
     @Test
+    void aFutureDatedChangeShowsNowhereUntilItsMonth() {
+        String nextMonth = YearMonth.now().plusMonths(1).toString();
+        history.changeEntryAmountForward(entry, new BigDecimal("100.00"), nextMonth);
+
+        var eras = history.erasFor(entry.getId());
+        assertEquals(2, eras.size());
+        assertEquals(nextMonth, eras.get(1).getStartMonth());
+
+        var resolver = history.resolver();
+        assertEquals(0, new BigDecimal("230.00").compareTo(resolver.amount(entry, history.currentMonth())),
+                "this month still runs on the old budget");
+        assertEquals(0, new BigDecimal("100.00").compareTo(resolver.amount(entry, nextMonth)),
+                "the new amount takes effect in its month, on its own");
+    }
+
+    @Test
+    void reSavingTheOnScreenAmountWithAPendingChangeRecordsNothing() {
+        String nextMonth = YearMonth.now().plusMonths(1).toString();
+        history.changeEntryAmountForward(entry, new BigDecimal("100.00"), nextMonth);
+
+        // The dialog shows the amount in force NOW (230). Saving it back unchanged,
+        // effective this month, must not write a stray this-month era of 230.
+        history.changeEntryAmountForward(entry, new BigDecimal("230.00"), history.currentMonth());
+
+        var eras = history.erasFor(entry.getId());
+        assertEquals(2, eras.size(), "re-saving what the screen shows records nothing");
+        assertEquals(0, new BigDecimal("100.00").compareTo(eras.get(1).getAmount()));
+    }
+
+    @Test
+    void aCorrectionWithAPendingChangeAmendsTheEraInForceNow() {
+        String nextMonth = YearMonth.now().plusMonths(1).toString();
+        history.changeEntryAmountForward(entry, new BigDecimal("100.00"), nextMonth);
+
+        // "This was always 235" is about the number on screen today — not the
+        // pending September amount, which happens to be the LATEST era.
+        history.correctEntryAmount(entry, new BigDecimal("235.00"));
+
+        var eras = history.erasFor(entry.getId());
+        assertEquals(0, new BigDecimal("235.00").compareTo(eras.get(0).getAmount()),
+                "the era in force now was amended");
+        assertEquals(0, new BigDecimal("100.00").compareTo(eras.get(1).getAmount()),
+                "the pending change is untouched");
+    }
+
+    @Test
+    void aGarbledEffectiveMonthIsRefused() {
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> history.changeEntryAmountForward(entry, new BigDecimal("100.00"), "2026-13"));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> history.changeEntryAmountForward(entry, new BigDecimal("100.00"), "September"));
+        assertTrue(history.erasFor(entry.getId()).isEmpty(), "a refused save writes nothing");
+    }
+
+    @Test
     void theAnnualBudgetMirrorsTheSameRules() {
         AppSettings settings = settingsRepo.findById(1L).orElseGet(() -> {
             AppSettings s = new AppSettings();

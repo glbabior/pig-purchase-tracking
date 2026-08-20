@@ -140,7 +140,10 @@ anyone tried the demo.
   against the budget in force that month. An entry with no `BudgetAmountEra` rows
   resolves to its current amount for every month — that fallback is the
   compatibility guarantee for pre-era databases and restored old backups, so
-  never "backfill" era rows for untouched entries.
+  never "backfill" era rows for untouched entries. A forward change can be
+  future-dated; the stored `monthlyAllowance` tracks the **latest** era, so any
+  screen reporting "the budget now" must resolve the current month rather than
+  read the stored field.
 - **Parked counts as spend.** Both flavours of excluded do not.
 - Schema is `ddl-auto=update`, which only ever **adds**. New enum constants and
   new non-null columns are the known trap — see `EnumColumnMigration`.

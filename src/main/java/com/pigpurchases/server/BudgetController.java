@@ -165,7 +165,9 @@ public class BudgetController {
         if ("correct".equals(payload.get("annualBudgetChange"))) {
             budgetHistoryService.correctAnnualBudget(settings, newAnnual);
         } else {
-            budgetHistoryService.changeAnnualBudgetForward(settings, newAnnual);
+            String effective = payload.get("effectiveMonth") != null
+                    ? String.valueOf(payload.get("effectiveMonth")) : budgetHistoryService.currentMonth();
+            budgetHistoryService.changeAnnualBudgetForward(settings, newAnnual, effective);
         }
         if (payload.get("debugLogRetentionDays") != null) {
             int days = ((Number) payload.get("debugLogRetentionDays")).intValue();
@@ -192,7 +194,9 @@ public class BudgetController {
     }
 
     private Map<String, Object> settingsResponse(AppSettings settings) {
-        BigDecimal annual = settings.getAnnualBudget() != null ? settings.getAnnualBudget() : BigDecimal.ZERO;
+        // The annual budget in force THIS month, same rule as the entries list: a
+        // future-dated change shows nowhere until its month arrives.
+        BigDecimal annual = budgetHistoryService.resolver().annual(budgetHistoryService.currentMonth());
         BigDecimal monthly = annual.divide(MONTHS_PER_YEAR, 2, RoundingMode.HALF_UP);
         Map<String, Object> response = new HashMap<>();
         response.put("annualBudget", annual.toPlainString());
@@ -668,16 +672,24 @@ public class BudgetController {
         return text.isEmpty() ? null : text;
     }
 
+    /**
+     * {@code monthlyBudget} is the amount in force <b>this month</b>, not the stored
+     * (latest-era) value — with a future-dated change recorded, the list must keep
+     * showing today's budget until the effective month arrives, then switch on its
+     * own. One rule everywhere: screens show the era in force for the month shown.
+     */
     @GetMapping("/entries")
     public List<Map<String, Object>> getEntries() {
         List<BudgetEntry> entries = budgetEntryRepository.findAll();
+        var resolver = budgetHistoryService.resolver();
+        String now = budgetHistoryService.currentMonth();
         List<Map<String, Object>> result = new ArrayList<>();
         for (BudgetEntry entry : entries) {
             Map<String, Object> map = new HashMap<>();
             map.put("id", entry.getId());
             map.put("title", entry.getName());
             map.put("quantity", entry.getQuantity() != null ? entry.getQuantity() : 1);
-            map.put("monthlyBudget", entry.getMonthlyAllowance().toPlainString());
+            map.put("monthlyBudget", resolver.amount(entry, now).toPlainString());
             map.put("hints", entry.getHints() != null ? entry.getHints() : "");
             result.add(map);
         }
@@ -711,7 +723,10 @@ public class BudgetController {
         if ("correct".equals(payload.get("budgetChange"))) {
             budgetHistoryService.correctEntryAmount(entry, newAmount);
         } else {
-            budgetHistoryService.changeEntryAmountForward(entry, newAmount);
+            // Optional effectiveMonth ("the pass renews in September"); absent = this month.
+            String effective = payload.get("effectiveMonth") != null
+                    ? String.valueOf(payload.get("effectiveMonth")) : budgetHistoryService.currentMonth();
+            budgetHistoryService.changeEntryAmountForward(entry, newAmount, effective);
         }
         entry.setQuantity(((Number) payload.getOrDefault("quantity", 1)).intValue());
         entry.setHints((String) payload.getOrDefault("hints", ""));
