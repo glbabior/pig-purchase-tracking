@@ -81,6 +81,24 @@ function formatMonthLong(month) {
 }
 
 /**
+ * The monthly total an entry save should carry. The edit dialog shows
+ * total ÷ quantity rounded to cents, so multiplying back can lose a cent —
+ * 100.00 at quantity 3 shows 33.33 and would save 99.99. Harmless drift once,
+ * but budget edits are recorded as eras now, so that phantom cent would be
+ * written into history as a change the user never made (and could overwrite an
+ * era they had just fixed). When neither the per-unit amount nor the quantity
+ * was touched, the exact stored total passes through unchanged; `opened` is a
+ * snapshot of what the dialog displayed ({total, perUnit, quantity}), null when
+ * adding a new entry.
+ */
+function monthlyTotalForSave(perUnit, quantity, opened) {
+  if (opened && String(perUnit) === opened.perUnit && String(quantity).trim() === opened.quantity) {
+    return opened.total;
+  }
+  return (Number(perUnit) * Number(quantity)).toFixed(2);
+}
+
+/**
  * The current calendar month as the "YYYY-MM" token the server keys eras by.
  * Built from local date parts, never toISOString() — that renders UTC, and west of
  * Greenwich the evening of the month's last day would report the wrong month.

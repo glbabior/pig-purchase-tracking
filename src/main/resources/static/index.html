@@ -1230,6 +1230,10 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
     <script>
       let entries = [];
       let editingId = null;
+      // What the edit dialog displayed when it opened ({total, perUnit, quantity}),
+      // so an untouched amount saves the EXACT stored total back — see
+      // monthlyTotalForSave in app-math.js for the phantom-cent this prevents.
+      let editingSnapshot = null;
       let sortState = { key: null, dir: 1 };
       // Sort state for the sortable tables, wired by wireSort() during init below. Declared
       // HERE, with the other state, because wireSort takes them as arguments — a `let` further
@@ -3027,6 +3031,7 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
 
       function openAddModal() {
         editingId = null;
+        editingSnapshot = null;
         modalTitle.textContent = 'Add Item';
         itemTitleInput.value = '';
         itemQuantityInput.value = '1';
@@ -3051,6 +3056,8 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
         itemQuantityInput.value = String(quantity);
         // The budget field holds the per-unit amount; the stored value is the total.
         itemBudgetInput.value = (total / quantity).toFixed(2);
+        editingSnapshot = { total: String(entry.monthlyBudget),
+          perUnit: itemBudgetInput.value, quantity: String(quantity) };
         itemHintsInput.value = entry.hints || '';
         document.getElementById('budgetChangeField').style.display = '';
         document.querySelector('input[name="budgetChangeMode"][value="forward"]').checked = true;
@@ -3153,7 +3160,7 @@ match: Northgate Bank + Ext Trnsfr catches a recurring transfer whose
         const payload = {
           title,
           quantity: Number(quantityValue),
-          monthlyBudget: (Number(perUnit) * Number(quantityValue)).toFixed(2),
+          monthlyBudget: monthlyTotalForSave(perUnit, quantityValue, editingSnapshot),
           hints: itemHintsInput.value.trim()
         };
         if (editingId !== null) {

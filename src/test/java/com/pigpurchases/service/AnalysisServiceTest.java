@@ -350,6 +350,44 @@ class AnalysisServiceTest {
                 "annual budget never changed, so the average of a constant is the constant");
     }
 
+    /** From the 2026-08-19 code review: sum-of-rounded-averages dropped a cent. */
+    @Test
+    void rollingBudgetRowsSumExactlyToTheTotal() {
+        // Per-month budgets of 33.33 / 33.33 / 33.34 average to 33.33 in BOTH
+        // entry rows at once, losing a cent against the 100.00 total. The Other
+        // row must be the remainder, so the Budget column sums to the total.
+        for (BudgetEntry entry : entryRepo.findAll()) {
+            eraRepo.save(new BudgetAmountEra(entry.getId(), null, new BigDecimal("33.33")));
+            eraRepo.save(new BudgetAmountEra(entry.getId(), "2026-07", new BigDecimal("33.34")));
+            entry.setMonthlyAllowance(new BigDecimal("33.34"));
+            entryRepo.save(entry);
+        }
+        // June and July purchases so all three months have data to aggregate.
+        for (String date : List.of("2026-06-15", "2026-07-15")) {
+            Transaction t = new Transaction(LocalDate.parse(date), "COFFEE SHOP ANYTOWN CA",
+                    "COFFEE SHOP", new BigDecimal("10.00"), date.substring(0, 7));
+            t.setType("PURCHASE");
+            t = txnRepo.save(t);
+            TransactionMapping m = new TransactionMapping();
+            m.setAnalysisRunId(runId);
+            m.setTransactionId(t.getId());
+            m.setBudgetEntryId(coffeeId());
+            m.setStatus(TransactionMapping.Status.MAPPED_HINT);
+            mappingRepo.save(m);
+        }
+        analysisService.setMonthComplete("2026-05", true);
+        analysisService.setMonthComplete("2026-06", true);
+        analysisService.setMonthComplete("2026-07", true);
+
+        AnalysisService.RollingSummary r = analysisService.rolling();
+        assertEquals(3, r.months());
+        assertEquals(0, new BigDecimal("100.00").compareTo(r.totalBudget()));
+        BigDecimal rowSum = r.categories().stream().map(AnalysisService.CategoryRow::budget)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        assertEquals(0, r.totalBudget().compareTo(rowSum),
+                "the Budget column must sum exactly to the Budget total");
+    }
+
     @Test
     void theAnnualBudgetIsEraAwareToo() {
         annualEraRepo.save(new AnnualBudgetEra(null, new BigDecimal("1200.00")));

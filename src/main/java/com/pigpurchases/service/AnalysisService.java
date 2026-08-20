@@ -176,13 +176,11 @@ public class AnalysisService {
         Map<Long, BigDecimal> summedBudgetByEntry = new HashMap<>();
         Map<Long, Integer> countByEntry = new HashMap<>();
         BigDecimal summedOther = BigDecimal.ZERO;
-        BigDecimal summedOtherBudget = BigDecimal.ZERO;
         int otherCount = 0;
         for (MonthSummary ms : all) {
             for (CategoryRow row : ms.categories()) {
                 if (row.entryId() == null) {
                     summedOther = summedOther.add(row.actual());
-                    summedOtherBudget = summedOtherBudget.add(row.budget());
                     otherCount += row.count();
                 } else {
                     summedByEntry.merge(row.entryId(), row.actual(), BigDecimal::add);
@@ -192,16 +190,24 @@ public class AnalysisService {
             }
         }
         List<CategoryRow> categories = new ArrayList<>();
+        BigDecimal allocated = BigDecimal.ZERO;
         for (BudgetEntry entry : entries) {
             BigDecimal budget = summedBudgetByEntry.getOrDefault(entry.getId(), BigDecimal.ZERO)
                     .divide(div, 2, RoundingMode.HALF_UP);
+            allocated = allocated.add(budget);
             BigDecimal actual = summedByEntry.getOrDefault(entry.getId(), BigDecimal.ZERO)
                     .divide(div, 2, RoundingMode.HALF_UP);
             categories.add(new CategoryRow(entry.getId(), entry.getName(), budget, actual,
                     round(budget.subtract(actual)), countByEntry.getOrDefault(entry.getId(), 0)));
         }
         categories.sort(Comparator.comparing(r -> r.name() == null ? "" : r.name().toLowerCase()));
-        BigDecimal otherBudget = summedOtherBudget.divide(div, 2, RoundingMode.HALF_UP);
+        // The Other row's budget is the REMAINDER — the averaged total minus the
+        // rounded per-entry averages — not an independently rounded average of its
+        // own. Sum-of-rounded-averages can drop a cent against the rounded total
+        // (33.33/33.33/33.34 averages to 33.33 in every row at once); the remainder
+        // construction is what makes the Budget column sum exactly to the total,
+        // the same way a single month's Other budget is total minus allocated.
+        BigDecimal otherBudget = avgTotalBudget.subtract(allocated);
         BigDecimal other = summedOther.divide(div, 2, RoundingMode.HALF_UP);
         if (otherBudget.signum() != 0 || other.signum() != 0 || otherCount > 0) {
             categories.add(new CategoryRow(null, "Other (discretionary)", otherBudget, other,

@@ -234,6 +234,25 @@ class AppMathTest {
         assertEquals("&amp;lt;", call("escapeHtml", "&lt;").asString());
     }
 
+    /** From the 2026-08-19 code review: the dialog's cent round-trip fabricated eras. */
+    @Test
+    void anUntouchedAmountRoundTripsExactlyThroughTheEditDialog() {
+        // 100.00 at quantity 3 displays as 33.33 per unit; multiplying back would
+        // save 99.99 — and era history would record that phantom cent as a real
+        // budget change (or overwrite an era the user had just fixed to 100.00).
+        assertEquals("100.00", js.eval("js",
+                "monthlyTotalForSave('33.33', '3', { total: '100.00', perUnit: '33.33', quantity: '3' })")
+                .asString(), "untouched fields carry the exact stored total through");
+        assertEquals("99.00", js.eval("js",
+                "monthlyTotalForSave('33.00', '3', { total: '100.00', perUnit: '33.33', quantity: '3' })")
+                .asString(), "an edited per-unit amount recomputes");
+        assertEquals("133.32", js.eval("js",
+                "monthlyTotalForSave('33.33', '4', { total: '100.00', perUnit: '33.33', quantity: '3' })")
+                .asString(), "an edited quantity recomputes");
+        assertEquals("99.99", js.eval("js", "monthlyTotalForSave('33.33', '3', null)").asString(),
+                "a new entry computes from its fields");
+    }
+
     @Test
     void monthTokensComeFromLocalDatePartsAndValidateStrictly() {
         // Local parts, never toISOString(): 11 PM on New Year's Eve is December
