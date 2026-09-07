@@ -5,20 +5,20 @@ You point it at folders of bank and credit-card statement PDFs; it parses them
 into transactions, categorizes each one against your budget, and shows how actual
 spending tracks to budget per month and on a rolling average.
 
-Categorization is a learning loop rather than a fixed ruleset. You write hints
-against a category and the app previews what a hint would catch *before* you save
-it, flags the ones that collide with another category, and folds your manual
-corrections back into the rules. Only what the deterministic passes cannot place
-cleanly is sent to the Claude API, and that share shrinks as the hints improve.
+It learns as it goes rather than running a fixed set of rules. You write hints
+for a category, and the app shows you what a hint would catch *before* you save
+it, warns you when two categories both claim the same purchase, and remembers
+the corrections you make by hand. Anything it still can't place gets sent to the
+Claude API, and that gets rarer as the hints improve.
 
-Budgets are treated as facts with dates. Changing an amount asks whether it
-changed *going forward* or was simply wrong, so past months stay measured against
-the budget they were lived under, and the rolling view averages the budgets
-actually in force rather than back-dating today's number over last year.
+Budgets have dates. When you change an amount it asks whether the amount changed
+*going forward* or was simply wrong to begin with. Old months stay measured
+against what you were budgeting at the time, and the rolling view averages the
+budgets you were actually on rather than applying today's number to last year.
 
 Everything runs on your machine. The only thing that ever leaves it is a
 transaction's *description and vendor text*, sent to the Claude API to categorize
-the handful of transactions the deterministic rules can't place. **Dollar amounts
+the handful of purchases the rules can't place on their own. **Dollar amounts
 never leave the machine** — see [Privacy](#privacy).
 
 > **Just want to run it?** [QUICKSTART.md](QUICKSTART.md) is a page: the two commands,
