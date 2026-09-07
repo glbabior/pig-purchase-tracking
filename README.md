@@ -5,6 +5,17 @@ You point it at folders of bank and credit-card statement PDFs; it parses them
 into transactions, categorizes each one against your budget, and shows how actual
 spending tracks to budget per month and on a rolling average.
 
+Categorization is a learning loop rather than a fixed ruleset. You write hints
+against a category and the app previews what a hint would catch *before* you save
+it, flags the ones that collide with another category, and folds your manual
+corrections back into the rules. Only what the deterministic passes cannot place
+cleanly is sent to the Claude API, and that share shrinks as the hints improve.
+
+Budgets are treated as facts with dates. Changing an amount asks whether it
+changed *going forward* or was simply wrong, so past months stay measured against
+the budget they were lived under, and the rolling view averages the budgets
+actually in force rather than back-dating today's number over last year.
+
 Everything runs on your machine. The only thing that ever leaves it is a
 transaction's *description and vendor text*, sent to the Claude API to categorize
 the handful of transactions the deterministic rules can't place. **Dollar amounts
