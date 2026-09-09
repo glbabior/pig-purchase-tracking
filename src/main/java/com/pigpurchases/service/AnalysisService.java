@@ -216,12 +216,25 @@ public class AnalysisService {
         return new RollingSummary(n, avgTotalBudget, avgActual, avgTotalBudget.subtract(avgActual), categories);
     }
 
+    /**
+     * Total actual against total budget, month by month, for the Rolling screen's
+     * trend chart.
+     *
+     * <p><b>Complete months only.</b> This screen is defined by the months marked
+     * complete — the average above the chart says so in words — and a month still
+     * filling up plots as a dip. That dip is indistinguishable from a month of
+     * genuinely low spending, so the chart reads as a downward trend that is not
+     * there. A partial month is not a smaller month, it is an unfinished one, and
+     * the screen whose whole purpose is the typical month must not imply otherwise.
+     */
     @Transactional(readOnly = true)
     public List<TrendPoint> trends() {
         List<BudgetEntry> entries = budgetEntryRepository.findAll();
         BudgetHistoryService.Resolver resolver = budgetHistoryService.resolver();
         Map<String, MonthAgg> byMonth = aggregateByActualMonth();
+        Set<String> complete = completeMonths();
         List<String> months = new ArrayList<>(byMonth.keySet());
+        months.removeIf(m -> !complete.contains(m));
         months.sort(Comparator.naturalOrder()); // oldest first, for a left-to-right timeline
         List<TrendPoint> points = new ArrayList<>();
         for (String m : months) {
@@ -240,8 +253,8 @@ public class AnalysisService {
      * <p>This is reached from the Rolling screen, which is defined by the months
      * the user marked complete, so only complete months are plotted — a partial
      * month would misrepresent the category's spend the same way it would skew the
-     * rolling average. (The separate "Trend over time" chart deliberately shows
-     * partial months; this per-category view does not.)
+     * rolling average. {@link #trends()} applies the same rule, so drilling into a
+     * category shows the months the chart above it plotted.
      */
     @Transactional(readOnly = true)
     public List<CategoryTrendPoint> categoryTrend(String categoryKey) {

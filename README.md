@@ -124,7 +124,11 @@ can be flagged **complete**.
 
 **Spend: Rolling** — the typical-month view: rolling average actual vs. budget
 across the months you marked complete, per category and in total, plus a trend
-chart and a per-category spend-over-time line chart. When a budget changed across
+chart and a per-category spend-over-time line chart. Everything on this screen —
+the average and both charts — is drawn from the complete months only, so drilling
+from one into another never changes which months are in view. A month still
+filling up would plot as a dip indistinguishable from a month of low spending.
+When a budget changed across
 those months, the Budget column is the **average of the budgets in force**, so
 Budget − Actual = Variance stays true in every row; the per-category chart draws
 the budget as a stepped line and breaks the months down era by era beneath it
@@ -644,7 +648,7 @@ in force rather than the newest. The portable suite is 143 green with nothing sk
   transaction-count columns, click-through to the transactions behind any figure,
   a trend chart, and a per-category spend-over-time chart. Months are grouped by
   each transaction's **actual date**, and only months flagged complete feed the
-  rolling average
+  Rolling screen — its average and both of its charts alike
 - **Data safety**: automated daily SQL backups with the anti-clobber guard, and
   preview-then-commit restore
 - **Debug log** with configurable retention, and a mapping reminder on a chosen day

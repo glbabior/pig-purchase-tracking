@@ -236,11 +236,43 @@ class AnalysisServiceTest {
     }
 
     @Test
-    void trendsHasOnePointForTheActualMonth() {
+    void trendsPlotsTheActualMonthOnceMarkedComplete() {
+        analysisService.setMonthComplete("2026-05", true);
+
         List<AnalysisService.TrendPoint> trends = analysisService.trends();
         assertEquals(1, trends.size());
         assertEquals("2026-05", trends.get(0).month());
         assertEquals(0, new BigDecimal("4.45").compareTo(trends.get(0).totalActual()));
+    }
+
+    /**
+     * The Rolling screen is the typical month, and its chart must agree with the
+     * average above it. A month still filling up plots as a dip that reads as
+     * reduced spending rather than as an unfinished month.
+     */
+    @Test
+    void trendsLeavesOutAMonthThatIsNotCompleteYet() {
+        assertTrue(analysisService.monthsWithStatus().stream()
+                        .noneMatch(AnalysisService.MonthInfo::complete),
+                "fixture starts with nothing marked complete");
+
+        assertTrue(analysisService.trends().isEmpty(),
+                "a partial month must not be plotted on the Rolling screen");
+    }
+
+    /** Drilling into a category shows the months the chart above it plotted. */
+    @Test
+    void categoryTrendPlotsTheSameMonthsAsTheChartAboveIt() {
+        analysisService.setMonthComplete("2026-05", true);
+        Long coffeeId = entryRepo.findAll().stream()
+                .filter(e -> "Coffee Shop".equals(e.getName())).findFirst().orElseThrow().getId();
+
+        List<String> chart = analysisService.trends().stream()
+                .map(AnalysisService.TrendPoint::month).toList();
+        List<String> drilldown = analysisService.categoryTrend(coffeeId.toString()).stream()
+                .map(AnalysisService.CategoryTrendPoint::month).toList();
+
+        assertEquals(chart, drilldown);
     }
 
     @Test

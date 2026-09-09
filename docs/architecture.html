@@ -368,8 +368,12 @@ flowchart TD
     <h3>Analysis <span class="tag">mappings → budget vs. actual</span></h3>
     <p><code>AnalysisService</code> aggregates mappings <strong>by each transaction's actual
       <code>transactionDate</code></strong> (not the statement/ingest month), so a complete calendar month is assembled
-      regardless of which file each charge arrived in. A month folds into the <strong>rolling average</strong> only once
-      you mark it complete (<code>MonthStatus</code>), so a half-loaded month can't skew the typical-month numbers.</p>
+      regardless of which file each charge arrived in. A month folds into the <strong>Rolling screen</strong> only once
+      you mark it complete (<code>MonthStatus</code>), so a half-loaded month can't skew the typical-month numbers. The
+      rule covers the whole screen, not just the average: <code>trends()</code> and <code>categoryTrend()</code> both
+      filter to the complete months, because a partial month plots as a dip no reader can tell from a month of genuinely
+      low spending — and because a chart and the drill-down beneath it disagreeing about which months exist is its own
+      kind of wrong.</p>
 
     <h3>Demo mode <span class="tag">no data of your own</span></h3>
     <p><code>demo.cmd</code> runs the app against generated sample statements.

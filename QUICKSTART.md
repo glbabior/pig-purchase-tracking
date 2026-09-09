@@ -61,7 +61,7 @@ The sidebar is roughly the order you would use it in.
 | **Ingest** | Load a statement from a source's folder. Everything loaded is listed below, newest first. Also where manual transactions go — cash, a Venmo balance. |
 | **Mapping** | One row per loaded statement. Categorizes transactions; anything it cannot place is *parked* as "Other" for you to sort out. |
 | **Spend: Monthly** | Budget vs. actual for one calendar month. Click a category to see the transactions behind it. |
-| **Spend: Rolling** | The typical month — an average across the months you marked complete, plus trend charts. |
+| **Spend: Rolling** | The typical month — an average across the months you marked complete, plus trend charts drawn from those same months. |
 | **Settings** | Annual budget, backups, restore. |
 | **Debug** | What the app did behind the scenes. Where to look when a total moved and you don't know why. |
 

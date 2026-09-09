@@ -162,8 +162,12 @@ Manual entry (`ManualEntryService`) and duplicate detection (with a persisted
 `AnalysisService` aggregates `TransactionMapping`s **by each transaction's actual
 `transactionDate`** (not the statement/ingest month), so a complete calendar month
 is assembled regardless of which statement file each charge arrived in. A month is
-only folded into the **rolling average** once you mark it complete (`MonthStatus`),
-so a half-loaded month can't skew the typical-month numbers.
+only folded into the **Rolling screen** once you mark it complete (`MonthStatus`),
+so a half-loaded month can't skew the typical-month numbers. That rule covers the
+whole screen, not just the average: `trends()` and `categoryTrend()` both filter to
+the complete months, because a partial month plots as a dip no reader can tell from
+a month of genuinely low spending — and because a chart and the drill-down beneath
+it disagreeing about which months exist is its own kind of wrong.
 
 **Budgets are era-resolved** (`BudgetHistoryService`): every month is compared
 against the budget in force *that* month, so changing a category's amount "going
