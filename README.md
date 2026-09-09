@@ -21,6 +21,12 @@ transaction's *description and vendor text*, sent to the Claude API to categoriz
 the handful of purchases the rules can't place on their own. **Dollar amounts
 never leave the machine** — see [Privacy](#privacy).
 
+![Budget vs. actual for one month, per category, with variance and a bar per row](docs/screenshots/spend-monthly.png)
+
+*Every screenshot here is `demo.cmd` — the invented Northwind bank, in a statement
+format this project made up. No real account, merchant or amount appears in this
+repository.*
+
 > **Just want to run it?** [QUICKSTART.md](QUICKSTART.md) is a page: the two commands,
 > how they differ, and what each screen is for. Start there and come back here for detail.
 
@@ -58,6 +64,8 @@ row you want readable while scrolling everything above it.
 carries an optional free-text **hints** field, which is the knowledge base that
 categorization gets better from. See [Writing hints](#writing-hints).
 
+![The budget entries table, with monthly allowance, allocated total and what is left for open spend](docs/screenshots/budget-entries.png)
+
 Changing an amount asks which fact you are stating: **"it changed going forward"**
 (the default) records the old amount as history, so past months stay measured
 against the budget they were lived under; **"correct it"** rewrites in place. A
@@ -77,6 +85,14 @@ opens the transactions it actually catches (dated, with the amount signed the sa
 the rest of the app signs it). Categories with **no** hints are listed too — those rely
 on the category name or the AI. Hints still live on the budget entries; this is the only
 view where hints on one category can be compared with hints on another.
+
+![Every category with its hint count, how many transactions those hints catch, and a needs-attention column](docs/screenshots/matching-hints.png)
+
+![One category's hints, each term quoted, each with a live count of what it matches](docs/screenshots/category-hints.png)
+
+*Terms are shown in quotes so a trailing space — or the split points of a `+` hint —
+is visible rather than invisible. The **matches N** badge is a live count, not a
+saved one, so a rule that has quietly stopped catching anything says so.*
 
 It flags hints that are **ignored** (with the reason) separately from hints that simply
 **match nothing yet**, previews what a new hint would catch *before* saving — including
@@ -102,6 +118,8 @@ column heading; the bottom one opens newest first, which is the order that answe
 text rather than taking columns of their own. Re-loading the same source + statement
 date **replaces** the prior import rather than duplicating it.
 
+![The ingest screen: sources with a load button, and every loaded statement with its date range](docs/screenshots/ingest.png)
+
 **Mapping** — the categorization screen. One scrolling table, header pinned and
 sortable, with a row per ingested statement: source, statement date, a 📄 icon that
 opens the file in your default PDF app (the whole path is in its hover text),
@@ -115,6 +133,14 @@ yet mapped; **Re-run mapping** re-does chosen statements. From here you also
 review the parked "Other" bucket, review all transactions in a run with search,
 review manual entries, and work through **potential duplicates** (same date + same
 amount across statements), which you can dismiss permanently as "not duplicates".
+
+![One row per ingested statement, with mapped, parked and excluded counts](docs/screenshots/mapping.png)
+
+![The review panel: every transaction in a run with the category it landed in and the hint that placed it](docs/screenshots/categorizing.png)
+
+*Each row says **which hint matched it**, so a transaction in the wrong category
+leads back to the rule that put it there rather than leaving you guessing. Change
+one and the merchant follows that choice on every future run.*
 
 **Spend: Monthly** — budget vs. actual for one calendar month: total, variance,
 and a per-category breakdown, each measured against the budget **in force that
@@ -133,6 +159,14 @@ those months, the Budget column is the **average of the budgets in force**, so
 Budget − Actual = Variance stays true in every row; the per-category chart draws
 the budget as a stepped line and breaks the months down era by era beneath it
 ("vs $230 through July: on budget · vs $100 from August: under by $5/mo").
+
+![The typical month across complete months, per category, above a trend chart of monthly totals](docs/screenshots/spend-rolling.png)
+
+![One category's spend month by month against a dashed budget line](docs/screenshots/category-trend.png)
+
+*The month labels on that chart are clickable: each one opens the transactions
+behind that category in that month, which is the quickest way to find out why a
+point moved.*
 
 **Settings** — annual budget (the monthly allowance is derived as ÷ 12, with the
 same changed-going-forward / correct-it choice as a category amount), debug-log
