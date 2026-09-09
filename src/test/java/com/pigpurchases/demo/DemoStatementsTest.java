@@ -66,4 +66,42 @@ class DemoStatementsTest {
         LocalDate a = LocalDate.of(2026, 6, 11);
         assertEquals(3, List.of(a, a.minusMonths(1), a.minusMonths(2)).stream().distinct().count());
     }
+
+    /**
+     * Months must differ. Identical months made the Rolling screen's trend chart a flat
+     * line and its bars identical — a demo of the one screen whose subject is movement,
+     * showing none.
+     */
+    @Test
+    void monthsDifferFromOneAnother() {
+        LocalDate end = LocalDate.of(2026, 6, 11);
+        List<String> totals = List.of(end, end.minusMonths(1), end.minusMonths(2)).stream()
+                .map(d -> DemoStatements.monthOf(d).stream()
+                        .filter(l -> l.startsWith("Total Purchases"))
+                        .findFirst().orElseThrow())
+                .toList();
+        assertEquals(3, totals.stream().distinct().count(),
+                "each month should total something different: " + totals);
+    }
+
+    /** A subscription that wandered month to month would be the one obviously wrong row. */
+    @Test
+    void aFixedSubscriptionCostsTheSameEveryMonth() {
+        LocalDate end = LocalDate.of(2026, 6, 11);
+        List<String> streamflix = List.of(end, end.minusMonths(1), end.minusMonths(2)).stream()
+                .map(d -> DemoStatements.monthOf(d).stream()
+                        .filter(l -> l.contains("STREAMFLIX"))
+                        .findFirst().orElseThrow())
+                .map(l -> l.substring(l.lastIndexOf(' ') + 1))
+                .toList();
+        assertEquals(1, streamflix.stream().distinct().count(),
+                "the subscription should not swing: " + streamflix);
+    }
+
+    /** The same month must always generate the same statement, or a demo cannot be rebuilt. */
+    @Test
+    void generationIsDeterministic() {
+        LocalDate end = LocalDate.of(2026, 6, 11);
+        assertEquals(DemoStatements.monthOf(end), DemoStatements.monthOf(end));
+    }
 }

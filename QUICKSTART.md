@@ -28,7 +28,7 @@ lets "open in Acrobat" hand a statement to your already-running Acrobat.
 
 |  | `.\demo.cmd` | `.\launch.cmd` |
 |---|---|---|
-| Statements | Three months, generated for you | Your own PDFs |
+| Statements | Three months, generated for you, each spending a little differently | Your own PDFs |
 | Database | `~/.pigpurchases-demo` — disposable | `~/.pigpurchases` — the real one |
 | Backups | Off, and redirected | On, to `~/pigpurchases-backups` |
 | Claude API | Off, so it costs nothing | On if a key is present |

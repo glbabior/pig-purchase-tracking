@@ -601,6 +601,16 @@ server now binds loopback only, demo mode redirects the restore-preview director
 demo seeds each thing on its own guard, and the backup baseline is the highest count still
 in force rather than the newest. The portable suite is 143 green with nothing skipped._
 
+_Re-verified 2026-09-09 for the Rolling screen and demo mode only, against a running demo.
+The trend chart plotted a partial month while the average above it and the per-category
+drill-down beneath it both excluded one, so the same screen reported two different sets of
+months; `trends()` now filters to the complete months like the rest of the screen
+(`AnalysisService.trends`, `AnalysisService.categoryTrend`), and the chart's caption no
+longer promises partial ones. `DemoStatements` now varies each generated month, which the
+flat trend charts had made look like a rendering fault rather than identical input. Nothing
+else in this document was re-checked on this date. The portable suite is 162 green with
+nothing skipped._
+
 ### Working
 
 - Budget entry CRUD with per-unit amount × quantity; annual budget with derived

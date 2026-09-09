@@ -390,6 +390,11 @@ flowchart TD
     <p><code>DemoStatements</code> computes each statement's control totals from its own rows rather than printing
       constants — ingest refuses a statement whose rows disagree with its printed totals, so hardcoded ones would
       produce files the app rejects.</p>
+    <p>Each generated month also <strong>differs from the others</strong>, by a deterministic per-row swing around the
+      typical amounts. Every month used to be a copy of the same one, which left the Rolling screen — whose entire
+      subject is how spending moves between months — demonstrating that it never does. Deterministic rather than random,
+      so a demo can be deleted and rebuilt identically. A subscription is marked fixed and does not swing, because a
+      streaming charge that wandered month to month is the one row a reader would know was invented.</p>
   </section>
 
   <section id="safety">

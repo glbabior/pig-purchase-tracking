@@ -203,6 +203,14 @@ network needs asking whether demo mode has to redirect it too.
 printing constants — ingest refuses a statement whose rows disagree with its printed
 totals, so hardcoded totals would produce files the app rejects.
 
+Each generated month also **differs from the others**, by a deterministic per-row swing
+around the typical amounts. Every month used to be a copy of the same one, which left the
+Rolling screen — whose entire subject is how spending moves between months —
+demonstrating that it never does. Deterministic rather than random, so a demo can be
+deleted and rebuilt identically. A subscription is marked fixed and does not swing,
+because a streaming charge that wandered month to month is the one row a reader would
+know was invented.
+
 ## 4. Data safety (learned the hard way)
 
 The live DB once got reverted by OneDrive syncing the H2 file mid-session. The
